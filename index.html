@@ -202,6 +202,21 @@
     background: #000;
     box-shadow: 0 2px 8px rgba(0,0,0,.5);
   }
+  .zoom-row {
+    position: absolute; left: 16px; top: 100px;
+    display: flex; gap: 6px;
+  }
+  .zoom-chip {
+    font-family: var(--mono); font-size: 12px; letter-spacing: .04em;
+    padding: 7px 11px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.4);
+    background: rgba(0,0,0,.55);
+    color: #fff;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .zoom-chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
 
   .answer {
     position: absolute;
@@ -354,6 +369,7 @@
       <div class="vf-corners"><i></i></div>
       <img class="last-shot" id="lastShot" alt="Last captured frame" hidden>
       <div class="vf-readout"><span id="frameCounter">F-0000</span><span id="countdown" class="rec"></span></div>
+      <div class="zoom-row" id="zoomRow" hidden></div>
     </div>
 
     <article class="answer" id="answer">
@@ -461,9 +477,10 @@
       <div class="field">
         <label for="facing">Camera</label>
         <select id="facing">
-          <option value="environment">Back camera</option>
+          <option value="environment">Back camera (auto)</option>
           <option value="user">Front camera</option>
         </select>
+        <div class="hint">Lenses the phone reports are listed after the first Start. Zoom presets (widest, 1×, 2×) appear on the camera view while running.</div>
       </div>
       <div class="field">
         <label for="thumbSize">Answer text size</label>
@@ -510,6 +527,8 @@
     imgSize: 1568,
     maxTokens: 32024,
     facing: 'environment',
+    deviceId: '',
+    zoom: 'min',
     textSize: 20,
     keepAwake: true,
     saveKey: true,
@@ -611,15 +630,89 @@
       throw new Error('This browser cannot open the camera here. Open the page over https:// in Safari.');
     }
     stopCamera();
-    const constraints = {
-      audio: false,
-      video: { facingMode: { ideal: S.facing }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-    };
-    stream = await navigator.mediaDevices.getUserMedia(constraints);
+    // Ask for the most pixels the lens offers; the frame is scaled down to the chosen size afterwards.
+    const quality = { width: { ideal: 3840 }, height: { ideal: 2160 } };
+    const byFacing = { audio: false, video: { facingMode: { ideal: S.facing }, ...quality } };
+    if (S.deviceId) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { deviceId: { exact: S.deviceId }, ...quality } });
+      } catch (e) {
+        S.deviceId = ''; saveSettings(); // that lens is gone; fall back to the facing choice
+        stream = await navigator.mediaDevices.getUserMedia(byFacing);
+      }
+    } else {
+      stream = await navigator.mediaDevices.getUserMedia(byFacing);
+    }
     video.srcObject = stream;
     try { await video.play(); } catch (e) { /* autoplay blocked; muted video usually plays anyway */ }
     await waitForFrames();
     $('vfPlaceholder').hidden = true;
+    await setupZoom();
+    listCameras();
+  }
+
+  // ---------- zoom (lens choice on phones that expose it) ----------
+  const zoomRow = $('zoomRow');
+  let zoomCaps = null;
+  const fmtZoom = (z) => (Math.round(z * 10) / 10).toString().replace(/\.0$/, '') + '×';
+  async function setupZoom() {
+    zoomCaps = null;
+    zoomRow.hidden = true;
+    zoomRow.textContent = '';
+    const track = stream && stream.getVideoTracks()[0];
+    if (!track || typeof track.getCapabilities !== 'function') return;
+    let caps;
+    try { caps = track.getCapabilities(); } catch (e) { return; }
+    if (!caps || !caps.zoom || typeof caps.zoom.min !== 'number' || typeof caps.zoom.max !== 'number' || caps.zoom.max <= caps.zoom.min) return;
+    zoomCaps = caps.zoom;
+    const presets = [];
+    const add = (z) => {
+      if (z < caps.zoom.min - 1e-6 || z > caps.zoom.max + 1e-6) return;
+      if (presets.some((p) => Math.abs(p - z) < 0.05)) return;
+      presets.push(z);
+    };
+    add(caps.zoom.min); add(1); add(2);
+    for (const z of presets) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'zoom-chip';
+      b.dataset.zoom = String(z);
+      b.textContent = fmtZoom(z);
+      b.addEventListener('click', (ev) => { ev.stopPropagation(); S.zoom = z; saveSettings(); applyZoom(z); });
+      zoomRow.appendChild(b);
+    }
+    zoomRow.hidden = false;
+    const want = S.zoom === 'min' ? caps.zoom.min : clamp(+S.zoom || 1, caps.zoom.min, caps.zoom.max);
+    await applyZoom(want);
+  }
+  async function applyZoom(z) {
+    const track = stream && stream.getVideoTracks()[0];
+    if (!track || !zoomCaps) return;
+    try {
+      await track.applyConstraints({ advanced: [{ zoom: z }] });
+    } catch (e) {
+      try { await track.applyConstraints({ zoom: z }); } catch (e2) { showBanner('This camera did not accept the zoom change: ' + (e2.message || e2)); return; }
+    }
+    let current = z;
+    try { const s = track.getSettings(); if (typeof s.zoom === 'number') current = s.zoom; } catch (e) { /* keep requested value */ }
+    for (const chip of zoomRow.children) chip.classList.toggle('on', Math.abs(+chip.dataset.zoom - current) < 0.05);
+  }
+
+  // Fill the camera picker with every lens the phone reports (labels appear once permission was given).
+  async function listCameras() {
+    const sel = $('facing');
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+    let devices = [];
+    try { devices = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput'); } catch (e) { return; }
+    for (const opt of [...sel.options]) if (opt.value.startsWith('device:')) opt.remove();
+    devices.forEach((d, i) => {
+      const opt = document.createElement('option');
+      opt.value = 'device:' + d.deviceId;
+      opt.textContent = d.label || ('Camera ' + (i + 1));
+      sel.appendChild(opt);
+    });
+    sel.value = S.deviceId ? 'device:' + S.deviceId : S.facing;
+    if (sel.selectedIndex < 0) sel.value = S.facing;
   }
   function waitForFrames() {
     return new Promise((resolve) => {
@@ -636,6 +729,7 @@
     stream = null;
     video.srcObject = null;
     $('vfPlaceholder').hidden = false;
+    $('zoomRow').hidden = true;
   }
   function captureFrame() {
     const vw = video.videoWidth, vh = video.videoHeight;
@@ -644,7 +738,7 @@
     const w = Math.round(vw * scale), h = Math.round(vh * scale);
     canvas.width = w; canvas.height = h;
     ctx.drawImage(video, 0, 0, w, h);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
     const tw = 160, th = Math.max(1, Math.round(h * tw / w));
     thumbCanvas.width = tw; thumbCanvas.height = th;
     tctx.drawImage(canvas, 0, 0, tw, th);
@@ -1001,7 +1095,8 @@
     $('prompt').value = S.prompt;
     $('imgSize').value = String(S.imgSize);
     $('maxTokens').value = S.maxTokens;
-    $('facing').value = S.facing;
+    $('facing').value = S.deviceId ? 'device:' + S.deviceId : S.facing;
+    listCameras();
     $('thumbSize').value = String(S.textSize);
     $('keepAwake').checked = !!S.keepAwake;
     $('saveKey').checked = !!S.saveKey;
@@ -1025,7 +1120,7 @@
   });
   sheet.addEventListener('submit', (e) => {
     e.preventDefault();
-    const prevInterval = S.interval, prevFacing = S.facing;
+    const prevInterval = S.interval, prevFacing = S.facing, prevDevice = S.deviceId;
     S.key = $('apiKey').value.trim();
     S.model = $('model').value.trim() || DEFAULTS.model;
     S.effort = $('effort').value;
@@ -1034,7 +1129,8 @@
     S.prompt = $('prompt').value.trim() || DEFAULT_PROMPT;
     S.imgSize = parseInt($('imgSize').value, 10) || 1568;
     S.maxTokens = clamp(parseInt($('maxTokens').value, 10) || 32024, 1024, 128000);
-    S.facing = $('facing').value;
+    const camVal = $('facing').value;
+    if (camVal.startsWith('device:')) { S.deviceId = camVal.slice(7); } else { S.deviceId = ''; S.facing = camVal; }
     S.textSize = parseInt($('thumbSize').value, 10) || 20;
     S.keepAwake = $('keepAwake').checked;
     S.saveKey = $('saveKey').checked;
@@ -1042,7 +1138,7 @@
     refreshReadouts();
     closeSheet();
     if (running && S.interval !== prevInterval) reschedule();
-    if (running && S.facing !== prevFacing) openCamera().catch((err) => showBanner(err.message));
+    if (running && (S.facing !== prevFacing || S.deviceId !== prevDevice)) openCamera().catch((err) => showBanner(err.message));
     if (running) { if (S.keepAwake) keepAwake(); else releaseWake(); }
   });
 
