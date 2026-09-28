@@ -8,7 +8,6 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Lens Loop">
 <meta name="theme-color" content="#0F1216">
-<link rel="manifest" href="manifest.webmanifest">
 <title>Lens Loop</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -400,7 +399,7 @@
         <input type="password" id="apiKey" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="sk-ant-…">
         <button class="btn" type="button" id="showKey">Show</button>
       </div>
-      <div class="hint">The key is sent only to api.anthropic.com from this phone. Get one at console.anthropic.com (API keys) and set a monthly spend limit there.</div>
+      <div class="hint">The key is sent only to api.anthropic.com from this phone. Get one at console.anthropic.com (API keys) and set a monthly spend limit there. If you opened this page through a link that ends in <b>#key=…</b>, that link carries the key: bookmark it or add it to the Home Screen and you never type it.</div>
     </div>
 
     <div class="row">
@@ -1072,18 +1071,24 @@
   window.addEventListener('pagehide', () => { if (running) stop(); });
 
   // ---------- boot ----------
-  // A link of the form https://…/lens-loop/#key=sk-ant-… stores the key on this phone once,
-  // then the key is removed from the address bar so it is not kept in history or shared by accident.
+  // A link of the form https://…/lens-loop/#key=sk-ant-… carries the key in the part after "#",
+  // which browsers never send to the server. The page reads it on every open and keeps it in the
+  // address, so a bookmark or Home Screen icon made from that link always launches with the key.
+  // It is also copied into this browser's storage, so the plain address works as long as that lasts.
+  let keyInLink = false;
   function keyFromLink() {
     const m = /^#key=([^&\s]+)/.exec(location.hash || '');
     if (!m) return;
-    S.key = decodeURIComponent(m[1]).trim();
+    const k = decodeURIComponent(m[1]).trim();
+    if (!k) return;
+    keyInLink = true;
+    const isNew = k !== S.key;
+    S.key = k;
     S.saveKey = true;
     saveSettings();
-    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { location.hash = ''; }
     refreshReadouts();
-    showBanner('API key saved on this phone. Tap Start when the phone is in position.', 'note');
-    if (!running) setStatus('idle', 'Ready');
+    if (isNew) showBanner('API key taken from the link. Bookmark this page or add it to the Home Screen and the key comes with it.', 'note');
+    if (!running) setStatus('idle', 'Ready · key in link');
   }
   window.addEventListener('hashchange', keyFromLink);
   keyFromLink();
@@ -1091,7 +1096,7 @@
   if (!window.isSecureContext) {
     showBanner('This page must be opened over https:// for the camera to work.');
   }
-  setStatus('idle', S.key ? 'Ready' : 'Add API key');
+  setStatus('idle', S.key ? (keyInLink ? 'Ready · key in link' : 'Ready') : 'Add API key');
 })();
 </script>
 </body>
