@@ -4,6 +4,8 @@ A single-page web app for a phone: prop the phone up, open the page, tap **Start
 
 - `index.html` is the whole app. No build step, no server; it talks to `api.anthropic.com` directly from the browser.
 - Your API key is typed into the page's settings and stays in that phone's browser storage. Nothing in this repository holds a key.
-- Defaults: `claude-opus-5-5`, effort `max`, one frame every 15 s, 1024 px images. All of it is adjustable in the settings sheet.
+- Defaults: `claude-opus-5-5`, effort `max`, one frame every 15 s, 1568 px images, 32,024 max output tokens, large text. All of it is adjustable in the settings sheet.
+- The camera fills the screen; the answer floats over its lower part and can be hidden with a tap.
+- Opening `…/lens-loop/#key=sk-ant-…` once stores that key on the phone and removes it from the address bar.
 
 Published with GitHub Pages straight from the `main` branch.

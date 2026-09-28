@@ -27,6 +27,7 @@
     --ok: #6BCB77;
     --bad: #E5484D;
     --shade: rgba(0, 0, 0, .55);
+    --overlay: rgba(13, 16, 20, .86);
     --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     --sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   }
@@ -152,27 +153,19 @@
     outline: 2px solid var(--accent); outline-offset: 2px;
   }
 
-  /* ---------- stage ---------- */
+  /* ---------- stage: the camera fills it, the answer floats over the lower part ---------- */
   .stage {
+    position: relative;
     flex: 1;
     min-height: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    padding: 10px 16px;
+    background: #000;
   }
 
   .viewfinder {
-    position: relative;
-    flex: 0 0 auto;
-    height: 108px;
-    border-radius: 10px;
-    overflow: hidden;
+    position: absolute;
+    inset: 0;
     background: #000;
-    border: 1px solid var(--line);
-    transition: height .25s ease;
   }
-  .viewfinder.big { height: min(52vh, 100vw); }
   .viewfinder video { width: 100%; height: 100%; object-fit: cover; display: block; background: #000; }
   .viewfinder .placeholder {
     position: absolute; inset: 0;
@@ -184,72 +177,88 @@
   .viewfinder .flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
   .viewfinder .flash.on { animation: flash .35s ease-out; }
   @keyframes flash { 0% { opacity: .85; } 100% { opacity: 0; } }
-  .vf-corners { position: absolute; inset: 8px; pointer-events: none; }
+  .vf-corners { position: absolute; inset: 10px; pointer-events: none; }
   .vf-corners::before, .vf-corners::after, .vf-corners i::before, .vf-corners i::after {
-    content: ""; position: absolute; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.75);
+    content: ""; position: absolute; width: 18px; height: 18px; border: 2px solid rgba(255,255,255,.7);
   }
   .vf-corners::before { top: 0; left: 0; border-right: 0; border-bottom: 0; }
   .vf-corners::after { top: 0; right: 0; border-left: 0; border-bottom: 0; }
   .vf-corners i::before { bottom: 0; left: 0; border-right: 0; border-top: 0; }
   .vf-corners i::after { bottom: 0; right: 0; border-left: 0; border-top: 0; }
   .vf-readout {
-    position: absolute; left: 12px; right: 12px; bottom: 8px;
-    display: flex; justify-content: space-between; gap: 8px;
-    font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
-    color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.8);
+    position: absolute; left: 16px; top: 36px;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+    font-family: var(--mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+    color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.9);
     pointer-events: none;
     font-variant-numeric: tabular-nums;
   }
   .vf-readout .rec { color: var(--accent); }
   .last-shot {
-    position: absolute; top: 8px; right: 8px;
-    height: 44px; width: auto; max-width: 40%;
+    position: absolute; top: 36px; right: 16px;
+    height: 56px; width: auto; max-width: 40%;
     border: 1px solid rgba(255,255,255,.6);
-    border-radius: 4px;
+    border-radius: 6px;
     object-fit: cover;
     background: #000;
+    box-shadow: 0 2px 8px rgba(0,0,0,.5);
   }
 
   .answer {
-    flex: 1;
-    min-height: 0;
+    position: absolute;
+    left: 8px; right: 8px; bottom: 8px;
+    max-height: 58%;
     display: flex;
     flex-direction: column;
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 12px;
+    background: var(--overlay);
+    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(255,255,255,.14);
+    border-radius: 14px;
     overflow: hidden;
+    /* the panel sits on live video, so it keeps a dark palette in both themes */
+    --text: #ECE7DE;
+    --muted: #A5AEB8;
+    --panel: rgba(255,255,255,.06);
+    --panel-2: rgba(255,255,255,.09);
+    --line: rgba(255,255,255,.14);
+    color: var(--text);
   }
+  .answer.collapsed .answer-scroll { display: none; }
   .answer-head {
     display: flex; align-items: center; gap: 10px;
-    padding: 8px 14px;
+    padding: 9px 14px;
     border-bottom: 1px solid var(--line);
     font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
     color: var(--muted);
     font-variant-numeric: tabular-nums;
+    flex: 0 0 auto;
   }
+  .answer.collapsed .answer-head { border-bottom: 0; }
   .answer-head .meta { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .answer-head .copy { border: 0; background: transparent; color: var(--muted); padding: 2px 4px; font: inherit; letter-spacing: inherit; text-transform: inherit; }
-  .answer-head .copy:active { color: var(--text); }
+  .answer-head .copy, .answer-head .tog { border: 0; background: transparent; color: var(--muted); padding: 2px 4px; font: inherit; letter-spacing: inherit; text-transform: inherit; }
+  .answer-head .copy:active, .answer-head .tog:active { color: var(--text); }
+  .answer-scroll {
+    min-height: 0;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
   .banner {
     margin: 10px 14px 0;
     padding: 8px 12px;
     border-radius: 8px;
     border-left: 3px solid var(--bad);
-    background: color-mix(in srgb, var(--bad) 12%, transparent);
+    background: color-mix(in srgb, var(--bad) 18%, transparent);
     font-size: 13px;
     color: var(--text);
     overflow-wrap: anywhere;
   }
-  .banner.note { border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .banner.note { border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); }
   .answer-body {
-    flex: 1;
-    min-height: 0;
-    overflow: auto;
-    -webkit-overflow-scrolling: touch;
-    padding: 12px 14px 16px;
-    font-size: 17px;
-    line-height: 1.55;
+    padding: 12px 14px 10px;
+    font-size: 20px;
+    line-height: 1.5;
     overflow-wrap: anywhere;
   }
   .answer-body.stale { opacity: .55; }
@@ -269,18 +278,18 @@
   .answer-body .placeholder b { color: var(--text); font-weight: 600; }
   .cursor { display: inline-block; width: .55em; height: 1em; vertical-align: -.15em; background: var(--accent); margin-left: 2px; animation: pulse 1s steps(2) infinite; }
 
-  details.history { flex: 0 0 auto; }
+  details.history { padding: 0 14px 12px; }
   details.history summary {
     list-style: none;
     cursor: pointer;
     font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
     color: var(--muted);
-    padding: 4px 2px;
+    padding: 6px 0;
   }
   details.history summary::-webkit-details-marker { display: none; }
   details.history summary::before { content: "▸ "; }
   details.history[open] summary::before { content: "▾ "; }
-  .hist-list { list-style: none; margin: 6px 0 0; padding: 0; max-height: 40vh; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+  .hist-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
   .hist-item { display: grid; grid-template-columns: 64px 1fr; gap: 10px; padding: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
   .hist-item img { width: 64px; height: 48px; object-fit: cover; border-radius: 4px; background: #000; }
   .hist-item .h-meta { font-family: var(--mono); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 2px; }
@@ -325,7 +334,6 @@
 
   @media (prefers-reduced-motion: reduce) {
     .dot, .cursor, .viewfinder .flash.on { animation: none; }
-    .viewfinder { transition: none; }
   }
 </style>
 </head>
@@ -340,7 +348,7 @@
   </header>
 
   <section class="stage">
-    <div class="viewfinder" id="viewfinder" title="Tap to enlarge">
+    <div class="viewfinder" id="viewfinder">
       <video id="video" autoplay muted playsinline></video>
       <div class="placeholder" id="vfPlaceholder">Camera off · tap Start</div>
       <div class="flash" id="flash"></div>
@@ -353,21 +361,23 @@
       <div class="answer-head">
         <span class="meta" id="answerMeta">No frames yet</span>
         <button class="copy" id="copyBtn" type="button" hidden>Copy</button>
+        <button class="tog" id="toggleBtn" type="button" aria-expanded="true">Hide</button>
       </div>
-      <div class="banner" id="banner" hidden></div>
-      <div class="answer-body" id="answerBody">
-        <div class="placeholder" id="intro">
-          <p><b>Set the phone down, tap Start, and leave it.</b></p>
-          <p>Every <span id="introInterval">15</span> seconds the camera takes one frame and sends it to Claude. The answer streams into this panel and replaces the previous one. The previous answers stay in the list below.</p>
-          <p id="introKey">First, add your Claude API key in settings (the gear at the top right).</p>
+      <div class="answer-scroll" id="answerScroll">
+        <div class="banner" id="banner" hidden></div>
+        <div class="answer-body" id="answerBody">
+          <div class="placeholder" id="intro">
+            <p><b>Set the phone down, tap Start, and leave it.</b></p>
+            <p>Every <span id="introInterval">15</span> seconds the camera takes one frame and sends it to Claude. The answer streams into this panel and replaces the previous one. Earlier answers stay in the list below. Tap the camera or "Hide" to tuck this panel away.</p>
+            <p id="introKey">First, add your Claude API key in settings (the gear at the top right).</p>
+          </div>
         </div>
+        <details class="history" id="history">
+          <summary>Earlier answers <span id="histCount">(0)</span></summary>
+          <ol class="hist-list" id="histList"></ol>
+        </details>
       </div>
     </article>
-
-    <details class="history" id="history">
-      <summary>Earlier answers <span id="histCount">(0)</span></summary>
-      <ol class="hist-list" id="histList"></ol>
-    </details>
   </section>
 
   <footer class="bar bottom">
@@ -438,8 +448,8 @@
         <label for="imgSize">Image size (long side)</label>
         <select id="imgSize">
           <option value="768">768 px · cheapest</option>
-          <option value="1024">1024 px · default</option>
-          <option value="1568">1568 px · most detail</option>
+          <option value="1024">1024 px · balanced</option>
+          <option value="1568">1568 px · highest quality</option>
         </select>
       </div>
       <div class="field">
@@ -491,16 +501,17 @@
     'If not, describe what is in the frame and anything notable or worth acting on. Lead with the most important thing. Keep it under 200 words unless the problem needs more.';
 
   const DEFAULTS = {
+    v: 2,
     key: '',
     model: 'claude-opus-5-5',
     effort: 'max',
     interval: 15,
     busy: 'latest',
     prompt: DEFAULT_PROMPT,
-    imgSize: 1024,
-    maxTokens: 32000,
+    imgSize: 1568,
+    maxTokens: 32024,
     facing: 'environment',
-    textSize: 17,
+    textSize: 20,
     keepAwake: true,
     saveKey: true,
   };
@@ -511,12 +522,18 @@
     const s = { ...DEFAULTS };
     try {
       const raw = localStorage.getItem(STORE);
-      if (raw) Object.assign(s, JSON.parse(raw));
+      if (raw) {
+        const saved = JSON.parse(raw);
+        Object.assign(s, saved);
+        if (!saved.v || saved.v < 2) { // settings saved by the first version: move to the new defaults
+          s.maxTokens = 32024; s.textSize = 20; s.imgSize = 1568; s.v = 2;
+        }
+      }
     } catch (e) { /* storage unavailable */ }
     s.interval = clamp(+s.interval || 15, 5, 600);
-    s.maxTokens = clamp(+s.maxTokens || 32000, 1024, 128000);
-    s.imgSize = +s.imgSize || 1024;
-    s.textSize = +s.textSize || 17;
+    s.maxTokens = clamp(+s.maxTokens || 32024, 1024, 128000);
+    s.imgSize = +s.imgSize || 1568;
+    s.textSize = +s.textSize || 20;
     return s;
   }
   function saveSettings() {
@@ -1016,10 +1033,10 @@
     S.interval = clamp(parseInt($('interval').value, 10) || 15, 5, 600);
     S.busy = $('busy').value;
     S.prompt = $('prompt').value.trim() || DEFAULT_PROMPT;
-    S.imgSize = parseInt($('imgSize').value, 10) || 1024;
-    S.maxTokens = clamp(parseInt($('maxTokens').value, 10) || 32000, 1024, 128000);
+    S.imgSize = parseInt($('imgSize').value, 10) || 1568;
+    S.maxTokens = clamp(parseInt($('maxTokens').value, 10) || 32024, 1024, 128000);
     S.facing = $('facing').value;
-    S.textSize = parseInt($('thumbSize').value, 10) || 17;
+    S.textSize = parseInt($('thumbSize').value, 10) || 20;
     S.keepAwake = $('keepAwake').checked;
     S.saveKey = $('saveKey').checked;
     saveSettings();
@@ -1033,7 +1050,14 @@
   // ---------- buttons ----------
   startBtn.addEventListener('click', () => { if (running) stop(); else start(); });
   snapBtn.addEventListener('click', () => { if (running) snap('manual'); });
-  $('viewfinder').addEventListener('click', () => $('viewfinder').classList.toggle('big'));
+  const answerEl = $('answer'), toggleBtn = $('toggleBtn');
+  function setPanel(open) {
+    answerEl.classList.toggle('collapsed', !open);
+    toggleBtn.textContent = open ? 'Hide' : 'Show';
+    toggleBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+  toggleBtn.addEventListener('click', () => setPanel(answerEl.classList.contains('collapsed')));
+  $('viewfinder').addEventListener('click', () => setPanel(answerEl.classList.contains('collapsed')));
   copyBtn.addEventListener('click', () => {
     const text = current && current.text ? current.text : lastGoodText;
     if (!text) return;
@@ -1048,6 +1072,21 @@
   window.addEventListener('pagehide', () => { if (running) stop(); });
 
   // ---------- boot ----------
+  // A link of the form https://…/lens-loop/#key=sk-ant-… stores the key on this phone once,
+  // then the key is removed from the address bar so it is not kept in history or shared by accident.
+  function keyFromLink() {
+    const m = /^#key=([^&\s]+)/.exec(location.hash || '');
+    if (!m) return;
+    S.key = decodeURIComponent(m[1]).trim();
+    S.saveKey = true;
+    saveSettings();
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { location.hash = ''; }
+    refreshReadouts();
+    showBanner('API key saved on this phone. Tap Start when the phone is in position.', 'note');
+    if (!running) setStatus('idle', 'Ready');
+  }
+  window.addEventListener('hashchange', keyFromLink);
+  keyFromLink();
   refreshReadouts();
   if (!window.isSecureContext) {
     showBanner('This page must be opened over https:// for the camera to work.');
