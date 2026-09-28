@@ -1,0 +1,10 @@
+{
+  "name": "Lens Loop",
+  "short_name": "Lens Loop",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0F1216",
+  "theme_color": "#0F1216",
+  "icons": []
+}

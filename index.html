@@ -1,0 +1,1059 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Lens Loop">
+<meta name="theme-color" content="#0F1216">
+<link rel="manifest" href="manifest.webmanifest">
+<title>Lens Loop</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0F1216;
+    --panel: #181C22;
+    --panel-2: #1F242C;
+    --line: #2B313A;
+    --text: #ECE7DE;
+    --muted: #9AA3AE;
+    --accent: #E9B44C;
+    --accent-ink: #1A1300;
+    --ok: #6BCB77;
+    --bad: #E5484D;
+    --shade: rgba(0, 0, 0, .55);
+    --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      color-scheme: light;
+      --bg: #F4F2EC;
+      --panel: #FFFFFF;
+      --panel-2: #F7F5F0;
+      --line: #DCD7CC;
+      --text: #1B1F24;
+      --muted: #5F6873;
+      --accent: #B0730A;
+      --accent-ink: #FFFFFF;
+      --ok: #2E8B47;
+      --bad: #C8323A;
+      --shade: rgba(20, 20, 20, .45);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-text-size-adjust: 100%;
+    touch-action: manipulation;
+    overscroll-behavior: none;
+  }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  [hidden] { display: none !important; }
+
+  #app {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* ---------- bars ---------- */
+  .bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    flex: 0 0 auto;
+  }
+  .bar.bottom { border-bottom: 0; border-top: 1px solid var(--line); padding: 10px 16px; }
+  .brand { font-weight: 600; letter-spacing: .14em; }
+  .status {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
+  .status[data-kind="armed"] .dot,
+  .status[data-kind="thinking"] .dot { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+  .status[data-kind="streaming"] .dot { background: var(--ok); }
+  .status[data-kind="done"] .dot { background: var(--ok); }
+  .status[data-kind="error"] .dot { background: var(--bad); }
+  .status[data-kind="thinking"], .status[data-kind="armed"] { color: var(--accent); }
+  .status[data-kind="streaming"], .status[data-kind="done"] { color: var(--ok); }
+  .status[data-kind="error"] { color: var(--bad); }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+
+  .icon-btn {
+    width: 36px; height: 36px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-2);
+    display: grid; place-items: center;
+    padding: 0;
+    flex: 0 0 auto;
+  }
+  .icon-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+  .readouts {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    font-variant-numeric: tabular-nums;
+  }
+  .readouts b { color: var(--text); font-weight: 500; }
+
+  .btn {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+    color: var(--text);
+    flex: 0 0 auto;
+  }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; min-width: 84px; }
+  .btn.primary[data-running="true"] { background: var(--bad); border-color: var(--bad); color: #fff; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn:focus-visible, .icon-btn:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+
+  /* ---------- stage ---------- */
+  .stage {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px 16px;
+  }
+
+  .viewfinder {
+    position: relative;
+    flex: 0 0 auto;
+    height: 108px;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #000;
+    border: 1px solid var(--line);
+    transition: height .25s ease;
+  }
+  .viewfinder.big { height: min(52vh, 100vw); }
+  .viewfinder video { width: 100%; height: 100%; object-fit: cover; display: block; background: #000; }
+  .viewfinder .placeholder {
+    position: absolute; inset: 0;
+    display: grid; place-items: center;
+    color: #9AA3AE;
+    font-family: var(--mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+    background: #0A0C0F;
+  }
+  .viewfinder .flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
+  .viewfinder .flash.on { animation: flash .35s ease-out; }
+  @keyframes flash { 0% { opacity: .85; } 100% { opacity: 0; } }
+  .vf-corners { position: absolute; inset: 8px; pointer-events: none; }
+  .vf-corners::before, .vf-corners::after, .vf-corners i::before, .vf-corners i::after {
+    content: ""; position: absolute; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.75);
+  }
+  .vf-corners::before { top: 0; left: 0; border-right: 0; border-bottom: 0; }
+  .vf-corners::after { top: 0; right: 0; border-left: 0; border-bottom: 0; }
+  .vf-corners i::before { bottom: 0; left: 0; border-right: 0; border-top: 0; }
+  .vf-corners i::after { bottom: 0; right: 0; border-left: 0; border-top: 0; }
+  .vf-readout {
+    position: absolute; left: 12px; right: 12px; bottom: 8px;
+    display: flex; justify-content: space-between; gap: 8px;
+    font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+    color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.8);
+    pointer-events: none;
+    font-variant-numeric: tabular-nums;
+  }
+  .vf-readout .rec { color: var(--accent); }
+  .last-shot {
+    position: absolute; top: 8px; right: 8px;
+    height: 44px; width: auto; max-width: 40%;
+    border: 1px solid rgba(255,255,255,.6);
+    border-radius: 4px;
+    object-fit: cover;
+    background: #000;
+  }
+
+  .answer {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .answer-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .answer-head .meta { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .answer-head .copy { border: 0; background: transparent; color: var(--muted); padding: 2px 4px; font: inherit; letter-spacing: inherit; text-transform: inherit; }
+  .answer-head .copy:active { color: var(--text); }
+  .banner {
+    margin: 10px 14px 0;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border-left: 3px solid var(--bad);
+    background: color-mix(in srgb, var(--bad) 12%, transparent);
+    font-size: 13px;
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+  .banner.note { border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .answer-body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 12px 14px 16px;
+    font-size: 17px;
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+  }
+  .answer-body.stale { opacity: .55; }
+  .answer-body > :first-child { margin-top: 0; }
+  .answer-body > :last-child { margin-bottom: 0; }
+  .answer-body p { margin: 0 0 .75em; }
+  .answer-body h2, .answer-body h3, .answer-body h4 { margin: 1em 0 .4em; line-height: 1.25; text-wrap: balance; }
+  .answer-body h2 { font-size: 1.2em; }
+  .answer-body h3 { font-size: 1.08em; }
+  .answer-body h4 { font-size: 1em; }
+  .answer-body ul, .answer-body ol { margin: 0 0 .75em; padding-left: 1.3em; }
+  .answer-body li { margin: .2em 0; }
+  .answer-body code { font-family: var(--mono); font-size: .88em; background: var(--panel-2); padding: .1em .35em; border-radius: 4px; }
+  .answer-body pre { margin: 0 0 .75em; padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; }
+  .answer-body pre code { background: transparent; padding: 0; font-size: .85em; }
+  .answer-body .placeholder { color: var(--muted); font-size: 15px; }
+  .answer-body .placeholder b { color: var(--text); font-weight: 600; }
+  .cursor { display: inline-block; width: .55em; height: 1em; vertical-align: -.15em; background: var(--accent); margin-left: 2px; animation: pulse 1s steps(2) infinite; }
+
+  details.history { flex: 0 0 auto; }
+  details.history summary {
+    list-style: none;
+    cursor: pointer;
+    font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--muted);
+    padding: 4px 2px;
+  }
+  details.history summary::-webkit-details-marker { display: none; }
+  details.history summary::before { content: "▸ "; }
+  details.history[open] summary::before { content: "▾ "; }
+  .hist-list { list-style: none; margin: 6px 0 0; padding: 0; max-height: 40vh; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+  .hist-item { display: grid; grid-template-columns: 64px 1fr; gap: 10px; padding: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  .hist-item img { width: 64px; height: 48px; object-fit: cover; border-radius: 4px; background: #000; }
+  .hist-item .h-meta { font-family: var(--mono); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 2px; }
+  .hist-item .h-text { font-size: 13px; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 5.6em; overflow: hidden; }
+  .hist-item.open .h-text { max-height: none; }
+  .hist-item .h-text.err { color: var(--bad); }
+
+  /* ---------- settings sheet ---------- */
+  .sheet-back { position: fixed; inset: 0; background: var(--shade); z-index: 20; }
+  .sheet {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 21;
+    max-height: 92%;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    background: var(--panel);
+    border-top: 1px solid var(--line);
+    border-radius: 16px 16px 0 0;
+    padding: 14px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+  .sheet h2 { font-family: var(--mono); font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; font-weight: 600; }
+  .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
+  .field label { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .field input[type="text"], .field input[type="password"], .field input[type="number"], .field select, .field textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-2);
+    color: var(--text);
+    font-size: 16px; /* keeps iOS from zooming the field */
+  }
+  .field textarea { min-height: 120px; resize: vertical; line-height: 1.45; }
+  .field .hint { font-size: 12px; color: var(--muted); line-height: 1.4; }
+  .field .hint b { color: var(--text); font-weight: 600; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .check { display: flex; align-items: center; gap: 10px; font-size: 14px; margin-bottom: 12px; }
+  .check input { width: 20px; height: 20px; accent-color: var(--accent); }
+  .key-row { display: flex; gap: 8px; }
+  .key-row input { flex: 1; min-width: 0; }
+  .sheet-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; margin-top: 6px; }
+  .sheet-actions .btn.quiet { border-color: transparent; background: transparent; color: var(--muted); margin-right: auto; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .dot, .cursor, .viewfinder .flash.on { animation: none; }
+    .viewfinder { transition: none; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="bar top">
+    <div class="brand">Lens Loop</div>
+    <div class="status" id="status" data-kind="idle" aria-live="polite"><span class="dot"></span><span id="statusText">Idle</span></div>
+    <button class="icon-btn" id="settingsBtn" aria-label="Settings" title="Settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path></svg>
+    </button>
+  </header>
+
+  <section class="stage">
+    <div class="viewfinder" id="viewfinder" title="Tap to enlarge">
+      <video id="video" autoplay muted playsinline></video>
+      <div class="placeholder" id="vfPlaceholder">Camera off · tap Start</div>
+      <div class="flash" id="flash"></div>
+      <div class="vf-corners"><i></i></div>
+      <img class="last-shot" id="lastShot" alt="Last captured frame" hidden>
+      <div class="vf-readout"><span id="frameCounter">F-0000</span><span id="countdown" class="rec"></span></div>
+    </div>
+
+    <article class="answer" id="answer">
+      <div class="answer-head">
+        <span class="meta" id="answerMeta">No frames yet</span>
+        <button class="copy" id="copyBtn" type="button" hidden>Copy</button>
+      </div>
+      <div class="banner" id="banner" hidden></div>
+      <div class="answer-body" id="answerBody">
+        <div class="placeholder" id="intro">
+          <p><b>Set the phone down, tap Start, and leave it.</b></p>
+          <p>Every <span id="introInterval">15</span> seconds the camera takes one frame and sends it to Claude. The answer streams into this panel and replaces the previous one. The previous answers stay in the list below.</p>
+          <p id="introKey">First, add your Claude API key in settings (the gear at the top right).</p>
+        </div>
+      </div>
+    </article>
+
+    <details class="history" id="history">
+      <summary>Earlier answers <span id="histCount">(0)</span></summary>
+      <ol class="hist-list" id="histList"></ol>
+    </details>
+  </section>
+
+  <footer class="bar bottom">
+    <div class="readouts">
+      <span title="Capture interval"><b id="roInterval">15</b>s</span>
+      <span title="Effort">·</span><span><b id="roEffort">max</b></span>
+      <span title="Session cost">·</span><span>$<b id="roCost">0.00</b></span>
+    </div>
+    <button class="btn" id="snapBtn" type="button" disabled>Snap</button>
+    <button class="btn primary" id="startBtn" type="button" data-running="false">Start</button>
+  </footer>
+
+  <div class="sheet-back" id="sheetBack" hidden></div>
+  <form class="sheet" id="sheet" hidden>
+    <h2>Settings</h2>
+
+    <div class="field">
+      <label for="apiKey">Claude API key</label>
+      <div class="key-row">
+        <input type="password" id="apiKey" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="sk-ant-…">
+        <button class="btn" type="button" id="showKey">Show</button>
+      </div>
+      <div class="hint">The key is sent only to api.anthropic.com from this phone. Get one at console.anthropic.com (API keys) and set a monthly spend limit there.</div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label for="model">Model</label>
+        <input type="text" id="model" autocomplete="off" autocapitalize="off" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="effort">Effort (thinking depth)</label>
+        <select id="effort">
+          <option value="low">low</option>
+          <option value="medium">medium</option>
+          <option value="high">high</option>
+          <option value="xhigh">xhigh</option>
+          <option value="max">max</option>
+        </select>
+      </div>
+    </div>
+    <div class="field" style="margin-top:-6px">
+      <div class="hint"><b>max</b> is the deepest reasoning and the slowest: a frame can take 30 s to several minutes and cost $0.10–0.60 or more in output tokens. <b>high</b> usually answers in well under a minute for a fraction of that.</div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label for="interval">Capture every (seconds)</label>
+        <input type="number" id="interval" min="5" max="600" step="1" inputmode="numeric">
+      </div>
+      <div class="field">
+        <label for="busy">If Claude is still busy</label>
+        <select id="busy">
+          <option value="latest">Wait, then send the newest frame</option>
+          <option value="parallel">Send anyway (in parallel)</option>
+          <option value="skip">Skip that frame</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="prompt">What Claude should do with each frame</label>
+      <textarea id="prompt"></textarea>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label for="imgSize">Image size (long side)</label>
+        <select id="imgSize">
+          <option value="768">768 px · cheapest</option>
+          <option value="1024">1024 px · default</option>
+          <option value="1568">1568 px · most detail</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="maxTokens">Max output tokens</label>
+        <input type="number" id="maxTokens" min="1024" max="128000" step="1000" inputmode="numeric">
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label for="facing">Camera</label>
+        <select id="facing">
+          <option value="environment">Back camera</option>
+          <option value="user">Front camera</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="thumbSize">Answer text size</label>
+        <select id="thumbSize">
+          <option value="15">Small</option>
+          <option value="17">Medium</option>
+          <option value="20">Large</option>
+        </select>
+      </div>
+    </div>
+
+    <label class="check"><input type="checkbox" id="keepAwake"> Keep the screen awake while running</label>
+    <label class="check"><input type="checkbox" id="saveKey"> Remember the API key on this phone</label>
+
+    <div class="sheet-actions">
+      <button class="btn quiet" type="button" id="forgetKey">Forget key</button>
+      <button class="btn" type="button" id="cancelBtn">Cancel</button>
+      <button class="btn primary" type="submit" id="saveBtn">Save</button>
+    </div>
+  </form>
+</div>
+
+<canvas id="canvas" hidden></canvas>
+<canvas id="thumbCanvas" hidden></canvas>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+
+  // ---------- settings ----------
+  const DEFAULT_PROMPT =
+    'Look at this photo carefully. If it shows a question, problem, exercise, or text that asks for an answer, give the answer directly and show the key steps briefly. ' +
+    'If not, describe what is in the frame and anything notable or worth acting on. Lead with the most important thing. Keep it under 200 words unless the problem needs more.';
+
+  const DEFAULTS = {
+    key: '',
+    model: 'claude-opus-5-5',
+    effort: 'max',
+    interval: 15,
+    busy: 'latest',
+    prompt: DEFAULT_PROMPT,
+    imgSize: 1024,
+    maxTokens: 32000,
+    facing: 'environment',
+    textSize: 17,
+    keepAwake: true,
+    saveKey: true,
+  };
+  const STORE = 'lensloop.settings';
+  let S = loadSettings();
+
+  function loadSettings() {
+    const s = { ...DEFAULTS };
+    try {
+      const raw = localStorage.getItem(STORE);
+      if (raw) Object.assign(s, JSON.parse(raw));
+    } catch (e) { /* storage unavailable */ }
+    s.interval = clamp(+s.interval || 15, 5, 600);
+    s.maxTokens = clamp(+s.maxTokens || 32000, 1024, 128000);
+    s.imgSize = +s.imgSize || 1024;
+    s.textSize = +s.textSize || 17;
+    return s;
+  }
+  function saveSettings() {
+    try {
+      const copy = { ...S };
+      if (!S.saveKey) copy.key = '';
+      localStorage.setItem(STORE, JSON.stringify(copy));
+    } catch (e) { /* storage unavailable */ }
+  }
+  function clamp(n, lo, hi) { return Math.min(hi, Math.max(lo, n)); }
+
+  // Prices in $ per million tokens (input, output), by model-id fragment.
+  const PRICES = [
+    ['fable-5', 10, 50], ['mythos', 10, 50], ['opus-5-5', 4, 20], ['opus-5', 4, 20],
+    ['opus-4', 5, 25], ['sonnet-5', 2, 10], ['sonnet-4', 3, 15], ['haiku-4', 1, 5],
+  ];
+  function priceFor(model) {
+    const m = (model || '').toLowerCase();
+    for (const [frag, i, o] of PRICES) if (m.includes(frag)) return [i, o];
+    return [4, 20];
+  }
+
+  // ---------- DOM ----------
+  const video = $('video'), canvas = $('canvas'), thumbCanvas = $('thumbCanvas');
+  const ctx = canvas.getContext('2d'), tctx = thumbCanvas.getContext('2d');
+  const statusEl = $('status'), statusText = $('statusText');
+  const answerBody = $('answerBody'), answerMeta = $('answerMeta'), banner = $('banner'), copyBtn = $('copyBtn');
+  const startBtn = $('startBtn'), snapBtn = $('snapBtn');
+  const frameCounter = $('frameCounter'), countdown = $('countdown'), lastShot = $('lastShot'), flash = $('flash');
+  const histList = $('histList'), histCount = $('histCount');
+
+  // ---------- run state ----------
+  let running = false;
+  let stream = null;
+  let tickTimer = null;
+  let nextAt = 0;
+  let frameNo = 0;
+  let reqSeq = 0;
+  let active = [];        // requests in flight
+  let current = null;     // the request whose text the panel shows
+  let pending = null;     // newest frame waiting (busy = latest)
+  let lastGoodText = '';  // last completed answer, kept visible while the next one thinks
+  let sessionCost = 0;
+  let wakeLock = null;
+  const history = [];
+
+  // ---------- status / readouts ----------
+  function setStatus(kind, text) {
+    statusEl.dataset.kind = kind;
+    statusText.textContent = text;
+  }
+  function refreshReadouts() {
+    $('roInterval').textContent = S.interval;
+    $('roEffort').textContent = S.effort;
+    $('roCost').textContent = sessionCost < 1 ? sessionCost.toFixed(3) : sessionCost.toFixed(2);
+    const introInterval = $('introInterval'), introKey = $('introKey'); // gone once the first answer renders
+    if (introInterval) introInterval.textContent = S.interval;
+    if (introKey) introKey.textContent = S.key
+      ? 'API key is set. Tap Start when the phone is in position.'
+      : 'First, add your Claude API key in settings (the gear at the top right).';
+    answerBody.style.fontSize = S.textSize + 'px';
+  }
+  function showBanner(msg, kind) {
+    banner.textContent = msg;
+    banner.className = 'banner' + (kind === 'note' ? ' note' : '');
+    banner.hidden = false;
+  }
+  function hideBanner() { banner.hidden = true; }
+  const fmtTime = (d) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const fmtF = (n) => 'F-' + String(n).padStart(4, '0');
+  const secs = (ms) => (ms / 1000).toFixed(1) + ' s';
+
+  // ---------- camera ----------
+  async function openCamera() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error('This browser cannot open the camera here. Open the page over https:// in Safari.');
+    }
+    stopCamera();
+    const constraints = {
+      audio: false,
+      video: { facingMode: { ideal: S.facing }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+    };
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
+    video.srcObject = stream;
+    try { await video.play(); } catch (e) { /* autoplay blocked; muted video usually plays anyway */ }
+    await waitForFrames();
+    $('vfPlaceholder').hidden = true;
+  }
+  function waitForFrames() {
+    return new Promise((resolve) => {
+      const started = Date.now();
+      (function check() {
+        if (video.videoWidth > 0) return resolve();
+        if (Date.now() - started > 6000) return resolve();
+        setTimeout(check, 50);
+      })();
+    });
+  }
+  function stopCamera() {
+    if (stream) { for (const t of stream.getTracks()) t.stop(); }
+    stream = null;
+    video.srcObject = null;
+    $('vfPlaceholder').hidden = false;
+  }
+  function captureFrame() {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh) throw new Error('The camera has not delivered a frame yet.');
+    const scale = Math.min(1, S.imgSize / Math.max(vw, vh));
+    const w = Math.round(vw * scale), h = Math.round(vh * scale);
+    canvas.width = w; canvas.height = h;
+    ctx.drawImage(video, 0, 0, w, h);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+    const tw = 160, th = Math.max(1, Math.round(h * tw / w));
+    thumbCanvas.width = tw; thumbCanvas.height = th;
+    tctx.drawImage(canvas, 0, 0, tw, th);
+    const thumb = thumbCanvas.toDataURL('image/jpeg', 0.6);
+    return { b64: dataUrl.slice(dataUrl.indexOf(',') + 1), thumb, w, h };
+  }
+
+  // ---------- wake lock ----------
+  async function keepAwake() {
+    if (!S.keepAwake || !('wakeLock' in navigator)) return;
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } catch (e) { wakeLock = null; }
+  }
+  function releaseWake() {
+    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && running && !wakeLock) keepAwake();
+  });
+
+  // ---------- loop ----------
+  async function start() {
+    if (!S.key) { openSheet(); $('apiKey').focus(); return; }
+    startBtn.disabled = true;
+    setStatus('armed', 'Opening camera');
+    try {
+      await openCamera();
+    } catch (e) {
+      setStatus('error', 'Camera unavailable');
+      showBanner(e.message || String(e));
+      startBtn.disabled = false;
+      return;
+    }
+    running = true;
+    startBtn.disabled = false;
+    startBtn.textContent = 'Stop';
+    startBtn.dataset.running = 'true';
+    snapBtn.disabled = false;
+    hideBanner();
+    keepAwake();
+    tick();
+  }
+  function stop() {
+    running = false;
+    clearTimeout(tickTimer); tickTimer = null; nextAt = 0;
+    pending = null;
+    for (const r of active) r.ctrl.abort();
+    active = [];
+    stopCamera();
+    releaseWake();
+    startBtn.textContent = 'Start';
+    startBtn.dataset.running = 'false';
+    snapBtn.disabled = true;
+    countdown.textContent = '';
+    setStatus('idle', 'Stopped');
+  }
+  function tick() {
+    if (!running) return;
+    snap('timer');
+    nextAt = Date.now() + S.interval * 1000;
+    tickTimer = setTimeout(tick, S.interval * 1000);
+  }
+  function reschedule() {
+    if (!running) return;
+    clearTimeout(tickTimer);
+    nextAt = Date.now() + S.interval * 1000;
+    tickTimer = setTimeout(tick, S.interval * 1000);
+  }
+  function snap(source) {
+    let frame;
+    try { frame = captureFrame(); } catch (e) { showBanner(e.message); return; }
+    frameNo += 1;
+    frame.no = frameNo;
+    frame.at = new Date();
+    frameCounter.textContent = fmtF(frameNo);
+    lastShot.src = frame.thumb; lastShot.hidden = false;
+    flash.classList.remove('on'); void flash.offsetWidth; flash.classList.add('on');
+
+    if (active.length && source === 'timer') {
+      if (S.busy === 'skip') { setStatus('thinking', `Busy · skipped ${fmtF(frameNo)}`); return; }
+      if (S.busy === 'latest') { pending = frame; setStatus('thinking', `Busy · ${fmtF(frameNo)} queued`); return; }
+    }
+    send(frame);
+  }
+
+  // ---------- API ----------
+  async function send(frame) {
+    const req = {
+      id: ++reqSeq, frame, ctrl: new AbortController(),
+      startedAt: Date.now(), firstTextAt: 0, endedAt: 0,
+      text: '', inTok: 0, outTok: 0, cost: 0, stop: '', error: null,
+    };
+    active.push(req);
+    current = req;
+    hideBanner();
+    setStatus('thinking', `Thinking on ${fmtF(frame.no)}`);
+    renderCurrent();
+
+    const body = {
+      model: S.model,
+      max_tokens: S.maxTokens,
+      stream: true,
+      output_config: { effort: S.effort },
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: frame.b64 } },
+          { type: 'text', text: S.prompt || DEFAULT_PROMPT },
+        ],
+      }],
+    };
+
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': S.key,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify(body),
+        signal: req.ctrl.signal,
+      });
+      if (!res.ok) {
+        let detail = '';
+        try { const j = await res.json(); detail = (j.error && j.error.message) || JSON.stringify(j); }
+        catch (e) { detail = res.statusText; }
+        throw new Error(`HTTP ${res.status} · ${detail}`);
+      }
+      await readSSE(res.body, (ev, data) => handleEvent(req, ev, data));
+      if (req.error) throw req.error;
+    } catch (e) {
+      if (e.name === 'AbortError') { req.error = new Error('Stopped'); }
+      else req.error = e;
+    } finally {
+      req.endedAt = Date.now();
+      active = active.filter((r) => r !== req);
+      finish(req);
+      if (running && pending && !active.length) { const f = pending; pending = null; send(f); }
+    }
+  }
+
+  function handleEvent(req, ev, data) {
+    const [pIn, pOut] = priceFor(S.model);
+    switch (ev) {
+      case 'message_start':
+        if (data.message && data.message.usage) {
+          req.inTok = data.message.usage.input_tokens || 0;
+        }
+        break;
+      case 'content_block_delta':
+        if (data.delta && data.delta.type === 'text_delta') {
+          if (!req.firstTextAt) req.firstTextAt = Date.now();
+          req.text += data.delta.text;
+          if (req === current) { setStatus('streaming', `Answering ${fmtF(req.frame.no)}`); renderCurrent(); }
+        }
+        break;
+      case 'message_delta':
+        if (data.usage) req.outTok = data.usage.output_tokens || req.outTok;
+        if (data.delta && data.delta.stop_reason) req.stop = data.delta.stop_reason;
+        break;
+      case 'error':
+        req.error = new Error((data.error && data.error.message) || 'Stream error');
+        break;
+      default:
+        break;
+    }
+    req.cost = (req.inTok * pIn + req.outTok * pOut) / 1e6;
+  }
+
+  async function readSSE(bodyStream, onEvent) {
+    const reader = bodyStream.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    const dispatch = (chunk) => {
+      let ev = 'message'; const data = [];
+      for (const line of chunk.split('\n')) {
+        if (line.startsWith('event:')) ev = line.slice(6).trim();
+        else if (line.startsWith('data:')) data.push(line.slice(5).trim());
+      }
+      if (!data.length) return;
+      let parsed;
+      try { parsed = JSON.parse(data.join('\n')); } catch (e) { return; }
+      onEvent(ev, parsed);
+    };
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        dispatch(buf.slice(0, idx));
+        buf = buf.slice(idx + 2);
+      }
+    }
+    if (buf.trim()) dispatch(buf);
+  }
+
+  function finish(req) {
+    const took = req.endedAt - req.startedAt;
+    sessionCost += req.cost;
+    refreshReadouts();
+    if (req.error) {
+      if (req === current && req.error.message !== 'Stopped') {
+        setStatus('error', `Failed on ${fmtF(req.frame.no)}`);
+        showBanner(`Request for ${fmtF(req.frame.no)} failed after ${secs(took)}: ${req.error.message}`);
+        answerMeta.textContent = `${fmtF(req.frame.no)} · ${fmtTime(req.frame.at)} · failed`;
+      }
+      pushHistory(req);
+      return;
+    }
+    if (req.text) lastGoodText = req.text;
+    if (req === current) {
+      const bits = [fmtF(req.frame.no), fmtTime(req.frame.at), `${secs(took)}`, `${req.inTok}→${req.outTok} tok`, `$${req.cost.toFixed(3)}`];
+      answerMeta.textContent = bits.join(' · ');
+      answerBody.innerHTML = md(req.text || '(no text in the reply)');
+      answerBody.classList.remove('stale');
+      copyBtn.hidden = !req.text;
+      if (req.stop === 'max_tokens') showBanner('The reply hit the max output tokens limit and was cut off. Raise the limit in settings if this keeps happening.', 'note');
+      else if (req.stop === 'refusal') showBanner('Claude declined to answer this frame.', 'note');
+      setStatus(running ? 'done' : 'idle', running ? `Answered ${fmtF(req.frame.no)} · next in ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s` : 'Idle');
+    }
+    pushHistory(req);
+  }
+
+  function renderCurrent() {
+    const r = current;
+    if (!r) return;
+    const elapsed = Date.now() - r.startedAt;
+    const phase = r.firstTextAt ? 'answering' : 'thinking';
+    answerMeta.textContent = `${fmtF(r.frame.no)} · ${fmtTime(r.frame.at)} · ${phase} ${secs(elapsed)}`;
+    if (r.text) {
+      answerBody.innerHTML = md(r.text) + '<span class="cursor" aria-hidden="true"></span>';
+      answerBody.classList.remove('stale');
+      copyBtn.hidden = false;
+    } else if (lastGoodText) {
+      answerBody.classList.add('stale');
+    } else {
+      answerBody.innerHTML = `<div class="placeholder"><p><b>Thinking about ${fmtF(r.frame.no)}…</b></p><p>At effort <b>${S.effort}</b> the first words can take a while. The elapsed time is in the line above.</p></div>`;
+      copyBtn.hidden = true;
+    }
+  }
+
+  function pushHistory(req) {
+    history.unshift(req);
+    if (history.length > 40) history.pop();
+    histCount.textContent = `(${history.length})`;
+    const li = document.createElement('li');
+    li.className = 'hist-item';
+    const img = document.createElement('img');
+    img.src = req.frame.thumb; img.alt = fmtF(req.frame.no);
+    const box = document.createElement('div');
+    const meta = document.createElement('div');
+    meta.className = 'h-meta';
+    const took = secs(req.endedAt - req.startedAt);
+    meta.textContent = req.error
+      ? `${fmtF(req.frame.no)} · ${fmtTime(req.frame.at)} · failed · ${took}`
+      : `${fmtF(req.frame.no)} · ${fmtTime(req.frame.at)} · ${took} · $${req.cost.toFixed(3)}`;
+    const text = document.createElement('div');
+    text.className = 'h-text' + (req.error ? ' err' : '');
+    text.textContent = req.error ? req.error.message : (req.text || '(no text)');
+    box.append(meta, text);
+    li.append(img, box);
+    li.addEventListener('click', () => li.classList.toggle('open'));
+    histList.prepend(li);
+    while (histList.children.length > 40) histList.lastChild.remove();
+  }
+
+  // ---------- live readouts (countdown, elapsed) ----------
+  setInterval(() => {
+    if (running && nextAt) {
+      const s = Math.max(0, Math.ceil((nextAt - Date.now()) / 1000));
+      countdown.textContent = `● next in ${s}s`;
+    } else {
+      countdown.textContent = '';
+    }
+    if (current && !current.endedAt) {
+      renderMetaOnly(current);
+      if (statusEl.dataset.kind === 'thinking' || statusEl.dataset.kind === 'streaming') {
+        const phase = current.firstTextAt ? 'Answering' : 'Thinking';
+        const queued = pending ? ` · ${fmtF(pending.no)} queued` : '';
+        setStatus(current.firstTextAt ? 'streaming' : 'thinking', `${phase} ${fmtF(current.frame.no)} · ${secs(Date.now() - current.startedAt)}${queued}`);
+      }
+    } else if (running && statusEl.dataset.kind === 'done' && current) {
+      setStatus('done', `Answered ${fmtF(current.frame.no)} · next in ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s`);
+    }
+  }, 250);
+  function renderMetaOnly(r) {
+    const phase = r.firstTextAt ? 'answering' : 'thinking';
+    answerMeta.textContent = `${fmtF(r.frame.no)} · ${fmtTime(r.frame.at)} · ${phase} ${secs(Date.now() - r.startedAt)}`;
+  }
+
+  // ---------- tiny markdown ----------
+  function esc(s) {
+    return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  }
+  function inline(s) {
+    s = esc(s);
+    s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+    s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, '$1<em>$2</em>');
+    return s;
+  }
+  function md(src) {
+    const lines = String(src).replace(/\r/g, '').split('\n');
+    const out = [];
+    let para = [], list = null, i = 0;
+    const flushP = () => { if (para.length) { out.push('<p>' + inline(para.join(' ')) + '</p>'); para = []; } };
+    const flushL = () => {
+      if (list) {
+        out.push(`<${list.tag}>` + list.items.map((x) => '<li>' + inline(x) + '</li>').join('') + `</${list.tag}>`);
+        list = null;
+      }
+    };
+    while (i < lines.length) {
+      const l = lines[i];
+      if (/^\s*```/.test(l)) {
+        flushP(); flushL();
+        const code = []; i++;
+        while (i < lines.length && !/^\s*```/.test(lines[i])) { code.push(lines[i]); i++; }
+        i++;
+        out.push('<pre><code>' + esc(code.join('\n')) + '</code></pre>');
+        continue;
+      }
+      const h = /^(#{1,6})\s+(.*)$/.exec(l);
+      if (h) { flushP(); flushL(); const n = Math.min(h[1].length + 1, 4); out.push(`<h${n}>` + inline(h[2]) + `</h${n}>`); i++; continue; }
+      if (/^\s*(-{3,}|\*{3,})\s*$/.test(l)) { flushP(); flushL(); i++; continue; }
+      const li = /^\s*(?:[-*•]|\d+[.)])\s+(.*)$/.exec(l);
+      if (li) {
+        flushP();
+        const tag = /^\s*\d/.test(l) ? 'ol' : 'ul';
+        if (!list || list.tag !== tag) { flushL(); list = { tag, items: [] }; }
+        list.items.push(li[1]); i++; continue;
+      }
+      if (!l.trim()) { flushP(); flushL(); i++; continue; }
+      if (list) { list.items[list.items.length - 1] += ' ' + l.trim(); i++; continue; }
+      para.push(l.trim()); i++;
+    }
+    flushP(); flushL();
+    return out.join('');
+  }
+
+  // ---------- settings sheet ----------
+  const sheet = $('sheet'), sheetBack = $('sheetBack');
+  function openSheet() {
+    $('apiKey').value = S.key;
+    $('model').value = S.model;
+    $('effort').value = S.effort;
+    $('interval').value = S.interval;
+    $('busy').value = S.busy;
+    $('prompt').value = S.prompt;
+    $('imgSize').value = String(S.imgSize);
+    $('maxTokens').value = S.maxTokens;
+    $('facing').value = S.facing;
+    $('thumbSize').value = String(S.textSize);
+    $('keepAwake').checked = !!S.keepAwake;
+    $('saveKey').checked = !!S.saveKey;
+    sheet.hidden = false; sheetBack.hidden = false;
+  }
+  function closeSheet() { sheet.hidden = true; sheetBack.hidden = true; }
+  $('settingsBtn').addEventListener('click', openSheet);
+  $('cancelBtn').addEventListener('click', closeSheet);
+  sheetBack.addEventListener('click', closeSheet);
+  $('showKey').addEventListener('click', () => {
+    const k = $('apiKey');
+    const show = k.type === 'password';
+    k.type = show ? 'text' : 'password';
+    $('showKey').textContent = show ? 'Hide' : 'Show';
+  });
+  $('forgetKey').addEventListener('click', () => {
+    $('apiKey').value = '';
+    S.key = '';
+    saveSettings();
+    refreshReadouts();
+  });
+  sheet.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const prevInterval = S.interval, prevFacing = S.facing;
+    S.key = $('apiKey').value.trim();
+    S.model = $('model').value.trim() || DEFAULTS.model;
+    S.effort = $('effort').value;
+    S.interval = clamp(parseInt($('interval').value, 10) || 15, 5, 600);
+    S.busy = $('busy').value;
+    S.prompt = $('prompt').value.trim() || DEFAULT_PROMPT;
+    S.imgSize = parseInt($('imgSize').value, 10) || 1024;
+    S.maxTokens = clamp(parseInt($('maxTokens').value, 10) || 32000, 1024, 128000);
+    S.facing = $('facing').value;
+    S.textSize = parseInt($('thumbSize').value, 10) || 17;
+    S.keepAwake = $('keepAwake').checked;
+    S.saveKey = $('saveKey').checked;
+    saveSettings();
+    refreshReadouts();
+    closeSheet();
+    if (running && S.interval !== prevInterval) reschedule();
+    if (running && S.facing !== prevFacing) openCamera().catch((err) => showBanner(err.message));
+    if (running) { if (S.keepAwake) keepAwake(); else releaseWake(); }
+  });
+
+  // ---------- buttons ----------
+  startBtn.addEventListener('click', () => { if (running) stop(); else start(); });
+  snapBtn.addEventListener('click', () => { if (running) snap('manual'); });
+  $('viewfinder').addEventListener('click', () => $('viewfinder').classList.toggle('big'));
+  copyBtn.addEventListener('click', () => {
+    const text = current && current.text ? current.text : lastGoodText;
+    if (!text) return;
+    const done = () => { copyBtn.textContent = 'Copied'; setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1200); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done).catch(selectAll);
+    else selectAll();
+    function selectAll() {
+      const range = document.createRange(); range.selectNodeContents(answerBody);
+      const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+    }
+  });
+  window.addEventListener('pagehide', () => { if (running) stop(); });
+
+  // ---------- boot ----------
+  refreshReadouts();
+  if (!window.isSecureContext) {
+    showBanner('This page must be opened over https:// for the camera to work.');
+  }
+  setStatus('idle', S.key ? 'Ready' : 'Add API key');
+})();
+</script>
+</body>
+</html>
