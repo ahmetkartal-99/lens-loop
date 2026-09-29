@@ -543,8 +543,8 @@
   const DEFAULTS = {
     v: 2,
     key: '',
-    model: 'claude-opus-5-5',
-    effort: 'high',
+    model: 'claude-fable-5-1',
+    effort: 'xhigh',
     interval: 15,
     busy: 'latest',
     prompt: DEFAULT_PROMPT,
@@ -577,7 +577,7 @@
         }
         if (s.v !== saved.v) s.migrated = true;
       }
-      s.effort = 'high'; // effort starts at high on every open; a change in settings lasts until the page is closed
+      s.effort = 'xhigh'; // effort starts at high on every open; a change in settings lasts until the page is closed
     } catch (e) { /* storage unavailable */ }
     s.interval = clamp(+s.interval || 15, 5, 600);
     s.maxTokens = clamp(+s.maxTokens || 32024, 1024, 128000);
