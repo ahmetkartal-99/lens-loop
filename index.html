@@ -185,7 +185,7 @@
   .vf-corners i::before { bottom: 0; left: 0; border-right: 0; border-top: 0; }
   .vf-corners i::after { bottom: 0; right: 0; border-left: 0; border-top: 0; }
   .vf-readout {
-    position: absolute; left: 16px; top: 36px;
+    position: absolute; left: 16px; top: 12px;
     display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
     font-family: var(--mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
     color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.9);
@@ -194,7 +194,7 @@
   }
   .vf-readout .rec { color: var(--accent); }
   .last-shot {
-    position: absolute; top: 36px; right: 16px;
+    position: absolute; top: 12px; right: 16px;
     height: 56px; width: auto; max-width: 40%;
     border: 1px solid rgba(255,255,255,.6);
     border-radius: 6px;
@@ -203,7 +203,7 @@
     box-shadow: 0 2px 8px rgba(0,0,0,.5);
   }
   .zoom-row {
-    position: absolute; left: 16px; top: 100px;
+    position: absolute; left: 16px; top: 74px;
     display: flex; gap: 6px;
   }
   .zoom-chip {
@@ -221,7 +221,7 @@
   .answer {
     position: absolute;
     left: 8px; right: 8px; bottom: 8px;
-    max-height: 58%;
+    top: 116px; /* the strip above stays camera: readouts, thumbnail and zoom chips */
     display: flex;
     flex-direction: column;
     background: var(--overlay);
@@ -239,6 +239,18 @@
     color: var(--text);
   }
   .answer.collapsed .answer-scroll { display: none; }
+  .answer.collapsed { top: auto; }
+  .big-answer {
+    font-weight: 800;
+    line-height: 1.06;
+    letter-spacing: -.01em;
+    color: var(--text);
+    overflow-wrap: anywhere;
+    text-wrap: balance;
+    padding: 2px 0 12px;
+    margin: 0 0 14px;
+    border-bottom: 3px solid var(--accent);
+  }
   .answer-head {
     display: flex; align-items: center; gap: 10px;
     padding: 9px 14px;
@@ -435,7 +447,7 @@
       </div>
     </div>
     <div class="field" style="margin-top:-6px">
-      <div class="hint"><b>max</b> is the deepest reasoning and the slowest: a frame can take 30 s to several minutes and cost $0.10–0.60 or more in output tokens. <b>high</b> usually answers in well under a minute for a fraction of that.</div>
+      <div class="hint">Starts at <b>high</b> every time the page opens; a change here lasts until the page is closed. <b>max</b> is the deepest reasoning and the slowest: a frame can take 30 s to several minutes and cost $0.10–0.60 or more in output tokens.</div>
     </div>
 
     <div class="row">
@@ -512,15 +524,27 @@
   const $ = (id) => document.getElementById(id);
 
   // ---------- settings ----------
-  const DEFAULT_PROMPT =
+  const PROMPT_V2 =
     'Look at this photo carefully. If it shows a question, problem, exercise, or text that asks for an answer, give the answer directly and show the key steps briefly. ' +
     'If not, describe what is in the frame and anything notable or worth acting on. Lead with the most important thing. Keep it under 200 words unless the problem needs more.';
+  const DEFAULT_PROMPT =
+    'Look at this photo carefully. If it shows a question, problem, exercise or multiple-choice item, solve it and give the correct answer, then the key steps briefly. ' +
+    'If there is no question, describe what is in the frame and anything notable. Keep the explanation under 150 words unless the problem needs more.';
+  // Sent as the system prompt on every request, separate from the editable prompt above, so the
+  // first line of every reply can be rendered as a large headline.
+  const SYSTEM_RULES =
+    'You are answering from a single photo taken by a phone camera. Format every reply the same way: ' +
+    'the very first line is exactly "ANSWER: " followed by the answer and nothing else on that line. ' +
+    'For a multiple-choice question that is the letter or number of the correct option plus its text, for example "ANSWER: C) $2000". ' +
+    'For a calculation it is the final value with units. For a yes/no question it is Yes or No plus a few words. ' +
+    'If the photo contains no question, that line is a short title of what is in the frame (at most six words). ' +
+    'Then a blank line, then a brief explanation. Never put anything before the ANSWER line.';
 
   const DEFAULTS = {
     v: 2,
     key: '',
     model: 'claude-opus-5-5',
-    effort: 'max',
+    effort: 'high',
     interval: 15,
     busy: 'latest',
     prompt: DEFAULT_PROMPT,
@@ -535,6 +559,7 @@
   };
   const STORE = 'lensloop.settings';
   let S = loadSettings();
+  if (S.migrated) { delete S.migrated; saveSettings(); }
 
   function loadSettings() {
     const s = { ...DEFAULTS };
@@ -546,7 +571,13 @@
         if (!saved.v || saved.v < 2) { // settings saved by the first version: move to the new defaults
           s.maxTokens = 32024; s.textSize = 20; s.imgSize = 1568; s.v = 2;
         }
+        if (s.v < 3) { // second version: new default prompt (only if the prompt was never customised)
+          if (!saved.prompt || saved.prompt === PROMPT_V2) s.prompt = DEFAULT_PROMPT;
+          s.v = 3;
+        }
+        if (s.v !== saved.v) s.migrated = true;
       }
+      s.effort = 'high'; // effort starts at high on every open; a change in settings lasts until the page is closed
     } catch (e) { /* storage unavailable */ }
     s.interval = clamp(+s.interval || 15, 5, 600);
     s.maxTokens = clamp(+s.maxTokens || 32024, 1024, 128000);
@@ -844,6 +875,7 @@
       max_tokens: S.maxTokens,
       stream: true,
       output_config: { effort: S.effort },
+      system: SYSTEM_RULES,
       messages: [{
         role: 'user',
         content: [
@@ -957,7 +989,7 @@
     if (req === current) {
       const bits = [fmtF(req.frame.no), fmtTime(req.frame.at), `${secs(took)}`, `${req.inTok}→${req.outTok} tok`, `$${req.cost.toFixed(3)}`];
       answerMeta.textContent = bits.join(' · ');
-      answerBody.innerHTML = md(req.text || '(no text in the reply)');
+      answerBody.innerHTML = renderAnswer(req.text || '(no text in the reply)', false);
       answerBody.classList.remove('stale');
       copyBtn.hidden = !req.text;
       if (req.stop === 'max_tokens') showBanner('The reply hit the max output tokens limit and was cut off. Raise the limit in settings if this keeps happening.', 'note');
@@ -974,7 +1006,7 @@
     const phase = r.firstTextAt ? 'answering' : 'thinking';
     answerMeta.textContent = `${fmtF(r.frame.no)} · ${fmtTime(r.frame.at)} · ${phase} ${secs(elapsed)}`;
     if (r.text) {
-      answerBody.innerHTML = md(r.text) + '<span class="cursor" aria-hidden="true"></span>';
+      answerBody.innerHTML = renderAnswer(r.text, true);
       answerBody.classList.remove('stale');
       copyBtn.hidden = false;
     } else if (lastGoodText) {
@@ -1032,6 +1064,33 @@
   function renderMetaOnly(r) {
     const phase = r.firstTextAt ? 'answering' : 'thinking';
     answerMeta.textContent = `${fmtF(r.frame.no)} · ${fmtTime(r.frame.at)} · ${phase} ${secs(Date.now() - r.startedAt)}`;
+  }
+
+  // ---------- answer rendering: "ANSWER: …" first line becomes the headline ----------
+  function splitAnswer(text) {
+    const t = String(text).replace(/\r/g, '');
+    const nl = t.indexOf('\n');
+    const first = nl < 0 ? t : t.slice(0, nl);
+    const m = /^\s*(?:[*_#]+\s*)?answer\s*(?:[*_]+)?\s*:\s*(.*)$/i.exec(first);
+    if (!m) return { head: '', body: t };
+    const head = m[1].replace(/[*_]+$/g, '').trim();
+    return { head, body: nl < 0 ? '' : t.slice(nl + 1).replace(/^\s*\n/, '') };
+  }
+  function headlineSize(str) {
+    const n = str.length;
+    if (n <= 10) return 68;
+    if (n <= 18) return 56;
+    if (n <= 30) return 44;
+    if (n <= 50) return 34;
+    if (n <= 90) return 27;
+    return 22;
+  }
+  function renderAnswer(text, streaming) {
+    const { head, body } = splitAnswer(text);
+    const cursor = streaming ? '<span class="cursor" aria-hidden="true"></span>' : '';
+    if (!head) return md(text) + cursor;
+    const big = '<div class="big-answer" style="font-size:' + headlineSize(head) + 'px">' + esc(head) + (body ? '' : cursor) + '</div>';
+    return big + (body ? md(body) + cursor : '');
   }
 
   // ---------- tiny markdown ----------
