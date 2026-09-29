@@ -447,7 +447,7 @@
       </div>
     </div>
     <div class="field" style="margin-top:-6px">
-      <div class="hint">Starts at <b>high</b> every time the page opens; a change here lasts until the page is closed. <b>max</b> is the deepest reasoning and the slowest: a frame can take 30 s to several minutes and cost $0.10–0.60 or more in output tokens.</div>
+      <div class="hint">Model and effort start from the values in the page's code every time it opens; a change here lasts until the page is closed. <b>max</b> is the deepest reasoning and the slowest: a frame can take 30 s to several minutes and cost $0.10–0.60 or more in output tokens.</div>
     </div>
 
     <div class="row">
@@ -540,11 +540,18 @@
     'If the photo contains no question, that line is a short title of what is in the frame (at most six words). ' +
     'Then a blank line, then a brief explanation. Never put anything before the ANSWER line.';
 
+  // ======= EDIT THESE TWO LINES TO CHANGE THE MODEL AND EFFORT =======
+  // They apply on every open, whatever was saved on the phone. Valid effort values:
+  // 'low', 'medium', 'high', 'xhigh', 'max'. Model IDs: 'claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5'.
+  const MODEL = 'claude-fable-5-1';
+  const EFFORT = 'xhigh';
+  // ====================================================================
+
   const DEFAULTS = {
     v: 2,
     key: '',
-    model: 'claude-fable-5-1',
-    effort: 'xhigh',
+    model: MODEL,
+    effort: EFFORT,
     interval: 15,
     busy: 'latest',
     prompt: DEFAULT_PROMPT,
@@ -577,7 +584,8 @@
         }
         if (s.v !== saved.v) s.migrated = true;
       }
-      s.effort = 'xhigh'; // effort starts at high on every open; a change in settings lasts until the page is closed
+      s.model = MODEL;   // model and effort always start from the two lines at the top of the script;
+      s.effort = EFFORT; // a change in the settings sheet lasts until the page is closed
     } catch (e) { /* storage unavailable */ }
     s.interval = clamp(+s.interval || 15, 5, 600);
     s.maxTokens = clamp(+s.maxTokens || 32024, 1024, 128000);

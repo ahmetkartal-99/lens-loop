@@ -4,7 +4,7 @@ A single-page web app for a phone: prop the phone up, open the page, tap **Start
 
 - `index.html` is the whole app. No build step, no server; it talks to `api.anthropic.com` directly from the browser.
 - Your API key is typed into the page's settings and stays in that phone's browser storage. Nothing in this repository holds a key.
-- Defaults: `claude-opus-5-5`, one frame every 15 s, 1568 px images, 32,024 max output tokens, large text. Effort starts at `high` on every open. All of it is adjustable in the settings sheet.
+- Model and effort come from two lines near the top of the script in `index.html` (`const MODEL` and `const EFFORT`, currently `claude-fable-5-1` at `xhigh`) and apply on every open; edit those two lines on GitHub to change them. Other defaults: one frame every 15 s, 1568 px images, 32,024 max output tokens, large text; all adjustable in the settings sheet.
 - Every reply is asked (via a fixed system prompt) to start with a line `ANSWER: …`, which the page renders as a large headline above the explanation, so a multiple-choice verdict such as `C) $2000` is readable from across the room.
 - The camera fills the screen; the answer panel runs from just under the camera strip to the bottom and can be hidden with a tap to see the whole camera.
 - On phones whose browser exposes camera zoom (iOS 17+), zoom presets appear on the view (widest lens, 1×, 2×) and the widest is used by default; every lens the phone reports is also listed in the camera picker. The camera is asked for its highest resolution before the frame is scaled to the chosen size.
