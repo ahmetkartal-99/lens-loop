@@ -85,7 +85,13 @@
     text-transform: uppercase;
     flex: 0 0 auto;
   }
-  .bar.bottom { border-bottom: 0; border-top: 1px solid var(--line); padding: 10px 16px; }
+  .bar.bottom { border-bottom: 0; border-top: 1px solid var(--line); padding: 8px 16px 10px; flex-direction: column; align-items: stretch; gap: 8px; }
+  .btn-row { display: flex; gap: 8px; }
+  .btn-row .btn { flex: 1; min-width: 0; padding: 10px 4px; text-align: center; }
+  .btn.rec[data-on="true"] { background: var(--bad); border-color: var(--bad); color: #fff; }
+  .btn.rec[data-on="true"] .dot-rec { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #fff; margin-right: 6px; animation: pulse 1.2s ease-in-out infinite; vertical-align: 1px; }
+  .badge { display: inline-grid; place-items: center; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: var(--accent-ink); font-family: var(--mono); font-size: 10px; font-weight: 600; position: absolute; top: -5px; right: -5px; }
+  .icon-btn { position: relative; }
   .brand { font-weight: 600; letter-spacing: .14em; }
   .status {
     flex: 1;
@@ -357,6 +363,28 @@
   .key-row input { flex: 1; min-width: 0; }
   .sheet-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; margin-top: 6px; }
   .sheet-actions .btn.quiet { border-color: transparent; background: transparent; color: var(--muted); margin-right: auto; }
+  .story-tag {
+    display: inline-block;
+    font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--accent);
+    border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+    border-radius: 999px;
+    padding: 3px 9px;
+    margin: -4px 0 14px;
+  }
+  .transcript { font-size: 16px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .transcript .interim { color: var(--muted); }
+  .transcript .empty { color: var(--muted); }
+  .story-list { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .story-item { padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; }
+  .story-item .s-title { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); font-size: 16px; font-weight: 600; }
+  .story-item .s-meta { font-family: var(--mono); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 6px 0 4px; }
+  .story-item .s-sum { font-size: 13px; line-height: 1.4; color: var(--text); }
+  .story-item .s-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+  .story-item .s-row .btn { padding: 7px 10px; font-size: 11px; }
+  .story-item .s-row .check { margin: 0; font-size: 13px; }
+  .story-item .s-text { display: none; margin-top: 8px; font-size: 13px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow: auto; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  .story-item.open .s-text { display: block; }
 
   @media (prefers-reduced-motion: reduce) {
     .dot, .cursor, .viewfinder .flash.on { animation: none; }
@@ -368,6 +396,10 @@
   <header class="bar top">
     <div class="brand">Lens Loop</div>
     <div class="status" id="status" data-kind="idle" aria-live="polite"><span class="dot"></span><span id="statusText">Idle</span></div>
+    <button class="icon-btn" id="storiesBtn" aria-label="Storylines" title="Storylines">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path><path d="M9 7h7M9 11h5"></path></svg>
+      <span class="badge" id="storyBadge" hidden>0</span>
+    </button>
     <button class="icon-btn" id="settingsBtn" aria-label="Settings" title="Settings">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path></svg>
     </button>
@@ -396,6 +428,7 @@
           <div class="placeholder" id="intro">
             <p><b>Set the phone down, tap Start, and leave it.</b></p>
             <p>Every <span id="introInterval">15</span> seconds the camera takes one frame and sends it to Claude. The answer streams into this panel and replaces the previous one. Earlier answers stay in the list below. Tap the camera or "Hide" to tuck this panel away.</p>
+            <p><b>Listen</b> records a brainstorming session as a storyline and keeps it on this phone. <b>Ask</b> takes one spoken question and answers it from the saved storylines — Claude works out which storyline it belongs to. Camera frames are answered with the storylines in mind too.</p>
             <p id="introKey">First, add your Claude API key in settings (the gear at the top right).</p>
           </div>
         </div>
@@ -412,9 +445,14 @@
       <span title="Capture interval"><b id="roInterval">15</b>s</span>
       <span title="Effort">·</span><span><b id="roEffort">max</b></span>
       <span title="Session cost">·</span><span>$<b id="roCost">0.00</b></span>
+      <span title="Saved storylines" id="roStoriesWrap" hidden>·</span><span id="roStories" hidden><b>0</b> storylines</span>
     </div>
-    <button class="btn" id="snapBtn" type="button" disabled>Snap</button>
-    <button class="btn primary" id="startBtn" type="button" data-running="false">Start</button>
+    <div class="btn-row">
+      <button class="btn rec" id="listenBtn" type="button" data-on="false" title="Record a storyline">Listen</button>
+      <button class="btn rec" id="askBtn" type="button" data-on="false" title="Ask a question by voice">Ask</button>
+      <button class="btn" id="snapBtn" type="button" disabled>Snap</button>
+      <button class="btn primary" id="startBtn" type="button" data-running="false">Start</button>
+    </div>
   </footer>
 
   <div class="sheet-back" id="sheetBack" hidden></div>
@@ -508,6 +546,30 @@
     <label class="check"><input type="checkbox" id="saveKey"> Remember the API key on this phone</label>
     <label class="check"><input type="checkbox" id="rotateText"> Turn the answer text to match how the phone is tilted (camera view stays put)</label>
     <label class="check"><input type="checkbox" id="uprightPhoto"> Send the photo upright when the phone is tilted</label>
+
+    <div class="row">
+      <div class="field">
+        <label for="sttLang">Listening language</label>
+        <select id="sttLang">
+          <option value="">Phone default</option>
+          <option value="en-US">English (US)</option>
+          <option value="en-GB">English (UK)</option>
+          <option value="de-DE">Deutsch</option>
+          <option value="tr-TR">Türkçe</option>
+          <option value="fr-FR">Français</option>
+          <option value="es-ES">Español</option>
+          <option value="it-IT">Italiano</option>
+          <option value="pt-BR">Português</option>
+          <option value="nl-NL">Nederlands</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Storylines</label>
+        <label class="check" style="margin:4px 0 0"><input type="checkbox" id="useStories"> Use them when answering</label>
+        <label class="check" style="margin:4px 0 0"><input type="checkbox" id="askWithFrame"> Attach a camera frame to spoken questions</label>
+      </div>
+    </div>
+    <div class="field" style="margin-top:-6px"><div class="hint"><b>Listen</b> records a storyline with the phone's own speech recognition (iOS asks for the microphone; keep Siri &amp; Dictation on). <b>Ask</b> takes one spoken question and answers it from the saved storylines, picking the right one itself. Camera frames are answered with the storylines in mind too.</div></div>
     <div class="field" style="margin-top:-4px"><div class="hint">Tilt is read from the motion sensor; iOS asks for permission on Start. Works best with Orientation Lock on, so Safari itself never rotates the page.</div></div>
 
     <div class="sheet-actions">
@@ -517,6 +579,18 @@
     </div>
   </form>
 </div>
+
+<form class="sheet" id="storySheet" hidden>
+  <h2>Storylines</h2>
+  <div class="field"><div class="hint">Each recording is saved on this phone as a storyline with a title, summary and key terms written by Claude. Untick one to leave it out of answers. Export keeps a copy as a file; Import merges one back in.</div></div>
+  <ol class="story-list" id="storyList"></ol>
+  <div class="sheet-actions">
+    <button class="btn quiet" type="button" id="storyExport">Export</button>
+    <label class="btn" for="storyImport" style="cursor:pointer">Import</label>
+    <input type="file" id="storyImport" accept=".json,application/json" hidden>
+    <button class="btn" type="button" id="storyClose">Close</button>
+  </div>
+</form>
 
 <canvas id="canvas" hidden></canvas>
 <canvas id="thumbCanvas" hidden></canvas>
@@ -536,12 +610,15 @@
   // Sent as the system prompt on every request, separate from the editable prompt above, so the
   // first line of every reply can be rendered as a large headline.
   const SYSTEM_RULES =
-    'You are answering from a single photo taken by a phone camera. Format every reply the same way: ' +
+    'You are answering either from a single photo taken by a phone camera or from a question the user spoke aloud (sometimes both). Format every reply the same way: ' +
     'the very first line is exactly "ANSWER: " followed by the answer and nothing else on that line. ' +
     'For a multiple-choice question that is the letter or number of the correct option plus its text, for example "ANSWER: C) $2000". ' +
     'For a calculation it is the final value with units. For a yes/no question it is Yes or No plus a few words. ' +
     'If the photo contains no question, that line is a short title of what is in the frame (at most six words). ' +
     'Then a blank line, then a brief explanation. Never put anything before the ANSWER line.';
+  const DIGEST_RULES =
+    'You read automatic speech-to-text transcripts of a fiction author\'s spoken brainstorming and world-building sessions. ' +
+    'Names and invented words may be mis-transcribed; keep the spelling the transcript uses most often. Reply only in the exact line format requested.';
 
   // ======= EDIT THESE TWO LINES TO CHANGE THE MODEL AND EFFORT =======
   // They apply on every open, whatever was saved on the phone. Valid effort values:
@@ -568,6 +645,9 @@
     saveKey: true,
     rotateText: true,
     uprightPhoto: true,
+    sttLang: '',
+    useStories: true,
+    askWithFrame: true,
   };
   const STORE = 'lensloop.settings';
   let S = loadSettings();
@@ -651,6 +731,10 @@
     $('roInterval').textContent = S.interval;
     $('roEffort').textContent = S.effort;
     $('roCost').textContent = sessionCost < 1 ? sessionCost.toFixed(3) : sessionCost.toFixed(2);
+    const n = stories.length;
+    $('roStories').innerHTML = '<b>' + n + '</b> storyline' + (n === 1 ? '' : 's');
+    $('roStories').hidden = !n; $('roStoriesWrap').hidden = !n;
+    $('storyBadge').textContent = String(n); $('storyBadge').hidden = !n;
     const introInterval = $('introInterval'), introKey = $('introKey'); // gone once the first answer renders
     if (introInterval) introInterval.textContent = S.interval;
     if (introKey) introKey.textContent = S.key
@@ -811,7 +895,9 @@
     if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
   }
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && running && !wakeLock) keepAwake();
+    if (document.visibilityState !== 'visible') return;
+    if ((running || listening) && !wakeLock) keepAwake();
+    if (listening && story && story.paused) { story.paused = false; runStoryRecognizer(); }
   });
 
   // ---------- loop ----------
@@ -844,7 +930,7 @@
     for (const r of active) r.ctrl.abort();
     active = [];
     stopCamera();
-    releaseWake();
+    if (!listening) releaseWake();
     startBtn.textContent = 'Start';
     startBtn.dataset.running = 'false';
     snapBtn.disabled = true;
@@ -869,7 +955,8 @@
     frameNo += 1;
     frame.no = frameNo;
     frame.at = new Date();
-    frameCounter.textContent = fmtF(frameNo);
+    frame.tag = fmtF(frameNo);
+    frameCounter.textContent = frame.tag;
     lastShot.src = frame.thumb; lastShot.hidden = false;
     flash.classList.remove('on'); void flash.offsetWidth; flash.classList.add('on');
 
@@ -890,22 +977,23 @@
     active.push(req);
     current = req;
     hideBanner();
-    setStatus('thinking', `Thinking on ${fmtF(frame.no)}`);
+    setStatus('thinking', `Thinking on ${frame.tag}`);
     renderCurrent();
 
+    const content = [];
+    if (frame.b64) content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: frame.b64 } });
+    if (frame.question) {
+      content.push({ type: 'text', text: 'Spoken question from the user: ' + frame.question + (frame.b64 ? '\n\nA frame from the camera is attached in case the question refers to it.' : '') });
+    } else {
+      content.push({ type: 'text', text: S.prompt || DEFAULT_PROMPT });
+    }
     const body = {
       model: S.model,
       max_tokens: S.maxTokens,
       stream: true,
       output_config: { effort: S.effort },
-      system: SYSTEM_RULES,
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: frame.b64 } },
-          { type: 'text', text: S.prompt || DEFAULT_PROMPT },
-        ],
-      }],
+      system: buildSystem(),
+      messages: [{ role: 'user', content }],
     };
 
     try {
@@ -944,14 +1032,17 @@
     switch (ev) {
       case 'message_start':
         if (data.message && data.message.usage) {
-          req.inTok = data.message.usage.input_tokens || 0;
+          const u = data.message.usage;
+          req.inTok = u.input_tokens || 0;
+          req.cacheW = u.cache_creation_input_tokens || 0;   // billed at 1.25x input
+          req.cacheR = u.cache_read_input_tokens || 0;       // billed at 0.1x input
         }
         break;
       case 'content_block_delta':
         if (data.delta && data.delta.type === 'text_delta') {
           if (!req.firstTextAt) req.firstTextAt = Date.now();
           req.text += data.delta.text;
-          if (req === current) { setStatus('streaming', `Answering ${fmtF(req.frame.no)}`); renderCurrent(); }
+          if (req === current) { setStatus('streaming', `Answering ${req.frame.tag}`); renderCurrent(); }
         }
         break;
       case 'message_delta':
@@ -964,7 +1055,7 @@
       default:
         break;
     }
-    req.cost = (req.inTok * pIn + req.outTok * pOut) / 1e6;
+    req.cost = (req.inTok * pIn + (req.cacheW || 0) * pIn * 1.25 + (req.cacheR || 0) * pIn * 0.1 + req.outTok * pOut) / 1e6;
   }
 
   async function readSSE(bodyStream, onEvent) {
@@ -1001,23 +1092,25 @@
     refreshReadouts();
     if (req.error) {
       if (req === current && req.error.message !== 'Stopped') {
-        setStatus('error', `Failed on ${fmtF(req.frame.no)}`);
-        showBanner(`Request for ${fmtF(req.frame.no)} failed after ${secs(took)}: ${req.error.message}`);
-        answerMeta.textContent = `${fmtF(req.frame.no)} · ${fmtTime(req.frame.at)} · failed`;
+        setStatus('error', `Failed on ${req.frame.tag}`);
+        showBanner(`Request for ${req.frame.tag} failed after ${secs(took)}: ${req.error.message}`);
+        answerMeta.textContent = `${req.frame.tag} · ${fmtTime(req.frame.at)} · failed`;
       }
       pushHistory(req);
       return;
     }
     if (req.text) lastGoodText = req.text;
     if (req === current) {
-      const bits = [fmtF(req.frame.no), fmtTime(req.frame.at), `${secs(took)}`, `${req.inTok}→${req.outTok} tok`, `$${req.cost.toFixed(3)}`];
+      showingTranscript = false;
+      const inAll = req.inTok + (req.cacheW || 0) + (req.cacheR || 0);
+      const bits = [req.frame.tag, fmtTime(req.frame.at), `${secs(took)}`, `${inAll}${req.cacheR ? ' (' + req.cacheR + ' cached)' : ''}→${req.outTok} tok`, `$${req.cost.toFixed(3)}`];
       answerMeta.textContent = bits.join(' · ');
       answerBody.innerHTML = renderAnswer(req.text || '(no text in the reply)', false);
       answerBody.classList.remove('stale');
       copyBtn.hidden = !req.text;
       if (req.stop === 'max_tokens') showBanner('The reply hit the max output tokens limit and was cut off. Raise the limit in settings if this keeps happening.', 'note');
       else if (req.stop === 'refusal') showBanner('Claude declined to answer this frame.', 'note');
-      setStatus(running ? 'done' : 'idle', running ? `Answered ${fmtF(req.frame.no)} · next in ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s` : 'Idle');
+      setStatus(running ? 'done' : 'idle', running ? `Answered ${req.frame.tag} · next in ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s` : 'Idle');
     }
     pushHistory(req);
   }
@@ -1027,7 +1120,7 @@
     if (!r) return;
     const elapsed = Date.now() - r.startedAt;
     const phase = r.firstTextAt ? 'answering' : 'thinking';
-    answerMeta.textContent = `${fmtF(r.frame.no)} · ${fmtTime(r.frame.at)} · ${phase} ${secs(elapsed)}`;
+    answerMeta.textContent = `${r.frame.tag} · ${fmtTime(r.frame.at)} · ${phase} ${secs(elapsed)}`;
     if (r.text) {
       answerBody.innerHTML = renderAnswer(r.text, true);
       answerBody.classList.remove('stale');
@@ -1035,7 +1128,7 @@
     } else if (lastGoodText) {
       answerBody.classList.add('stale');
     } else {
-      answerBody.innerHTML = `<div class="placeholder"><p><b>Thinking about ${fmtF(r.frame.no)}…</b></p><p>At effort <b>${S.effort}</b> the first words can take a while. The elapsed time is in the line above.</p></div>`;
+      answerBody.innerHTML = `<div class="placeholder"><p><b>${r.frame.question ? 'Thinking about your question…' : 'Thinking about ' + r.frame.tag + '…'}</b></p>${r.frame.question ? '<p>' + esc(r.frame.question) + '</p>' : ''}<p>At effort <b>${S.effort}</b> the first words can take a while. The elapsed time is in the line above.</p></div>`;
       copyBtn.hidden = true;
     }
   }
@@ -1047,17 +1140,17 @@
     const li = document.createElement('li');
     li.className = 'hist-item';
     const img = document.createElement('img');
-    img.src = req.frame.thumb; img.alt = fmtF(req.frame.no);
+    img.src = req.frame.thumb; img.alt = req.frame.tag;
     const box = document.createElement('div');
     const meta = document.createElement('div');
     meta.className = 'h-meta';
     const took = secs(req.endedAt - req.startedAt);
     meta.textContent = req.error
-      ? `${fmtF(req.frame.no)} · ${fmtTime(req.frame.at)} · failed · ${took}`
-      : `${fmtF(req.frame.no)} · ${fmtTime(req.frame.at)} · ${took} · $${req.cost.toFixed(3)}`;
+      ? `${req.frame.tag} · ${fmtTime(req.frame.at)} · failed · ${took}`
+      : `${req.frame.tag} · ${fmtTime(req.frame.at)} · ${took} · $${req.cost.toFixed(3)}`;
     const text = document.createElement('div');
     text.className = 'h-text' + (req.error ? ' err' : '');
-    text.textContent = req.error ? req.error.message : (req.text || '(no text)');
+    text.textContent = req.error ? req.error.message : ((req.frame.question ? 'Q: ' + req.frame.question + '\n' : '') + (req.text || '(no text)'));
     box.append(meta, text);
     li.append(img, box);
     li.addEventListener('click', () => li.classList.toggle('open'));
@@ -1077,16 +1170,21 @@
       renderMetaOnly(current);
       if (statusEl.dataset.kind === 'thinking' || statusEl.dataset.kind === 'streaming') {
         const phase = current.firstTextAt ? 'Answering' : 'Thinking';
-        const queued = pending ? ` · ${fmtF(pending.no)} queued` : '';
-        setStatus(current.firstTextAt ? 'streaming' : 'thinking', `${phase} ${fmtF(current.frame.no)} · ${secs(Date.now() - current.startedAt)}${queued}`);
+        const queued = pending ? ` · ${pending.tag} queued` : '';
+        setStatus(current.firstTextAt ? 'streaming' : 'thinking', `${phase} ${current.frame.tag} · ${secs(Date.now() - current.startedAt)}${queued}`);
       }
     } else if (running && statusEl.dataset.kind === 'done' && current) {
-      setStatus('done', `Answered ${fmtF(current.frame.no)} · next in ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s`);
+      setStatus('done', `Answered ${current.frame.tag} · next in ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s`);
+    } else if (listening && story) {
+      setStatus('streaming', `Listening ${mmss(Date.now() - story.startedAt)}`);
+      if (showingTranscript) answerMeta.textContent = `● REC · ${mmss(Date.now() - story.startedAt)} · ${storyWords(story)} words`;
+    } else if (askState) {
+      setStatus('armed', 'Listening for your question…');
     }
   }, 250);
   function renderMetaOnly(r) {
     const phase = r.firstTextAt ? 'answering' : 'thinking';
-    answerMeta.textContent = `${fmtF(r.frame.no)} · ${fmtTime(r.frame.at)} · ${phase} ${secs(Date.now() - r.startedAt)}`;
+    answerMeta.textContent = `${r.frame.tag} · ${fmtTime(r.frame.at)} · ${phase} ${secs(Date.now() - r.startedAt)}`;
   }
 
   // ---------- answer rendering: "ANSWER: …" first line becomes the headline ----------
@@ -1097,7 +1195,15 @@
     const m = /^\s*(?:[*_#]+\s*)?answer\s*(?:[*_]+)?\s*:\s*(.*)$/i.exec(first);
     if (!m) return { head: '', body: t };
     const head = m[1].replace(/[*_]+$/g, '').trim();
-    return { head, body: nl < 0 ? '' : t.slice(nl + 1).replace(/^\s*\n/, '') };
+    let body = nl < 0 ? '' : t.slice(nl + 1).replace(/^\s*\n/, '');
+    let story = '';
+    const sm = /^\s*(?:[*_]+)?storyline(?:[*_]+)?\s*:\s*(.*)$/i.exec(body.split('\n')[0] || '');
+    if (sm) {
+      const v = sm[1].replace(/[*_]+$/g, '').trim();
+      if (v && !/^none\.?$/i.test(v)) story = v;
+      body = body.split('\n').slice(1).join('\n').replace(/^\s*\n/, '');
+    }
+    return { head, body, story };
   }
   function headlineSize(str) {
     const n = str.length;
@@ -1109,11 +1215,12 @@
     return 22;
   }
   function renderAnswer(text, streaming) {
-    const { head, body } = splitAnswer(text);
+    const { head, body, story } = splitAnswer(text);
     const cursor = streaming ? '<span class="cursor" aria-hidden="true"></span>' : '';
     if (!head) return md(text) + cursor;
-    const big = '<div class="big-answer" style="font-size:' + headlineSize(head) + 'px">' + esc(head) + (body ? '' : cursor) + '</div>';
-    return big + (body ? md(body) + cursor : '');
+    const big = '<div class="big-answer" style="font-size:' + headlineSize(head) + 'px">' + esc(head) + (body || story ? '' : cursor) + '</div>';
+    const tag = story ? '<div class="story-tag">Storyline · ' + esc(story) + '</div>' : '';
+    return big + tag + (body ? md(body) + cursor : (story ? cursor : ''));
   }
 
   // ---------- tiny markdown ----------
@@ -1184,6 +1291,9 @@
     $('saveKey').checked = !!S.saveKey;
     $('rotateText').checked = !!S.rotateText;
     $('uprightPhoto').checked = !!S.uprightPhoto;
+    $('sttLang').value = S.sttLang || '';
+    $('useStories').checked = !!S.useStories;
+    $('askWithFrame').checked = !!S.askWithFrame;
     sheet.hidden = false; sheetBack.hidden = false;
   }
   function closeSheet() { sheet.hidden = true; sheetBack.hidden = true; }
@@ -1220,6 +1330,9 @@
     S.saveKey = $('saveKey').checked;
     S.rotateText = $('rotateText').checked;
     S.uprightPhoto = $('uprightPhoto').checked;
+    S.sttLang = $('sttLang').value;
+    S.useStories = $('useStories').checked;
+    S.askWithFrame = $('askWithFrame').checked;
     applyPanelRotation();
     saveSettings();
     refreshReadouts();
@@ -1281,6 +1394,346 @@
   window.addEventListener('resize', applyPanelRotation);
   window.addEventListener('orientationchange', () => setTimeout(applyPanelRotation, 150));
 
+  // ---------- storylines: recorded brainstorming sessions, saved on this phone ----------
+  const STORY_KEY = 'lensloop.storylines', DRAFT_KEY = 'lensloop.draft';
+  const stories = (() => { try { const a = JSON.parse(localStorage.getItem(STORY_KEY) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } })();
+  function saveStories() {
+    try { localStorage.setItem(STORY_KEY, JSON.stringify(stories)); return true; }
+    catch (e) { showBanner('Could not save to this phone\'s storage (full or blocked). Export your storylines and delete old ones.'); return false; }
+  }
+  const mmss = (ms) => { const t = Math.max(0, Math.floor(ms / 1000)); const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60; return (h ? h + ':' : '') + String(m).padStart(h ? 2 : 1, '0') + ':' + String(sec).padStart(2, '0'); };
+  const storyWords = (st) => st.finals.reduce((n, f) => n + f.text.split(/\s+/).filter(Boolean).length, 0);
+  const MIC_THUMB = 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 48"><rect width="64" height="48" fill="#1F242C"/><rect x="26" y="8" width="12" height="20" rx="6" fill="#E9B44C"/><path d="M20 24a12 12 0 0 0 24 0M32 36v6M26 42h12" stroke="#E9B44C" stroke-width="3" fill="none" stroke-linecap="round"/></svg>');
+
+  // What the model is told about the saved storylines. The whole block is marked for prompt caching,
+  // so while the camera loop runs or questions follow each other it is billed at the cache-read rate.
+  function storylineBlock() {
+    if (!S.useStories) return null;
+    const list = stories.filter((st) => st.use !== false && st.text);
+    if (!list.length) return null;
+    const MAX_CHARS = 480000; // ~120k tokens: leaves room for the photo, the thinking budget and the reply
+    let used = 0; const picked = [];
+    for (const st of [...list].sort((a, b) => b.createdAt - a.createdAt)) {
+      const size = st.text.length + 400;
+      if (used + size > MAX_CHARS) continue;
+      used += size; picked.push(st);
+    }
+    picked.sort((a, b) => a.createdAt - b.createdAt);
+    const idx = picked.map((st, i) => `${i + 1}. «${st.title}» — recorded ${new Date(st.createdAt).toLocaleString()}, ${Math.max(1, Math.round((st.seconds || 0) / 60))} min, ${st.words || 0} words.` +
+      (st.summary ? ' ' + st.summary : '') + (st.keys ? ' Key terms: ' + st.keys + '.' : '')).join('\n');
+    const bodies = picked.map((st, i) => `=== STORYLINE ${i + 1}: «${st.title}» ===\n${st.text}`).join('\n\n');
+    const skipped = list.length - picked.length;
+    return 'The user is a fiction author who records spoken brainstorming and world-building sessions. Each saved session is a "storyline": a chapter, a plot thread or a lore session. ' +
+      'The transcripts below come from automatic speech recognition, so names and invented words may be misspelled or split; use the index and the surrounding context to resolve them. ' +
+      'When a question (spoken by the user, or written or drawn in the photo) concerns this material, work out on your own which storyline it belongs to, answer from that storyline confidently and specifically, and put the storyline\'s title on the second line of the reply as "STORYLINE: <title>" (several titles separated by commas if it spans more than one). ' +
+      'If the question has nothing to do with the storylines, write "STORYLINE: none" on the second line and answer normally. If the storylines do not contain the answer, say so in the explanation rather than inventing lore.\n\n' +
+      `INDEX OF SAVED STORYLINES (${picked.length}${skipped ? `; ${skipped} older ones left out for size` : ''}):\n${idx}\n\nFULL TRANSCRIPTS:\n\n${bodies}`;
+  }
+  function buildSystem() {
+    const blocks = [{ type: 'text', text: SYSTEM_RULES }];
+    const sb = storylineBlock();
+    if (sb) blocks.push({ type: 'text', text: sb, cache_control: { type: 'ephemeral' } });
+    return blocks;
+  }
+
+  // ----- speech recognition (the phone's own engine; no key, no upload) -----
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+  let rec = null;
+  let listening = false, story = null, showingTranscript = false;
+  let askState = null, askNo = 0;
+  const listenBtn = $('listenBtn'), askBtn = $('askBtn');
+  function makeRecognizer(o) {
+    const r = new SR();
+    r.lang = S.sttLang || navigator.language || 'en-US';
+    r.continuous = !!o.continuous;
+    r.interimResults = true;
+    r.maxAlternatives = 1;
+    r.onresult = (e) => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const res = e.results[i];
+        const t = res[0] ? res[0].transcript : '';
+        if (res.isFinal) o.onFinal(t); else interim += t;
+      }
+      o.onInterim(interim);
+    };
+    r.onerror = (e) => o.onError(e.error || 'error');
+    r.onend = () => o.onEnd();
+    return r;
+  }
+  const NO_SR = 'Speech recognition is not available in this browser. On an iPhone use Safari (iOS 14.5 or later) with Siri & Dictation switched on.';
+
+  // --- recording a storyline ---
+  function startStory() {
+    if (!SR) { showBanner(NO_SR); return; }
+    if (askState) { try { rec.stop(); } catch (e) {} }
+    story = { id: 'st_' + Date.now().toString(36), startedAt: Date.now(), finals: [], interim: '', restarts: 0 };
+    listening = true;
+    listenBtn.innerHTML = '<span class="dot-rec"></span>Stop';
+    listenBtn.dataset.on = 'true';
+    askBtn.disabled = true;
+    keepAwake();
+    setPanel(true);
+    showingTranscript = true;
+    hideBanner();
+    copyBtn.hidden = true;
+    renderTranscript();
+    runStoryRecognizer();
+  }
+  function runStoryRecognizer() {
+    rec = makeRecognizer({
+      continuous: true,
+      onFinal: (t) => {
+        if (!story) return;
+        const text = t.trim();
+        if (text) story.finals.push({ t: Math.round((Date.now() - story.startedAt) / 1000), text });
+        story.interim = '';
+        renderTranscript();
+        saveDraft();
+      },
+      onInterim: (t) => { if (story) { story.interim = t; renderTranscript(); } },
+      onError: (err) => {
+        if (err === 'not-allowed' || err === 'service-not-allowed') {
+          showBanner('Microphone or dictation access was refused. Allow the microphone for this site in Settings › Safari, and keep Siri & Dictation on.');
+          stopStory(true);
+        }
+        // 'no-speech', 'network', 'aborted' and friends: onend follows and restarts
+      },
+      onEnd: () => {
+        if (!listening || !story) return;
+        if (document.visibilityState === 'hidden') { story.paused = true; return; }   // resumes on return to the page
+        const now = Date.now();
+        story.quick = (now - (story.lastRestart || 0) < 1500) ? (story.quick || 0) + 1 : 0;
+        story.lastRestart = now;
+        story.restarts++;
+        setTimeout(() => {
+          if (!listening || !story) return;
+          try { rec.start(); }
+          catch (e) { setTimeout(() => { if (listening) runStoryRecognizer(); }, 400); }
+        }, story.quick > 3 ? 1500 : 120);
+      },
+    });
+    try { rec.start(); }
+    catch (e) { showBanner('Could not start listening: ' + (e.message || e)); stopStory(true); }
+  }
+  function saveDraft() {
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ id: story.id, startedAt: story.startedAt, finals: story.finals })); } catch (e) { /* no room; the in-memory copy still saves on stop */ }
+  }
+  function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch (e) {} }
+  function stopStory(save) {
+    listening = false;
+    try { rec && rec.stop(); } catch (e) {}
+    listenBtn.textContent = 'Listen'; listenBtn.dataset.on = 'false';
+    askBtn.disabled = false;
+    if (!running) releaseWake();
+    const st = story; story = null;
+    showingTranscript = false;
+    if (!st) return;
+    const text = st.finals.map((f) => f.text).join(' ');
+    const words = text.split(/\s+/).filter(Boolean).length;
+    if (!save || words < 3) {
+      clearDraft();
+      setStatus('idle', words ? 'Recording discarded' : 'Nothing was heard');
+      answerMeta.textContent = 'No storyline saved';
+      answerBody.innerHTML = '<div class="placeholder"><p><b>Nothing to save.</b></p><p>Fewer than three words were recognised. Check the microphone permission and the listening language in settings, then tap Listen again.</p></div>';
+      return;
+    }
+    const n = stories.length + 1;
+    const saved = { id: st.id, title: `Storyline ${n} · ${new Date(st.startedAt).toLocaleDateString([], { month: 'short', day: 'numeric' })} ${fmtTime(new Date(st.startedAt)).replace(/:\d\d(\s|$)/, '$1')}`,
+      createdAt: st.startedAt, endedAt: Date.now(), seconds: Math.round((Date.now() - st.startedAt) / 1000), words, text, summary: '', keys: '', use: true };
+    stories.push(saved);
+    saveStories();
+    clearDraft();
+    refreshReadouts();
+    setStatus('done', `Saved «${saved.title}» · ${words} words`);
+    answerMeta.textContent = `Saved · ${mmss(saved.seconds * 1000)} · ${words} words`;
+    answerBody.innerHTML = `<div class="placeholder"><p><b>Storyline saved.</b></p><p>${esc(words + ' words over ' + mmss(saved.seconds * 1000))}. Claude is writing its title and summary now; find it under the book icon at the top. Ask a question by voice with <b>Ask</b>, or show the camera a note.</p></div>`;
+    digestStory(saved);
+  }
+  function renderTranscript() {
+    if (!showingTranscript || !story) return;
+    const tail = story.finals.slice(-40).map((f) => f.text).join(' ');
+    const el = document.createElement('div');
+    el.className = 'transcript';
+    if (!tail && !story.interim) {
+      el.innerHTML = '<span class="empty">Listening… start talking. The words appear here as they are recognised.</span>';
+    } else {
+      el.textContent = (story.finals.length > 40 ? '… ' : '') + tail + (tail ? ' ' : '');
+      if (story.interim) { const i = document.createElement('span'); i.className = 'interim'; i.textContent = story.interim; el.appendChild(i); }
+    }
+    answerBody.innerHTML = '';
+    answerBody.appendChild(el);
+    answerBody.classList.remove('stale');
+    const sc = $('answerScroll'); sc.scrollTop = sc.scrollHeight;
+  }
+  // Title, summary and key terms for a storyline, written by Claude at low effort.
+  async function digestStory(st) {
+    if (!S.key) return;
+    const body = {
+      model: S.model, max_tokens: 1500, output_config: { effort: 'low' }, system: DIGEST_RULES,
+      messages: [{ role: 'user', content: 'Transcript of one recorded session:\n\n' + st.text.slice(0, 400000) +
+        '\n\nReply with exactly three lines and nothing else:\nTITLE: <a distinctive title of at most six words, naming the chapter, thread or subject>\nSUMMARY: <three to five sentences on the plot ideas, characters, places and decisions in this session>\nKEYS: <comma-separated names, places and invented terms that appear>' }],
+    };
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-api-key': S.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+        body: JSON.stringify(body),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + res.status));
+      const txt = (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('\n');
+      const get = (k) => { const m = new RegExp('^\\s*' + k + '\\s*:\\s*(.+)$', 'im').exec(txt); return m ? m[1].trim() : ''; };
+      const title = get('TITLE'), summary = get('SUMMARY'), keys = get('KEYS');
+      if (title) st.title = title.replace(/^[«"“]+|[»"”]+$/g, '');
+      if (summary) st.summary = summary;
+      if (keys) st.keys = keys;
+      if (j.usage) { const [pIn, pOut] = priceFor(S.model); sessionCost += ((j.usage.input_tokens || 0) * pIn + (j.usage.output_tokens || 0) * pOut) / 1e6; }
+      saveStories(); refreshReadouts(); renderStoryList();
+      if (!running && !listening && !askState && !(current && !current.endedAt)) setStatus('done', `Saved «${st.title}»`);
+    } catch (e) {
+      showBanner('The transcript is saved, but its summary could not be written: ' + (e.message || e), 'note');
+    }
+  }
+  // A recording interrupted by a reload or a closed tab is kept as a draft and restored here.
+  (function recoverDraft() {
+    let d = null;
+    try { d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); } catch (e) {}
+    if (!d || !Array.isArray(d.finals) || !d.finals.length) return;
+    const text = d.finals.map((f) => f.text).join(' ');
+    const words = text.split(/\s+/).filter(Boolean).length;
+    if (words >= 3 && !stories.some((st) => st.id === d.id)) {
+      const last = d.finals[d.finals.length - 1];
+      stories.push({ id: d.id, title: 'Recovered session · ' + new Date(d.startedAt).toLocaleDateString(), createdAt: d.startedAt, endedAt: d.startedAt + (last.t || 0) * 1000, seconds: last.t || 0, words, text, summary: '', keys: '', use: true });
+      saveStories();
+      showBanner('A recording that was cut off has been saved as "Recovered session". Open the storylines list to summarise it.', 'note');
+    }
+    clearDraft();
+  })();
+
+  // Storylines that never got a summary (a recording cut off by a closed tab, an import) get one on the next open.
+  (async function digestMissing() {
+    if (!S.key) return;
+    for (const st of stories) {
+      if (st.summary || !st.text) continue;
+      await new Promise((r) => setTimeout(r, 1500));
+      if (!S.key) return;
+      await digestStory(st);
+    }
+  })();
+
+  // --- asking by voice ---
+  function startAsk() {
+    if (!SR) { showBanner(NO_SR); return; }
+    if (listening) return;
+    if (!S.key) { showBanner('Add your API key in settings first.'); return; }
+    askState = { finals: [], interim: '' };
+    askBtn.innerHTML = '<span class="dot-rec"></span>Done';
+    askBtn.dataset.on = 'true';
+    listenBtn.disabled = true;
+    hideBanner();
+    setPanel(true);
+    setStatus('armed', 'Listening for your question…');
+    answerMeta.textContent = 'Say your question, then pause';
+    answerBody.innerHTML = '<div class="placeholder"><p><b>Listening…</b></p><p>Ask about any saved storyline. The question is sent as soon as you pause, or when you tap Done.</p></div>';
+    rec = makeRecognizer({
+      continuous: false,
+      onFinal: (t) => { if (askState) { askState.finals.push(t.trim()); askState.interim = ''; renderAskLive(); } },
+      onInterim: (t) => { if (askState) { askState.interim = t; renderAskLive(); } },
+      onError: (err) => { if (askState && (err === 'not-allowed' || err === 'service-not-allowed')) showBanner('Microphone or dictation access was refused. Allow the microphone for this site in Settings › Safari.'); },
+      onEnd: () => finishAsk(),
+    });
+    try { rec.start(); } catch (e) { showBanner('Could not start listening: ' + (e.message || e)); finishAsk(); }
+  }
+  function renderAskLive() {
+    if (!askState) return;
+    const q = (askState.finals.join(' ') + ' ' + askState.interim).trim();
+    answerMeta.textContent = q ? 'Heard: ' + q : 'Say your question, then pause';
+  }
+  function finishAsk() {
+    if (!askState) return;
+    const q = (askState.finals.join(' ').trim() || askState.interim.trim());
+    askState = null;
+    askBtn.textContent = 'Ask'; askBtn.dataset.on = 'false';
+    listenBtn.disabled = false;
+    if (!q) {
+      setStatus('idle', 'Did not catch a question');
+      answerMeta.textContent = 'Nothing heard';
+      answerBody.innerHTML = '<div class="placeholder"><p><b>Nothing came through.</b></p><p>Tap Ask and speak a little louder or closer to the phone.</p></div>';
+      return;
+    }
+    sendQuestion(q);
+  }
+  function sendQuestion(q) {
+    askNo += 1;
+    const frame = { no: askNo, tag: 'Q-' + String(askNo).padStart(3, '0'), at: new Date(), thumb: MIC_THUMB, question: q, b64: null };
+    if (S.askWithFrame && stream && video.videoWidth) {
+      try { const f = captureFrame(); frame.b64 = f.b64; frame.thumb = f.thumb; } catch (e) { /* no frame, text only */ }
+    }
+    showingTranscript = false;
+    send(frame);
+  }
+
+  // --- storylines sheet ---
+  const storySheet = $('storySheet'), storyList = $('storyList');
+  function openStories() { renderStoryList(); storySheet.hidden = false; sheetBack.hidden = false; }
+  function closeStories() { storySheet.hidden = true; sheetBack.hidden = true; }
+  function renderStoryList() {
+    storyList.innerHTML = '';
+    if (!stories.length) {
+      const li = document.createElement('li'); li.className = 'hint'; li.textContent = 'No storylines yet. Tap Listen, talk, tap Stop.'; storyList.appendChild(li); return;
+    }
+    [...stories].sort((a, b) => b.createdAt - a.createdAt).forEach((st) => {
+      const li = document.createElement('li'); li.className = 'story-item';
+      const title = document.createElement('input'); title.className = 's-title'; title.type = 'text'; title.value = st.title; title.setAttribute('aria-label', 'Storyline title');
+      title.addEventListener('change', () => { st.title = title.value.trim() || st.title; title.value = st.title; saveStories(); });
+      const meta = document.createElement('div'); meta.className = 's-meta';
+      meta.textContent = `${new Date(st.createdAt).toLocaleString()} · ${mmss((st.seconds || 0) * 1000)} · ${st.words || 0} words`;
+      const sum = document.createElement('div'); sum.className = 's-sum';
+      sum.textContent = st.summary ? st.summary + (st.keys ? ' Key terms: ' + st.keys + '.' : '') : 'No summary yet.';
+      const row = document.createElement('div'); row.className = 's-row';
+      const use = document.createElement('label'); use.className = 'check';
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = st.use !== false;
+      cb.addEventListener('change', () => { st.use = cb.checked; saveStories(); });
+      use.append(cb, document.createTextNode(' Use in answers'));
+      const tBtn = document.createElement('button'); tBtn.type = 'button'; tBtn.className = 'btn'; tBtn.textContent = 'Transcript';
+      tBtn.addEventListener('click', () => li.classList.toggle('open'));
+      const sBtn = document.createElement('button'); sBtn.type = 'button'; sBtn.className = 'btn'; sBtn.textContent = st.summary ? 'Re-summarise' : 'Summarise';
+      sBtn.addEventListener('click', () => { sBtn.disabled = true; sBtn.textContent = 'Working…'; digestStory(st).then(() => renderStoryList()); });
+      const dBtn = document.createElement('button'); dBtn.type = 'button'; dBtn.className = 'btn'; dBtn.textContent = 'Delete';
+      dBtn.addEventListener('click', () => {
+        if (dBtn.dataset.armed) { stories.splice(stories.indexOf(st), 1); saveStories(); refreshReadouts(); renderStoryList(); return; }
+        dBtn.dataset.armed = '1'; dBtn.textContent = 'Sure? Delete'; setTimeout(() => { delete dBtn.dataset.armed; dBtn.textContent = 'Delete'; }, 3000);
+      });
+      row.append(use, tBtn, sBtn, dBtn);
+      const txt = document.createElement('div'); txt.className = 's-text'; txt.textContent = st.text;
+      li.append(title, meta, sum, row, txt);
+      storyList.appendChild(li);
+    });
+  }
+  $('storiesBtn').addEventListener('click', openStories);
+  $('storyClose').addEventListener('click', closeStories);
+  sheetBack.addEventListener('click', closeStories);
+  $('storyExport').addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify({ app: 'lens-loop', exported: new Date().toISOString(), storylines: stories }, null, 1)], { type: 'application/json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'lens-loop-storylines.json';
+    document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+  });
+  $('storyImport').addEventListener('change', async (e) => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    try {
+      const j = JSON.parse(await f.text());
+      const list = Array.isArray(j) ? j : (j.storylines || []);
+      let added = 0;
+      for (const st of list) { if (st && st.text && !stories.some((x) => x.id === st.id)) { stories.push(st); added++; } }
+      saveStories(); refreshReadouts(); renderStoryList();
+      showBanner(added + ' storyline' + (added === 1 ? '' : 's') + ' imported.', 'note');
+    } catch (err) { showBanner('That file could not be read as a storylines export.'); }
+    e.target.value = '';
+  });
+  listenBtn.addEventListener('click', () => { if (listening) stopStory(true); else startStory(); });
+  askBtn.addEventListener('click', () => { if (askState) { try { rec.stop(); } catch (e) { finishAsk(); } } else startAsk(); });
+
   // ---------- buttons ----------
   startBtn.addEventListener('click', () => { if (running) stop(); else start(); });
   snapBtn.addEventListener('click', () => { if (running) snap('manual'); });
@@ -1304,7 +1757,7 @@
       const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
     }
   });
-  window.addEventListener('pagehide', () => { if (running) stop(); });
+  window.addEventListener('pagehide', () => { if (running) stop(); if (listening) stopStory(true); });
 
   // ---------- boot ----------
   // A link of the form https://…/lens-loop/#key=sk-ant-… carries the key in the part after "#",
