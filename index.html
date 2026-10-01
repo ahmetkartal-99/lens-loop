@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -605,6 +606,15 @@
 <form class="sheet" id="storySheet" hidden>
   <h2>Storylines</h2>
   <div class="field"><div class="hint">Each recording is saved on this phone as a storyline with a title, summary and key terms written by Claude. Untick one to leave it out of answers. Export keeps a copy as a file; Import merges one back in.</div></div>
+  <div class="story-item" id="driveRow">
+    <div class="s-meta">Google Drive</div>
+    <div class="s-sum" id="driveStatus">Not connected. Connect to keep a copy of every storyline in a "Lens Loop" folder on your Drive and to pick them up on another device.</div>
+    <div class="s-row">
+      <button class="btn" type="button" id="driveConnect">Connect Google Drive</button>
+      <button class="btn" type="button" id="driveSync" hidden>Sync now</button>
+      <button class="btn" type="button" id="driveOff" hidden>Disconnect</button>
+    </div>
+  </div>
   <ol class="story-list" id="storyList"></ol>
   <div class="sheet-actions">
     <button class="btn quiet" type="button" id="storyExport">Export</button>
@@ -650,6 +660,11 @@
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
+  // Google Drive mirror of the storylines. An OAuth client ID is public by design (it names the app, it grants
+  // nothing by itself); the user still signs in and approves access to a "Lens Loop" folder on their own Drive.
+  const GOOGLE_CLIENT_ID = '315454575795-hkrhb3ggevkjjufb4p5bh0ikv7smf5f8.apps.googleusercontent.com';
+  const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+  const DRIVE_FOLDER_NAME = 'Lens Loop';
   // ====================================================================
 
   const DEFAULTS = {
@@ -1477,6 +1492,7 @@
   }
   function removeStory(st) {
     const i = stories.indexOf(st); if (i >= 0) stories.splice(i, 1);
+    if (st.driveId || st.driveTxtId) { S.driveTrash = (S.driveTrash || []).concat([st.driveId, st.driveTxtId].filter(Boolean)); saveSettings(); scheduleSync(); }
     if (!dbOk) return persistLocal();
     dbRun('readwrite', (store) => store.delete(st.id)).catch(() => {});
     return true;
@@ -1801,8 +1817,10 @@
     const n = stories.length + 1;
     const saved = { id: st.id, title: `Storyline ${n} · ${new Date(st.startedAt).toLocaleDateString([], { month: 'short', day: 'numeric' })} ${fmtTime(new Date(st.startedAt)).replace(/:\d\d(\s|$)/, '$1')}`,
       createdAt: st.startedAt, endedAt: Date.now(), seconds: Math.round((Date.now() - st.startedAt) / 1000), words, text, summary: '', keys: '', use: true };
+    saved.updatedAt = Date.now();
     stories.push(saved);
-    saveStories().then(() => clearDraft());   // the draft stays until the storyline is safely on disk
+    saveStories().then(() => clearDraft());
+    scheduleSync();   // the draft stays until the storyline is safely on disk
     refreshReadouts();
     setStatus('done', `Saved «${saved.title}» · ${words} words`);
     answerMeta.textContent = `Saved · ${mmss(saved.seconds * 1000)} · ${words} words`;
@@ -1847,6 +1865,8 @@
       if (title) st.title = title.replace(/^[«"“]+|[»"”]+$/g, '');
       if (summary) st.summary = summary;
       if (keys) st.keys = keys;
+      st.updatedAt = Date.now();
+      scheduleSync();
       if (j.usage) { const [pIn, pOut] = priceFor(S.model); sessionCost += ((j.usage.input_tokens || 0) * pIn + (j.usage.output_tokens || 0) * pOut) / 1e6; }
       saveStories(); refreshReadouts(); renderStoryList();
       if (!running && !listening && !askState && !(current && !current.endedAt)) setStatus('done', `Saved «${st.title}»`);
@@ -1863,7 +1883,8 @@
     const words = text.split(/\s+/).filter(Boolean).length;
     if (words >= 3 && !stories.some((st) => st.id === d.id)) {
       const last = d.finals[d.finals.length - 1];
-      stories.push({ id: d.id, title: 'Recovered session · ' + new Date(d.startedAt).toLocaleDateString(), createdAt: d.startedAt, endedAt: d.startedAt + (last.t || 0) * 1000, seconds: last.t || 0, words, text, summary: '', keys: '', use: true });
+      stories.push({ id: d.id, title: 'Recovered session · ' + new Date(d.startedAt).toLocaleDateString(), createdAt: d.startedAt, endedAt: d.startedAt + (last.t || 0) * 1000, seconds: last.t || 0, words, text, summary: '', keys: '', use: true, updatedAt: Date.now() });
+      scheduleSync();
       saveStories().then(() => clearDraft());
       showBanner('A recording that was cut off has been saved as "Recovered session". Open the storylines list to summarise it.', 'note');
       return;
@@ -1881,7 +1902,7 @@
       await digestStory(st);
     }
   }
-  loadStories().then(() => { refreshReadouts(); recoverDraft(); if (!storySheet.hidden) renderStoryList(); digestMissing(); });
+  loadStories().then(() => { refreshReadouts(); recoverDraft(); if (!storySheet.hidden) renderStoryList(); digestMissing(); if (driveConnected()) scheduleSync(); });
 
   // --- asking by voice ---
   async function startAsk() {
@@ -1946,9 +1967,192 @@
     send(frame);
   }
 
+  // --- Google Drive mirror ---
+  // Each storyline is one JSON file (the record) plus one readable .txt in a "Lens Loop" folder. Sync runs after
+  // every change and on open while the sign-in is valid (about an hour); after that the sheet offers a reconnect.
+  const DRIVE_TOKEN_KEY = 'lensloop.drive';
+  let driveToken = null, driveExp = 0, tokenClient = null, syncTimer = 0, syncing = false, syncAgain = false;
+  let onDriveToken = null, onDriveError = null;
+  (function loadDriveToken() {
+    try { const t = JSON.parse(localStorage.getItem(DRIVE_TOKEN_KEY) || 'null'); if (t && t.token && t.exp > Date.now() + 60000) { driveToken = t.token; driveExp = t.exp; } } catch (e) {}
+  })();
+  const driveConnected = () => !!driveToken && driveExp > Date.now();
+  const gisReady = () => !!(window.google && google.accounts && google.accounts.oauth2);
+  function connectDrive() {
+    return new Promise((resolve, reject) => {
+      if (!GOOGLE_CLIENT_ID) { reject(new Error('No Google client ID is set in the page.')); return; }
+      if (!gisReady()) { reject(new Error('Google sign-in did not load. Check the connection and try again.')); return; }
+      if (!tokenClient) {
+        tokenClient = google.accounts.oauth2.initTokenClient({
+          client_id: GOOGLE_CLIENT_ID, scope: DRIVE_SCOPE,
+          callback: (r) => { const f = onDriveToken; onDriveToken = onDriveError = null; f && f(r); },
+          error_callback: (e) => { const f = onDriveError; onDriveToken = onDriveError = null; f && f(e); },
+        });
+      }
+      onDriveToken = (r) => {
+        if (!r || r.error) { reject(new Error((r && (r.error_description || r.error)) || 'Sign-in failed')); return; }
+        driveToken = r.access_token; driveExp = Date.now() + Math.max(60, (r.expires_in || 3600) - 60) * 1000;
+        try { localStorage.setItem(DRIVE_TOKEN_KEY, JSON.stringify({ token: driveToken, exp: driveExp })); } catch (e) {}
+        S.driveOn = true; saveSettings();
+        resolve();
+      };
+      onDriveError = (e) => reject(new Error(e && e.type === 'popup_closed' ? 'Sign-in window was closed.' : 'Sign-in window could not open.'));
+      tokenClient.requestAccessToken({ prompt: '' });
+    });
+  }
+  function disconnectDrive() {
+    const t = driveToken;
+    driveToken = null; driveExp = 0;
+    try { localStorage.removeItem(DRIVE_TOKEN_KEY); } catch (e) {}
+    S.driveOn = false; saveSettings();
+    if (t && gisReady()) { try { google.accounts.oauth2.revoke(t, () => {}); } catch (e) {} }
+    renderDriveRow();
+  }
+  async function drive(path, opts) {
+    opts = opts || {};
+    const url = path.startsWith('http') ? path : 'https://www.googleapis.com/drive/v3/' + path;
+    const res = await fetch(url, Object.assign({}, opts, { headers: Object.assign({ Authorization: 'Bearer ' + driveToken }, opts.headers || {}) }));
+    if (res.status === 401) { driveToken = null; driveExp = 0; try { localStorage.removeItem(DRIVE_TOKEN_KEY); } catch (e) {} throw Object.assign(new Error('Google Drive needs reconnecting.'), { auth: true }); }
+    if (!res.ok) { let d = ''; try { d = (await res.text()).slice(0, 160); } catch (e) {} throw new Error('Drive error ' + res.status + (d ? ': ' + d : '')); }
+    if (res.status === 204) return null;
+    const ct = res.headers.get('content-type') || '';
+    return ct.includes('json') ? res.json() : res.text();
+  }
+  const esq = (v) => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  async function driveFolder() {
+    if (S.driveFolder) {
+      try { const f = await drive('files/' + S.driveFolder + '?fields=id,trashed'); if (f && !f.trashed) return f.id; } catch (e) { if (e.auth) throw e; }
+    }
+    const q = `name='${esq(DRIVE_FOLDER_NAME)}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+    const r = await drive('files?q=' + encodeURIComponent(q) + '&fields=files(id)&pageSize=5&spaces=drive');
+    let id = r.files && r.files[0] && r.files[0].id;
+    if (!id) { const made = await drive('files?fields=id', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: DRIVE_FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' }) }); id = made.id; }
+    S.driveFolder = id; saveSettings();
+    return id;
+  }
+  function multipart(meta, body, type) {
+    const b = 'lensloop' + Math.random().toString(36).slice(2);
+    return { headers: { 'content-type': 'multipart/related; boundary=' + b },
+      body: `--${b}\r\ncontent-type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\ncontent-type: ${type}\r\n\r\n${body}\r\n--${b}--` };
+  }
+  const safeName = (t) => (t || 'Storyline').replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 80);
+  function storyRecord(st) { const o = Object.assign({}, st); delete o.driveId; delete o.driveTxtId; delete o.syncedAt; return o; }
+  function storyText(st) {
+    return `${st.title}\nRecorded ${new Date(st.createdAt).toLocaleString()} · ${mmss((st.seconds || 0) * 1000)} · ${st.words || 0} words\n\n` +
+      (st.summary ? 'Summary: ' + st.summary + '\n' : '') + (st.keys ? 'Key terms: ' + st.keys + '\n' : '') + '\nTranscript:\n' + st.text + '\n';
+  }
+  async function pushStory(st, folderId) {
+    const meta = { name: safeName(st.title) + '.json', appProperties: { lensloop: '1', storyId: st.id, updatedAt: String(st.updatedAt || 0) } };
+    const rec = JSON.stringify(storyRecord(st));
+    if (st.driveId) {
+      const m = multipart(meta, rec, 'application/json');
+      await drive('https://www.googleapis.com/upload/drive/v3/files/' + st.driveId + '?uploadType=multipart&fields=id', Object.assign({ method: 'PATCH' }, m));
+    } else {
+      const m = multipart(Object.assign({ parents: [folderId] }, meta), rec, 'application/json');
+      const made = await drive('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', Object.assign({ method: 'POST' }, m));
+      st.driveId = made.id;
+    }
+    const tmeta = { name: safeName(st.title) + '.txt', appProperties: { lensloop: 'txt', storyId: st.id } };
+    if (st.driveTxtId) {
+      const m = multipart(tmeta, storyText(st), 'text/plain; charset=UTF-8');
+      await drive('https://www.googleapis.com/upload/drive/v3/files/' + st.driveTxtId + '?uploadType=multipart&fields=id', Object.assign({ method: 'PATCH' }, m));
+    } else {
+      const m = multipart(Object.assign({ parents: [folderId] }, tmeta), storyText(st), 'text/plain; charset=UTF-8');
+      const made = await drive('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', Object.assign({ method: 'POST' }, m));
+      st.driveTxtId = made.id;
+    }
+    st.syncedAt = st.updatedAt || Date.now();
+  }
+  async function syncDrive() {
+    if (!driveConnected()) return;
+    if (syncing) { syncAgain = true; return; }
+    syncing = true; renderDriveRow('Syncing…');
+    try {
+      const folderId = await driveFolder();
+      // trash copies of deleted storylines
+      for (const id of (S.driveTrash || []).slice()) {
+        try { await drive('files/' + id, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ trashed: true }) }); } catch (e) { if (e.auth) throw e; }
+        S.driveTrash = (S.driveTrash || []).filter((x) => x !== id);
+      }
+      // what is on Drive
+      const remote = new Map(); let pageToken = '';
+      do {
+        const q = `'${esq(folderId)}' in parents and trashed=false and appProperties has { key='lensloop' and value='1' }`;
+        const r = await drive('files?q=' + encodeURIComponent(q) + '&fields=nextPageToken,files(id,name,appProperties)&pageSize=200' + (pageToken ? '&pageToken=' + pageToken : ''));
+        for (const f of r.files || []) { const sid = f.appProperties && f.appProperties.storyId; if (sid) remote.set(sid, f); }
+        pageToken = r.nextPageToken || '';
+      } while (pageToken);
+      const txtByStory = new Map(); pageToken = '';
+      do {
+        const q = `'${esq(folderId)}' in parents and trashed=false and appProperties has { key='lensloop' and value='txt' }`;
+        const r = await drive('files?q=' + encodeURIComponent(q) + '&fields=nextPageToken,files(id,appProperties)&pageSize=200' + (pageToken ? '&pageToken=' + pageToken : ''));
+        for (const f of r.files || []) { const sid = f.appProperties && f.appProperties.storyId; if (sid) txtByStory.set(sid, f.id); }
+        pageToken = r.nextPageToken || '';
+      } while (pageToken);
+      let pulled = 0, pushed = 0;
+      // pull what is newer or missing here
+      for (const [sid, f] of remote) {
+        const local = stories.find((x) => x.id === sid);
+        const remoteAt = parseInt((f.appProperties && f.appProperties.updatedAt) || '0', 10);
+        if (local) { local.driveId = local.driveId || f.id; local.driveTxtId = local.driveTxtId || txtByStory.get(sid) || null; }
+        if (local && (local.updatedAt || 0) >= remoteAt) continue;
+        const rec = await drive('files/' + f.id + '?alt=media');
+        const data = typeof rec === 'string' ? JSON.parse(rec) : rec;
+        if (!data || !data.text) continue;
+        data.driveId = f.id; data.driveTxtId = txtByStory.get(sid) || (local && local.driveTxtId) || null; data.syncedAt = data.updatedAt || remoteAt;
+        if (local) Object.assign(local, data); else stories.push(data);
+        pulled++;
+      }
+      // push what changed here
+      for (const st of stories) {
+        if (st.driveId && (st.syncedAt || 0) >= (st.updatedAt || 0)) continue;
+        await pushStory(st, folderId);
+        pushed++;
+      }
+      stories.sort((a, b) => a.createdAt - b.createdAt);
+      await saveStories();
+      S.driveSyncedAt = Date.now(); saveSettings();
+      refreshReadouts();
+      if (!storySheet.hidden) renderStoryList();
+      renderDriveRow();
+      if (pulled) showBanner(pulled + ' storyline' + (pulled === 1 ? '' : 's') + ' picked up from Google Drive.', 'note');
+    } catch (e) {
+      renderDriveRow(e.auth ? 'Sign-in expired — tap Connect to continue syncing.' : 'Sync failed: ' + (e.message || e));
+    } finally {
+      syncing = false;
+      if (syncAgain) { syncAgain = false; scheduleSync(); }
+    }
+  }
+  function scheduleSync() {
+    if (!driveConnected()) { if (S.driveOn) renderDriveRow(); return; }
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(syncDrive, 1500);
+  }
+  function renderDriveRow(note) {
+    const st = $('driveStatus'), con = $('driveConnect'), syn = $('driveSync'), off = $('driveOff');
+    if (!GOOGLE_CLIENT_ID) { st.textContent = 'Drive sync is not configured in this build.'; con.hidden = true; syn.hidden = true; off.hidden = true; return; }
+    if (driveConnected()) {
+      st.textContent = note || ('Connected · copies live in the "' + DRIVE_FOLDER_NAME + '" folder' + (S.driveSyncedAt ? ' · last sync ' + fmtTime(new Date(S.driveSyncedAt)) : ''));
+      con.hidden = true; syn.hidden = false; off.hidden = false;
+    } else if (S.driveOn) {
+      st.textContent = note || 'Sign-in expired (Google signs you out after about an hour). Tap Connect to keep syncing' + (S.driveSyncedAt ? ' · last sync ' + fmtTime(new Date(S.driveSyncedAt)) : '') + '.';
+      con.hidden = false; con.textContent = 'Connect'; syn.hidden = true; off.hidden = false;
+    } else {
+      st.textContent = note || 'Not connected. Connect to keep a copy of every storyline in a "' + DRIVE_FOLDER_NAME + '" folder on your Drive and to pick them up on another device.';
+      con.hidden = false; con.textContent = 'Connect Google Drive'; syn.hidden = true; off.hidden = true;
+    }
+  }
+  $('driveConnect').addEventListener('click', async () => {
+    renderDriveRow('Opening Google sign-in…');
+    try { await connectDrive(); renderDriveRow(); await syncDrive(); }
+    catch (e) { renderDriveRow((e.message || String(e)) + ' Tap Connect to try again.'); }
+  });
+  $('driveSync').addEventListener('click', () => syncDrive());
+  $('driveOff').addEventListener('click', disconnectDrive);
+
   // --- storylines sheet ---
   const storySheet = $('storySheet'), storyList = $('storyList');
-  function openStories() { renderStoryList(); storySheet.hidden = false; sheetBack.hidden = false; }
+  function openStories() { renderStoryList(); renderDriveRow(); storySheet.hidden = false; sheetBack.hidden = false; }
   function closeStories() { storySheet.hidden = true; sheetBack.hidden = true; }
   function renderStoryList() {
     storyList.innerHTML = '';
@@ -1958,7 +2162,7 @@
     [...stories].sort((a, b) => b.createdAt - a.createdAt).forEach((st) => {
       const li = document.createElement('li'); li.className = 'story-item';
       const title = document.createElement('input'); title.className = 's-title'; title.type = 'text'; title.value = st.title; title.setAttribute('aria-label', 'Storyline title');
-      title.addEventListener('change', () => { st.title = title.value.trim() || st.title; title.value = st.title; saveStories(); });
+      title.addEventListener('change', () => { st.title = title.value.trim() || st.title; title.value = st.title; st.updatedAt = Date.now(); saveStories(); scheduleSync(); });
       const meta = document.createElement('div'); meta.className = 's-meta';
       meta.textContent = `${new Date(st.createdAt).toLocaleString()} · ${mmss((st.seconds || 0) * 1000)} · ${st.words || 0} words`;
       const sum = document.createElement('div'); sum.className = 's-sum';
@@ -1966,7 +2170,7 @@
       const row = document.createElement('div'); row.className = 's-row';
       const use = document.createElement('label'); use.className = 'check';
       const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = st.use !== false;
-      cb.addEventListener('change', () => { st.use = cb.checked; saveStories(); });
+      cb.addEventListener('change', () => { st.use = cb.checked; st.updatedAt = Date.now(); saveStories(); scheduleSync(); });
       use.append(cb, document.createTextNode(' Use in answers'));
       const tBtn = document.createElement('button'); tBtn.type = 'button'; tBtn.className = 'btn'; tBtn.textContent = 'Transcript';
       tBtn.addEventListener('click', () => li.classList.toggle('open'));
@@ -1997,7 +2201,8 @@
       const j = JSON.parse(await f.text());
       const list = Array.isArray(j) ? j : (j.storylines || []);
       let added = 0;
-      for (const st of list) { if (st && st.text && !stories.some((x) => x.id === st.id)) { stories.push(st); added++; } }
+      for (const st of list) { if (st && st.text && !stories.some((x) => x.id === st.id)) { delete st.driveId; delete st.driveTxtId; st.updatedAt = st.updatedAt || Date.now(); stories.push(st); added++; } }
+      scheduleSync();
       saveStories(); refreshReadouts(); renderStoryList();
       showBanner(added + ' storyline' + (added === 1 ? '' : 's') + ' imported.', 'note');
     } catch (err) { showBanner('That file could not be read as a storylines export.'); }
