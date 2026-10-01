@@ -433,6 +433,7 @@
           <div class="placeholder" id="intro">
             <p><b>Set the phone down, tap Start, and leave it.</b></p>
             <p>One tap of Start opens the camera and the microphone (iOS asks once), records everything you say as a storyline, and watches the camera: whenever something new appears in front of the camera and holds still — a page with a question, a note, a sketch — it is read within a couple of seconds and answered from your storylines (a check also runs every <span id="introInterval">15</span> seconds). Nothing to tap until you are done.</p>
+            <p><b>Listen</b> and <b>Ask</b> are extras for when you do not want a full session: Listen records only (camera off), Ask takes one spoken question without recording. Start covers both.</p>
             <p>Talk to it with the word <b>Lens</b>: "Lens, what does the toll-keeper take?" asks a question (a camera frame goes along), "Lens, look at this" reads what is in front of the camera, "Lens, new chapter" starts a new storyline, "Lens, stop recording" ends the session. Those sentences are not written into the transcript.</p>
             <p id="introDrive" hidden>Once, before you start: <button class="btn" type="button" id="introDriveBtn">Connect Google Drive</button> — every storyline is then mirrored to a "Lens Loop" folder on your Drive.</p>
             <p id="introKey">First, add your Claude API key in settings (the gear at the top right).</p>
@@ -454,8 +455,8 @@
       <span title="Saved storylines" id="roStoriesWrap" hidden>·</span><span id="roStories" hidden><b>0</b> storylines</span>
     </div>
     <div class="btn-row">
-      <button class="btn rec" id="listenBtn" type="button" data-on="false" title="Record a storyline">Listen</button>
-      <button class="btn rec" id="askBtn" type="button" data-on="false" title="Ask a question by voice">Ask</button>
+      <button class="btn rec" id="listenBtn" type="button" data-on="false" title="Record only, camera off">Listen</button>
+      <button class="btn rec" id="askBtn" type="button" data-on="false" title="One spoken question, no recording">Ask</button>
       <button class="btn" id="snapBtn" type="button" disabled>Snap</button>
       <button class="btn primary" id="startBtn" type="button" data-running="false">Start</button>
     </div>
@@ -996,6 +997,7 @@
     startBtn.textContent = 'Stop';
     startBtn.dataset.running = 'true';
     snapBtn.disabled = false;
+    listenBtn.hidden = true; askBtn.hidden = true;   // Start covers both; they come back when the session ends
     hideBanner();
     keepAwake();
     lastSig = null; prevSig = null;
@@ -1016,6 +1018,7 @@
     startBtn.textContent = 'Start';
     startBtn.dataset.running = 'false';
     snapBtn.disabled = true;
+    listenBtn.hidden = false; askBtn.hidden = false;
     countdown.textContent = '';
     setStatus('idle', 'Stopped');
   }
