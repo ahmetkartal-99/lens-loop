@@ -432,7 +432,7 @@
         <div class="answer-body" id="answerBody">
           <div class="placeholder" id="intro">
             <p><b>Set the phone down, tap Start, and leave it.</b></p>
-            <p>One tap of Start opens the camera and the microphone (iOS asks once), records everything you say as a storyline, and watches the camera: a frame goes to Claude every <span id="introInterval">15</span> seconds whenever the picture has changed, so a note or sketch held up gets read against your storylines. Nothing to tap until you are done.</p>
+            <p>One tap of Start opens the camera and the microphone (iOS asks once), records everything you say as a storyline, and watches the camera: whenever something new appears in front of the camera and holds still — a page with a question, a note, a sketch — it is read within a couple of seconds and answered from your storylines (a check also runs every <span id="introInterval">15</span> seconds). Nothing to tap until you are done.</p>
             <p>Talk to it with the word <b>Lens</b>: "Lens, what does the toll-keeper take?" asks a question (a camera frame goes along), "Lens, look at this" reads what is in front of the camera, "Lens, new chapter" starts a new storyline, "Lens, stop recording" ends the session. Those sentences are not written into the transcript.</p>
             <p id="introDrive" hidden>Once, before you start: <button class="btn" type="button" id="introDriveBtn">Connect Google Drive</button> — every storyline is then mirrored to a "Lens Loop" folder on your Drive.</p>
             <p id="introKey">First, add your Claude API key in settings (the gear at the top right).</p>
@@ -998,13 +998,15 @@
     snapBtn.disabled = false;
     hideBanner();
     keepAwake();
-    lastSig = null;
+    lastSig = null; prevSig = null;
     tick();
+    clearInterval(watchTimer); watchTimer = setInterval(watchFrame, 500);
     if (S.sessionListen !== false && !listening) startStory(micStream ? { micStream } : {});
   }
   function stop() {
     running = false;
     clearTimeout(tickTimer); tickTimer = null; nextAt = 0;
+    clearInterval(watchTimer); watchTimer = null;
     pending = null;
     for (const r of active) r.ctrl.abort();
     active = [];
@@ -1016,6 +1018,23 @@
     snapBtn.disabled = true;
     countdown.textContent = '';
     setStatus('idle', 'Stopped');
+  }
+  // Twice a second the live picture is compared with the last frame sent. Something new that then holds
+  // still for a moment (a note held up, a page put down) is read at once instead of waiting for the timer.
+  let watchTimer = null, prevSig = null, lastChangeAt = 0;
+  function watchFrame() {
+    if (!running || S.skipStill === false) return;
+    let sig; try { sig = frameSignature(); } catch (e) { return; }
+    if (!sig) return;
+    const changed = sigDiff(sig, lastSig) >= 7;
+    const settled = prevSig && sigDiff(sig, prevSig) < 4;
+    prevSig = sig;
+    if (!changed || !settled) return;
+    if (Date.now() - lastChangeAt < 3000) return;
+    lastChangeAt = Date.now();
+    snap('change');
+    nextAt = Date.now() + S.interval * 1000;
+    clearTimeout(tickTimer); tickTimer = setTimeout(tick, S.interval * 1000);
   }
   function tick() {
     if (!running) return;
@@ -1033,8 +1052,9 @@
   // A coarse grey signature of the thumbnail; the timer only sends a frame when it differs from the last one sent.
   function frameSignature() {
     const w = 32, h = 24;
+    if (!video.videoWidth) return null;
     sigCanvas.width = w; sigCanvas.height = h;
-    sctx.drawImage(thumbCanvas, 0, 0, w, h);
+    sctx.drawImage(video, 0, 0, w, h);
     const d = sctx.getImageData(0, 0, w, h).data, out = new Uint8Array(w * h);
     for (let i = 0; i < out.length; i++) out[i] = (d[i * 4] * 3 + d[i * 4 + 1] * 6 + d[i * 4 + 2]) / 10;
     return out;
@@ -1047,7 +1067,7 @@
       const sig = frameSignature();
       if (sigDiff(sig, lastSig) < 7) { skippedSince = frameNo; return; }   // same picture as the last frame sent
       lastSig = sig;
-    } else if (S.skipStill !== false) {
+    } else {
       try { lastSig = frameSignature(); } catch (e) {}
     }
     skippedSince = -1;
@@ -1059,7 +1079,7 @@
     lastShot.src = frame.thumb; lastShot.hidden = false;
     flash.classList.remove('on'); void flash.offsetWidth; flash.classList.add('on');
 
-    if (active.length && source === 'timer') {
+    if (active.length && (source === 'timer' || source === 'change')) {
       if (S.busy === 'skip') { setStatus('thinking', `Busy · skipped ${fmtF(frameNo)}`); return; }
       if (S.busy === 'latest') { pending = frame; setStatus('thinking', `Busy · ${fmtF(frameNo)} queued`); return; }
     }
@@ -1614,6 +1634,7 @@
       'The transcripts below come from automatic speech recognition, so names and invented words may be misspelled or split; use the index and the surrounding context to resolve them. ' +
       'When a question (spoken by the user, or written or drawn in the photo) concerns this material, work out on your own which storyline it belongs to, answer from that storyline confidently and specifically, and put the storyline\'s title on the second line of the reply as "STORYLINE: <title>" (several titles separated by commas if it spans more than one). ' +
       'If the question has nothing to do with the storylines, write "STORYLINE: none" on the second line and answer normally. If the storylines do not contain the answer, say so in the explanation rather than inventing lore. ' +
+      'A photo may show a handwritten or printed question, a note, a sketch, a diagram or a page of the manuscript. Read it carefully (handwriting included). If it contains a question, answer that question from the storylines exactly as if the user had spoken it. If it is a note, sketch or page without a question, say which storyline it belongs to, how it fits, and point out anything in it that contradicts the recorded lore. Only when nothing in the photo relates to the storylines fall back to describing what is in the frame. ' +
       (skipped ? 'Storylines marked [index only in this request] are known here only by their summary; if the answer must come from one of them, say which one and that its full text was not included this time. ' : '') +
       `\n\nINDEX OF SAVED STORYLINES (${list.length}; full text included for ${picked.size}):\n${idx}\n\nFULL TRANSCRIPTS:\n\n${bodies}`;
   }
