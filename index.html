@@ -358,6 +358,7 @@
   .field .hint b { color: var(--text); font-weight: 600; }
   .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .check { display: flex; align-items: center; gap: 10px; font-size: 14px; margin-bottom: 12px; }
+  .field label.check { font-family: inherit; font-size: 14px; letter-spacing: 0; text-transform: none; color: var(--text); margin-bottom: 0; }
   .check input { width: 20px; height: 20px; accent-color: var(--accent); }
   .key-row { display: flex; gap: 8px; }
   .key-row input { flex: 1; min-width: 0; }
@@ -547,6 +548,27 @@
     <label class="check"><input type="checkbox" id="rotateText"> Turn the answer text to match how the phone is tilted (camera view stays put)</label>
     <label class="check"><input type="checkbox" id="uprightPhoto"> Send the photo upright when the phone is tilted</label>
 
+    <div class="field">
+      <label for="sttKey">ElevenLabs API key (speech recognition)</label>
+      <div class="key-row">
+        <input type="password" id="sttKey" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="sk_…">
+        <button class="btn" type="button" id="showSttKey">Show</button>
+      </div>
+      <div class="hint">With a key, recordings and spoken questions are transcribed by ElevenLabs Scribe v2 Realtime (sent only to api.elevenlabs.io from this phone). Without one, the phone's own dictation is used. A link ending in <b>#key=…&amp;stt=…</b> carries both keys.</div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label for="sttEngine">Listening engine</label>
+        <select id="sttEngine">
+          <option value="auto">ElevenLabs when a key is set, else phone</option>
+          <option value="phone">Phone dictation only</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Names</label>
+        <label class="check" style="margin:4px 0 0"><input type="checkbox" id="boostNames"> Boost names from saved storylines (ElevenLabs, +20% on listening cost)</label>
+      </div>
+    </div>
     <div class="row">
       <div class="field">
         <label for="sttLang">Listening language</label>
@@ -569,7 +591,7 @@
         <label class="check" style="margin:4px 0 0"><input type="checkbox" id="askWithFrame"> Attach a camera frame to spoken questions</label>
       </div>
     </div>
-    <div class="field" style="margin-top:-6px"><div class="hint"><b>Listen</b> records a storyline with the phone's own speech recognition (iOS asks for the microphone; keep Siri &amp; Dictation on). <b>Ask</b> takes one spoken question and answers it from the saved storylines, picking the right one itself. Camera frames are answered with the storylines in mind too.</div></div>
+    <div class="field" style="margin-top:-6px"><div class="hint"><b>Listen</b> records a storyline for as long as you talk — through ElevenLabs when a key is set, otherwise with the phone's own dictation (iOS asks for the microphone; keep Siri &amp; Dictation on). <b>Ask</b> takes one spoken question and answers it from the saved storylines, picking the right one itself. Camera frames are answered with the storylines in mind too. Storylines are kept on this phone without a limit on their number or length; when they outgrow one request, the ones a question needs are chosen first and every other one is still known by its summary.</div></div>
     <div class="field" style="margin-top:-4px"><div class="hint">Tilt is read from the motion sensor; iOS asks for permission on Start. Works best with Orientation Lock on, so Safari itself never rotates the page.</div></div>
 
     <div class="sheet-actions">
@@ -625,6 +647,9 @@
   // 'low', 'medium', 'high', 'xhigh', 'max'. Model IDs: 'claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5'.
   const MODEL = 'claude-fable-5-1';
   const EFFORT = 'max';
+  // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
+  // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
+  const STORY_BUDGET_CHARS = 480000;
   // ====================================================================
 
   const DEFAULTS = {
@@ -648,6 +673,9 @@
     sttLang: '',
     useStories: true,
     askWithFrame: true,
+    sttKey: '',
+    sttEngine: 'auto',
+    boostNames: true,
   };
   const STORE = 'lensloop.settings';
   let S = loadSettings();
@@ -897,7 +925,7 @@
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
     if ((running || listening) && !wakeLock) keepAwake();
-    if (listening && story && story.paused) { story.paused = false; runStoryRecognizer(); }
+    if (listening && engine && engine.resume) engine.resume();
   });
 
   // ---------- loop ----------
@@ -980,6 +1008,11 @@
     setStatus('thinking', `Thinking on ${frame.tag}`);
     renderCurrent();
 
+    let prefer = [];
+    if (S.useStories && storiesOverBudget()) {
+      setStatus('thinking', `Choosing storylines for ${frame.tag}`);
+      try { prefer = await routeStorylines(frame, req); } catch (e) { if (e.name === 'AbortError') { req.error = new Error('Stopped'); req.endedAt = Date.now(); active = active.filter((r) => r !== req); finish(req); return; } }
+    }
     const content = [];
     if (frame.b64) content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: frame.b64 } });
     if (frame.question) {
@@ -992,7 +1025,7 @@
       max_tokens: S.maxTokens,
       stream: true,
       output_config: { effort: S.effort },
-      system: buildSystem(),
+      system: buildSystem(prefer),
       messages: [{ role: 'user', content }],
     };
 
@@ -1055,7 +1088,7 @@
       default:
         break;
     }
-    req.cost = (req.inTok * pIn + (req.cacheW || 0) * pIn * 1.25 + (req.cacheR || 0) * pIn * 0.1 + req.outTok * pOut) / 1e6;
+    req.cost = (req.routeCost || 0) + (req.inTok * pIn + (req.cacheW || 0) * pIn * 1.25 + (req.cacheR || 0) * pIn * 0.1 + req.outTok * pOut) / 1e6;
   }
 
   async function readSSE(bodyStream, onEvent) {
@@ -1177,7 +1210,7 @@
       setStatus('done', `Answered ${current.frame.tag} · next in ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s`);
     } else if (listening && story) {
       setStatus('streaming', `Listening ${mmss(Date.now() - story.startedAt)}`);
-      if (showingTranscript) answerMeta.textContent = `● REC · ${mmss(Date.now() - story.startedAt)} · ${storyWords(story)} words`;
+      if (showingTranscript) answerMeta.textContent = `● REC · ${mmss(Date.now() - story.startedAt)} · ${storyWords(story)} words · ${story.engine === 'cloud' ? 'ElevenLabs' : 'phone'}`;
     } else if (askState) {
       setStatus('armed', 'Listening for your question…');
     }
@@ -1292,6 +1325,9 @@
     $('rotateText').checked = !!S.rotateText;
     $('uprightPhoto').checked = !!S.uprightPhoto;
     $('sttLang').value = S.sttLang || '';
+    $('sttKey').value = S.sttKey || '';
+    $('sttEngine').value = S.sttEngine || 'auto';
+    $('boostNames').checked = S.boostNames !== false;
     $('useStories').checked = !!S.useStories;
     $('askWithFrame').checked = !!S.askWithFrame;
     sheet.hidden = false; sheetBack.hidden = false;
@@ -1305,6 +1341,11 @@
     const show = k.type === 'password';
     k.type = show ? 'text' : 'password';
     $('showKey').textContent = show ? 'Hide' : 'Show';
+  });
+  $('showSttKey').addEventListener('click', () => {
+    const f = $('sttKey'); const show = f.type === 'password';
+    f.type = show ? 'text' : 'password';
+    $('showSttKey').textContent = show ? 'Hide' : 'Show';
   });
   $('forgetKey').addEventListener('click', () => {
     $('apiKey').value = '';
@@ -1331,6 +1372,9 @@
     S.rotateText = $('rotateText').checked;
     S.uprightPhoto = $('uprightPhoto').checked;
     S.sttLang = $('sttLang').value;
+    S.sttKey = $('sttKey').value.trim();
+    S.sttEngine = $('sttEngine').value;
+    S.boostNames = $('boostNames').checked;
     S.useStories = $('useStories').checked;
     S.askWithFrame = $('askWithFrame').checked;
     applyPanelRotation();
@@ -1396,10 +1440,62 @@
 
   // ---------- storylines: recorded brainstorming sessions, saved on this phone ----------
   const STORY_KEY = 'lensloop.storylines', DRAFT_KEY = 'lensloop.draft';
-  const stories = (() => { try { const a = JSON.parse(localStorage.getItem(STORY_KEY) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } })();
-  function saveStories() {
+  // Storylines live in IndexedDB (hundreds of hours fit; localStorage is capped at a few megabytes on iOS).
+  // A copy saved by an earlier version in localStorage is moved over on first load.
+  const stories = [];
+  const storyDB = (() => {
+    if (!window.indexedDB) return null;
+    return new Promise((resolve) => {
+      let req;
+      try { req = indexedDB.open('lensloop', 1); } catch (e) { resolve(null); return; }
+      req.onupgradeneeded = () => { const db = req.result; if (!db.objectStoreNames.contains('storylines')) db.createObjectStore('storylines', { keyPath: 'id' }); };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+      req.onblocked = () => resolve(null);
+    });
+  })();
+  function dbRun(mode, fn) {
+    return Promise.resolve(storyDB).then((db) => new Promise((resolve, reject) => {
+      if (!db) { reject(new Error('no db')); return; }
+      const tx = db.transaction('storylines', mode);
+      const store = tx.objectStore('storylines');
+      let out;
+      try { out = fn(store); } catch (e) { reject(e); return; }
+      tx.oncomplete = () => resolve(out && 'result' in out ? out.result : undefined);
+      tx.onerror = () => reject(tx.error || new Error('db error'));
+      tx.onabort = () => reject(tx.error || new Error('db aborted'));
+    }));
+  }
+  function persistLocal() {
     try { localStorage.setItem(STORY_KEY, JSON.stringify(stories)); return true; }
     catch (e) { showBanner('Could not save to this phone\'s storage (full or blocked). Export your storylines and delete old ones.'); return false; }
+  }
+  let dbOk = false;
+  function saveStories() {
+    if (!dbOk) return Promise.resolve(persistLocal());
+    return dbRun('readwrite', (st) => { for (const x of stories) st.put(x); }).then(() => true, () => persistLocal());
+  }
+  function removeStory(st) {
+    const i = stories.indexOf(st); if (i >= 0) stories.splice(i, 1);
+    if (!dbOk) return persistLocal();
+    dbRun('readwrite', (store) => store.delete(st.id)).catch(() => {});
+    return true;
+  }
+  async function loadStories() {
+    let list = null;
+    try { list = await dbRun('readonly', (st) => st.getAll()); dbOk = true; } catch (e) { dbOk = false; }
+    let legacy = [];
+    try { const a = JSON.parse(localStorage.getItem(STORY_KEY) || '[]'); if (Array.isArray(a)) legacy = a; } catch (e) {}
+    if (dbOk) {
+      const have = new Set((list || []).map((x) => x.id));
+      const moved = legacy.filter((x) => x && x.id && !have.has(x.id));
+      stories.push(...(list || []), ...moved);
+      if (moved.length) { try { await dbRun('readwrite', (st) => { for (const x of moved) st.put(x); }); localStorage.removeItem(STORY_KEY); } catch (e) {} }
+      else if (legacy.length) { try { localStorage.removeItem(STORY_KEY); } catch (e) {} }
+    } else {
+      stories.push(...legacy);
+    }
+    stories.sort((a, b) => a.createdAt - b.createdAt);
   }
   const mmss = (ms) => { const t = Math.max(0, Math.floor(ms / 1000)); const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60; return (h ? h + ':' : '') + String(m).padStart(h ? 2 : 1, '0') + ':' + String(sec).padStart(2, '0'); };
   const storyWords = (st) => st.finals.reduce((n, f) => n + f.text.split(/\s+/).filter(Boolean).length, 0);
@@ -1407,38 +1503,186 @@
 
   // What the model is told about the saved storylines. The whole block is marked for prompt caching,
   // so while the camera loop runs or questions follow each other it is billed at the cache-read rate.
-  function storylineBlock() {
+  const usableStories = () => stories.filter((st) => st.use !== false && st.text);
+  const storyIndexLine = (st, i) => `${i + 1}. «${st.title}» — recorded ${new Date(st.createdAt).toLocaleString()}, ${Math.max(1, Math.round((st.seconds || 0) / 60))} min, ${st.words || 0} words.` +
+    (st.summary ? ' ' + st.summary : '') + (st.keys ? ' Key terms: ' + st.keys + '.' : '');
+  function storiesOverBudget() {
+    return usableStories().reduce((n, st) => n + st.text.length + 400, 0) > STORY_BUDGET_CHARS;
+  }
+  // Full transcripts of the storylines that fit the budget. When the library is bigger than one request can
+  // hold, `prefer` (chosen per question by routeStorylines) goes in first and the newest fill what is left;
+  // every storyline is still listed in the index with its summary and key terms.
+  function storylineBlock(prefer) {
     if (!S.useStories) return null;
-    const list = stories.filter((st) => st.use !== false && st.text);
+    const list = usableStories().sort((a, b) => a.createdAt - b.createdAt);
     if (!list.length) return null;
-    const MAX_CHARS = 480000; // ~120k tokens: leaves room for the photo, the thinking budget and the reply
-    let used = 0; const picked = [];
-    for (const st of [...list].sort((a, b) => b.createdAt - a.createdAt)) {
+    const want = new Set(prefer || []);
+    const order = [...list].sort((a, b) => (want.has(b.id) - want.has(a.id)) || (b.createdAt - a.createdAt));
+    let used = 0; const picked = new Set();
+    for (const st of order) {
       const size = st.text.length + 400;
-      if (used + size > MAX_CHARS) continue;
-      used += size; picked.push(st);
+      if (used + size > STORY_BUDGET_CHARS) continue;
+      used += size; picked.add(st.id);
     }
-    picked.sort((a, b) => a.createdAt - b.createdAt);
-    const idx = picked.map((st, i) => `${i + 1}. «${st.title}» — recorded ${new Date(st.createdAt).toLocaleString()}, ${Math.max(1, Math.round((st.seconds || 0) / 60))} min, ${st.words || 0} words.` +
-      (st.summary ? ' ' + st.summary : '') + (st.keys ? ' Key terms: ' + st.keys + '.' : '')).join('\n');
-    const bodies = picked.map((st, i) => `=== STORYLINE ${i + 1}: «${st.title}» ===\n${st.text}`).join('\n\n');
-    const skipped = list.length - picked.length;
+    const idx = list.map((st, i) => storyIndexLine(st, i) + (picked.has(st.id) ? '' : ' [index only in this request]')).join('\n');
+    const bodies = list.filter((st) => picked.has(st.id)).map((st) => `=== STORYLINE ${list.indexOf(st) + 1}: «${st.title}» ===\n${st.text}`).join('\n\n');
+    const skipped = list.length - picked.size;
     return 'The user is a fiction author who records spoken brainstorming and world-building sessions. Each saved session is a "storyline": a chapter, a plot thread or a lore session. ' +
       'The transcripts below come from automatic speech recognition, so names and invented words may be misspelled or split; use the index and the surrounding context to resolve them. ' +
       'When a question (spoken by the user, or written or drawn in the photo) concerns this material, work out on your own which storyline it belongs to, answer from that storyline confidently and specifically, and put the storyline\'s title on the second line of the reply as "STORYLINE: <title>" (several titles separated by commas if it spans more than one). ' +
-      'If the question has nothing to do with the storylines, write "STORYLINE: none" on the second line and answer normally. If the storylines do not contain the answer, say so in the explanation rather than inventing lore.\n\n' +
-      `INDEX OF SAVED STORYLINES (${picked.length}${skipped ? `; ${skipped} older ones left out for size` : ''}):\n${idx}\n\nFULL TRANSCRIPTS:\n\n${bodies}`;
+      'If the question has nothing to do with the storylines, write "STORYLINE: none" on the second line and answer normally. If the storylines do not contain the answer, say so in the explanation rather than inventing lore. ' +
+      (skipped ? 'Storylines marked [index only in this request] are known here only by their summary; if the answer must come from one of them, say which one and that its full text was not included this time. ' : '') +
+      `\n\nINDEX OF SAVED STORYLINES (${list.length}; full text included for ${picked.size}):\n${idx}\n\nFULL TRANSCRIPTS:\n\n${bodies}`;
   }
-  function buildSystem() {
+  // When the library is larger than one request can carry, a quick low-effort call reads the index and names
+  // the storylines this question needs, so their full transcripts are the ones sent.
+  async function routeStorylines(frame, req) {
+    const list = usableStories().sort((a, b) => a.createdAt - b.createdAt);
+    const idx = list.map((st, i) => storyIndexLine(st, i)).join('\n');
+    const content = [];
+    if (frame.b64) content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: frame.b64 } });
+    content.push({ type: 'text', text: (frame.question ? 'Spoken question from the user: ' + frame.question : 'The attached photo is the question (a note, a sketch, a page).') +
+      '\n\nWhich saved storylines does it belong to? Reply with their numbers only, comma-separated, most relevant first, at most 6. Reply NONE if it concerns none of them.' });
+    const body = {
+      model: S.model, max_tokens: 60, output_config: { effort: 'low' },
+      system: [{ type: 'text', text: 'You pick which of an author\'s recorded storylines a question is about. Transcripts came from speech recognition, so names may be misspelled. Answer with numbers only.' },
+               { type: 'text', text: 'INDEX OF SAVED STORYLINES:\n' + idx, cache_control: { type: 'ephemeral' } }],
+      messages: [{ role: 'user', content }],
+    };
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST', signal: req.ctrl.signal,
+      headers: { 'content-type': 'application/json', 'x-api-key': S.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify(body),
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + res.status));
+    if (j.usage) {
+      const [pIn, pOut] = priceFor(S.model); const u = j.usage;
+      req.routeCost = ((u.input_tokens || 0) * pIn + (u.cache_creation_input_tokens || 0) * pIn * 1.25 + (u.cache_read_input_tokens || 0) * pIn * 0.1 + (u.output_tokens || 0) * pOut) / 1e6;
+    }
+    const txt = (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join(' ');
+    return (txt.match(/\d+/g) || []).map((n) => list[parseInt(n, 10) - 1]).filter(Boolean).map((st) => st.id);
+  }
+  function buildSystem(prefer) {
     const blocks = [{ type: 'text', text: SYSTEM_RULES }];
-    const sb = storylineBlock();
+    const sb = storylineBlock(prefer);
     if (sb) blocks.push({ type: 'text', text: sb, cache_control: { type: 'ephemeral' } });
     return blocks;
   }
 
+  // ----- cloud speech recognition: ElevenLabs Scribe v2 Realtime -----
+  // Microphone → AudioWorklet (mono, resampled to 16 kHz PCM16) → base64 chunks over a WebSocket.
+  // A single-use token is fetched with the key for every connection; the key itself never goes on the socket URL.
+  const SCRIBE_TOKEN_URL = 'https://api.elevenlabs.io/v1/single-use-token/realtime_scribe';
+  const SCRIBE_WS_URL = 'wss://api.elevenlabs.io/v1/speech-to-text/realtime';
+  const PCM_WORKLET = `
+    class PcmCapture extends AudioWorkletProcessor {
+      constructor() { super(); this.ratio = sampleRate / 16000; this.pos = 0; this.prev = 0; this.out = new Int16Array(4000); this.n = 0; this.box = Math.max(1, Math.round(this.ratio)); this.hist = new Float32Array(this.box); this.hi = 0; this.sum = 0; }
+      push(v) { const x = Math.max(-1, Math.min(1, v)); this.out[this.n++] = x < 0 ? x * 32768 : x * 32767; if (this.n === this.out.length) { this.port.postMessage(this.out.buffer, [this.out.buffer]); this.out = new Int16Array(4000); this.n = 0; } }
+      smooth(v) { if (this.box === 1) return v; this.sum += v - this.hist[this.hi]; this.hist[this.hi] = v; this.hi = (this.hi + 1) % this.box; return this.sum / this.box; }
+      process(inputs) {
+        const x = inputs[0] && inputs[0][0]; if (!x) return true;
+        if (this.ratio === 1) { for (let i = 0; i < x.length; i++) this.push(x[i]); return true; }
+        const y = new Float32Array(x.length); for (let i = 0; i < x.length; i++) y[i] = this.smooth(x[i]);
+        let p = this.pos;
+        while (p < y.length - 1) { const i = Math.floor(p), f = p - i; const a = i < 0 ? this.prev : y[i]; this.push(a + (y[i + 1] - a) * f); p += this.ratio; }
+        this.pos = p - y.length; this.prev = y[y.length - 1];
+        return true;
+      }
+    }
+    registerProcessor('pcm-capture', PcmCapture);`;
+  function b64Bytes(buf) { const u = new Uint8Array(buf); let str = ''; for (let i = 0; i < u.length; i += 0x4000) str += String.fromCharCode.apply(null, u.subarray(i, i + 0x4000)); return btoa(str); }
+  function cloudKeyterms() {
+    if (S.boostNames === false) return [];
+    const seen = new Set(), out = [];
+    for (const st of [...stories].sort((a, b) => b.createdAt - a.createdAt)) {
+      for (const raw of (st.keys || '').split(/[,;\n]/)) {
+        const t = raw.trim().replace(/\.$/, '');
+        if (!t || t.length > 20 || seen.has(t.toLowerCase())) continue;
+        seen.add(t.toLowerCase()); out.push(t);
+        if (out.length >= 50) return out;
+      }
+    }
+    return out;
+  }
+  const CLOUD_FATAL = { auth_error: 'ElevenLabs rejected the key (check it has Speech to Text access).', quota_exceeded: 'The ElevenLabs plan is out of speech-to-text hours.', unaccepted_terms: 'ElevenLabs needs the Speech to Text terms accepted once in its web app.' };
+  function makeCloudEngine(o) {
+    let ws = null, ac = null, mic = null, queue = [], open = false, closed = false, retries = 0, bytes = 0;
+    const E = { kind: 'cloud', bytes: () => bytes };
+    async function connect() {
+      const res = await fetch(SCRIBE_TOKEN_URL, { method: 'POST', headers: { 'xi-api-key': S.sttKey } });
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 403) throw Object.assign(new Error(CLOUD_FATAL.auth_error), { fatal: true });
+        if (res.status === 402) throw Object.assign(new Error(CLOUD_FATAL.quota_exceeded), { fatal: true });
+        throw new Error('ElevenLabs token request failed (HTTP ' + res.status + ')');
+      }
+      const { token } = await res.json();
+      const q = new URLSearchParams({ model_id: 'scribe_v2_realtime', audio_format: 'pcm_16000', commit_strategy: 'vad', token });
+      const lang = (S.sttLang || '').split('-')[0];
+      if (lang) q.set('language_code', lang);
+      for (const k of o.keyterms || []) q.append('keyterms', k);
+      await new Promise((resolve, reject) => {
+        const sock = new WebSocket(SCRIBE_WS_URL + '?' + q.toString());
+        let settled = false;
+        sock.onopen = () => { ws = sock; open = true; retries = 0; for (const m of queue) sock.send(m); queue = []; settled = true; resolve(); };
+        sock.onmessage = (e) => {
+          let m; try { m = JSON.parse(e.data); } catch (err) { return; }
+          const t = m.message_type || '';
+          if (t === 'partial_transcript') o.onInterim(m.text || '');
+          else if (t === 'committed_transcript') { if ((m.text || '').trim()) o.onFinal(m.text.trim()); o.onInterim(''); }
+          else if (CLOUD_FATAL[t]) { closed = true; o.onFatal(CLOUD_FATAL[t]); E.stop(); }
+          else if (t === 'rate_limited' || t === 'commit_throttled' || t === 'queue_overflow') { /* transient: keep streaming */ }
+          else if (/error|exceeded|exhausted|insufficient/.test(t)) { try { sock.close(); } catch (err) {} }
+        };
+        sock.onerror = () => { if (!settled) { settled = true; reject(new Error('Could not reach ElevenLabs')); } };
+        sock.onclose = () => { if (ws === sock) { ws = null; open = false; } if (!settled) { settled = true; reject(new Error('ElevenLabs closed the connection')); return; } if (!closed) reconnect(); };
+      });
+    }
+    async function reconnect() {
+      if (closed) return;
+      retries++;
+      await new Promise((r) => setTimeout(r, Math.min(8000, 300 * Math.pow(2, retries - 1))));
+      if (closed) return;
+      try { await connect(); }
+      catch (e) { if (e.fatal) { closed = true; o.onFatal(e.message); E.stop(); } else reconnect(); }
+    }
+    function sendAudio(buf) {
+      bytes += buf.byteLength;
+      const msg = JSON.stringify({ message_type: 'input_audio_chunk', audio_base_64: b64Bytes(buf), commit: false });
+      if (open && ws && ws.readyState === 1) ws.send(msg);
+      else { queue.push(msg); if (queue.length > 240) queue.shift(); }   // up to a minute buffered while reconnecting
+    }
+    E.start = async () => {
+      ac = new (window.AudioContext || window.webkitAudioContext)();
+      try { await ac.resume(); } catch (e) {}
+      mic = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      try { await ac.audioWorklet.addModule('pcm-worklet.js'); }
+      catch (e) {
+        const url = URL.createObjectURL(new Blob([PCM_WORKLET], { type: 'application/javascript' }));
+        await ac.audioWorklet.addModule(url);
+        URL.revokeObjectURL(url);
+      }
+      const node = new AudioWorkletNode(ac, 'pcm-capture', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+      node.port.onmessage = (e) => { if (!closed) sendAudio(e.data); };
+      const src = ac.createMediaStreamSource(mic);
+      const sink = ac.createGain(); sink.gain.value = 0;
+      src.connect(node); node.connect(sink); sink.connect(ac.destination);
+      E.node = node;
+      await connect();
+    };
+    E.stop = () => {
+      closed = true;
+      try { ws && ws.close(); } catch (e) {} ws = null; open = false;
+      try { mic && mic.getTracks().forEach((t) => t.stop()); } catch (e) {} mic = null;
+      try { ac && ac.close(); } catch (e) {} ac = null;
+    };
+    return E;
+  }
+  const cloudWanted = () => !!S.sttKey && S.sttEngine !== 'phone' && !!(window.AudioWorkletNode) && !!navigator.mediaDevices;
+
   // ----- speech recognition (the phone's own engine; no key, no upload) -----
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
-  let rec = null;
+  let engine = null;
   let listening = false, story = null, showingTranscript = false;
   let askState = null, askNo = 0;
   const listenBtn = $('listenBtn'), askBtn = $('askBtn');
@@ -1461,13 +1705,47 @@
     r.onend = () => o.onEnd();
     return r;
   }
-  const NO_SR = 'Speech recognition is not available in this browser. On an iPhone use Safari (iOS 14.5 or later) with Siri & Dictation switched on.';
+  const NO_SR = 'Speech recognition is not available in this browser. On an iPhone use Safari (iOS 14.5 or later) with Siri & Dictation switched on, or add an ElevenLabs key in settings.';
+  // Phone engine: continuous mode restarts the recogniser whenever iOS ends a session (about once a minute),
+  // pauses while the page is hidden and backs off if restarts come too fast.
+  function makePhoneEngine(o) {
+    let rec = null, stopped = false, paused = false, lastRestart = 0, quick = 0;
+    const E = { kind: 'phone' };
+    function run() {
+      rec = makeRecognizer({
+        continuous: !!o.continuous,
+        onFinal: (t) => { if (!stopped) o.onFinal(t.trim()); },
+        onInterim: (t) => { if (!stopped) o.onInterim(t); },
+        onError: (err) => {
+          if (err === 'not-allowed' || err === 'service-not-allowed') { stopped = true; o.onFatal('Microphone or dictation access was refused. Allow the microphone for this site in Settings › Safari, and keep Siri & Dictation on.'); }
+        },
+        onEnd: () => {
+          if (stopped) { o.onEnd && o.onEnd(); return; }
+          if (!o.continuous) { stopped = true; o.onEnd && o.onEnd(); return; }
+          if (document.visibilityState === 'hidden') { paused = true; return; }
+          const now = Date.now();
+          quick = (now - lastRestart < 1500) ? quick + 1 : 0;
+          lastRestart = now;
+          setTimeout(() => {
+            if (stopped) return;
+            try { rec.start(); } catch (e) { setTimeout(() => { if (!stopped) run(); }, 400); }
+          }, quick > 3 ? 1500 : 120);
+        },
+      });
+      try { rec.start(); } catch (e) { stopped = true; o.onFatal('Could not start listening: ' + (e.message || e)); }
+    }
+    E.start = async () => { if (!SR) throw new Error(NO_SR); run(); };
+    E.resume = () => { if (paused && !stopped) { paused = false; run(); } };
+    E.stop = () => { stopped = true; try { rec && rec.stop(); } catch (e) {} };
+    return E;
+  }
 
   // --- recording a storyline ---
-  function startStory() {
-    if (!SR) { showBanner(NO_SR); return; }
-    if (askState) { try { rec.stop(); } catch (e) {} }
-    story = { id: 'st_' + Date.now().toString(36), startedAt: Date.now(), finals: [], interim: '', restarts: 0 };
+  async function startStory() {
+    if (askState) finishAsk(true);
+    const useCloud = cloudWanted();
+    if (!useCloud && !SR) { showBanner(NO_SR); return; }
+    story = { id: 'st_' + Date.now().toString(36), startedAt: Date.now(), finals: [], interim: '', engine: useCloud ? 'cloud' : 'phone' };
     listening = true;
     listenBtn.innerHTML = '<span class="dot-rec"></span>Stop';
     listenBtn.dataset.on = 'true';
@@ -1478,43 +1756,25 @@
     hideBanner();
     copyBtn.hidden = true;
     renderTranscript();
-    runStoryRecognizer();
-  }
-  function runStoryRecognizer() {
-    rec = makeRecognizer({
+    const handlers = {
       continuous: true,
-      onFinal: (t) => {
-        if (!story) return;
-        const text = t.trim();
-        if (text) story.finals.push({ t: Math.round((Date.now() - story.startedAt) / 1000), text });
-        story.interim = '';
-        renderTranscript();
-        saveDraft();
-      },
+      keyterms: useCloud ? cloudKeyterms() : [],
+      onFinal: (text) => { if (!story || !text) return; story.finals.push({ t: Math.round((Date.now() - story.startedAt) / 1000), text }); story.interim = ''; renderTranscript(); saveDraft(); },
       onInterim: (t) => { if (story) { story.interim = t; renderTranscript(); } },
-      onError: (err) => {
-        if (err === 'not-allowed' || err === 'service-not-allowed') {
-          showBanner('Microphone or dictation access was refused. Allow the microphone for this site in Settings › Safari, and keep Siri & Dictation on.');
-          stopStory(true);
-        }
-        // 'no-speech', 'network', 'aborted' and friends: onend follows and restarts
+      onFatal: (msg) => {
+        if (!listening) return;
+        if (story.engine === 'cloud' && SR) {
+          // keep recording with the phone's engine rather than losing the session
+          story.engine = 'phone';
+          showBanner(msg + ' Continuing with the phone\'s own dictation.', 'note');
+          engine = makePhoneEngine(handlers);
+          engine.start().catch((e) => { showBanner(e.message || String(e)); stopStory(true); });
+        } else { showBanner(msg); stopStory(true); }
       },
-      onEnd: () => {
-        if (!listening || !story) return;
-        if (document.visibilityState === 'hidden') { story.paused = true; return; }   // resumes on return to the page
-        const now = Date.now();
-        story.quick = (now - (story.lastRestart || 0) < 1500) ? (story.quick || 0) + 1 : 0;
-        story.lastRestart = now;
-        story.restarts++;
-        setTimeout(() => {
-          if (!listening || !story) return;
-          try { rec.start(); }
-          catch (e) { setTimeout(() => { if (listening) runStoryRecognizer(); }, 400); }
-        }, story.quick > 3 ? 1500 : 120);
-      },
-    });
-    try { rec.start(); }
-    catch (e) { showBanner('Could not start listening: ' + (e.message || e)); stopStory(true); }
+    };
+    engine = useCloud ? makeCloudEngine(handlers) : makePhoneEngine(handlers);
+    try { await engine.start(); }
+    catch (e) { handlers.onFatal(e.message || String(e)); }
   }
   function saveDraft() {
     try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ id: story.id, startedAt: story.startedAt, finals: story.finals })); } catch (e) { /* no room; the in-memory copy still saves on stop */ }
@@ -1522,7 +1782,7 @@
   function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch (e) {} }
   function stopStory(save) {
     listening = false;
-    try { rec && rec.stop(); } catch (e) {}
+    try { engine && engine.stop(); } catch (e) {} engine = null;
     listenBtn.textContent = 'Listen'; listenBtn.dataset.on = 'false';
     askBtn.disabled = false;
     if (!running) releaseWake();
@@ -1542,8 +1802,7 @@
     const saved = { id: st.id, title: `Storyline ${n} · ${new Date(st.startedAt).toLocaleDateString([], { month: 'short', day: 'numeric' })} ${fmtTime(new Date(st.startedAt)).replace(/:\d\d(\s|$)/, '$1')}`,
       createdAt: st.startedAt, endedAt: Date.now(), seconds: Math.round((Date.now() - st.startedAt) / 1000), words, text, summary: '', keys: '', use: true };
     stories.push(saved);
-    saveStories();
-    clearDraft();
+    saveStories().then(() => clearDraft());   // the draft stays until the storyline is safely on disk
     refreshReadouts();
     setStatus('done', `Saved «${saved.title}» · ${words} words`);
     answerMeta.textContent = `Saved · ${mmss(saved.seconds * 1000)} · ${words} words`;
@@ -1596,7 +1855,7 @@
     }
   }
   // A recording interrupted by a reload or a closed tab is kept as a draft and restored here.
-  (function recoverDraft() {
+  function recoverDraft() {
     let d = null;
     try { d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); } catch (e) {}
     if (!d || !Array.isArray(d.finals) || !d.finals.length) return;
@@ -1605,29 +1864,32 @@
     if (words >= 3 && !stories.some((st) => st.id === d.id)) {
       const last = d.finals[d.finals.length - 1];
       stories.push({ id: d.id, title: 'Recovered session · ' + new Date(d.startedAt).toLocaleDateString(), createdAt: d.startedAt, endedAt: d.startedAt + (last.t || 0) * 1000, seconds: last.t || 0, words, text, summary: '', keys: '', use: true });
-      saveStories();
+      saveStories().then(() => clearDraft());
       showBanner('A recording that was cut off has been saved as "Recovered session". Open the storylines list to summarise it.', 'note');
+      return;
     }
     clearDraft();
-  })();
+  }
 
   // Storylines that never got a summary (a recording cut off by a closed tab, an import) get one on the next open.
-  (async function digestMissing() {
+  async function digestMissing() {
     if (!S.key) return;
-    for (const st of stories) {
+    for (const st of [...stories]) {
       if (st.summary || !st.text) continue;
       await new Promise((r) => setTimeout(r, 1500));
       if (!S.key) return;
       await digestStory(st);
     }
-  })();
+  }
+  loadStories().then(() => { refreshReadouts(); recoverDraft(); if (!storySheet.hidden) renderStoryList(); digestMissing(); });
 
   // --- asking by voice ---
-  function startAsk() {
-    if (!SR) { showBanner(NO_SR); return; }
+  async function startAsk() {
     if (listening) return;
-    if (!S.key) { showBanner('Add your API key in settings first.'); return; }
-    askState = { finals: [], interim: '' };
+    const useCloud = cloudWanted();
+    if (!useCloud && !SR) { showBanner(NO_SR); return; }
+    if (!S.key) { showBanner('Add your Claude API key in settings first.'); return; }
+    askState = { finals: [], interim: '', timer: 0 };
     askBtn.innerHTML = '<span class="dot-rec"></span>Done';
     askBtn.dataset.on = 'true';
     listenBtn.disabled = true;
@@ -1636,24 +1898,34 @@
     setStatus('armed', 'Listening for your question…');
     answerMeta.textContent = 'Say your question, then pause';
     answerBody.innerHTML = '<div class="placeholder"><p><b>Listening…</b></p><p>Ask about any saved storyline. The question is sent as soon as you pause, or when you tap Done.</p></div>';
-    rec = makeRecognizer({
+    const handlers = {
       continuous: false,
-      onFinal: (t) => { if (askState) { askState.finals.push(t.trim()); askState.interim = ''; renderAskLive(); } },
+      keyterms: useCloud ? cloudKeyterms() : [],
+      onFinal: (t) => {
+        if (!askState || !t) return;
+        askState.finals.push(t); askState.interim = ''; renderAskLive();
+        if (useCloud) { clearTimeout(askState.timer); askState.timer = setTimeout(() => finishAsk(), 1200); }   // a short pause after the last sentence ends the question
+      },
       onInterim: (t) => { if (askState) { askState.interim = t; renderAskLive(); } },
-      onError: (err) => { if (askState && (err === 'not-allowed' || err === 'service-not-allowed')) showBanner('Microphone or dictation access was refused. Allow the microphone for this site in Settings › Safari.'); },
+      onFatal: (msg) => { showBanner(msg); finishAsk(); },
       onEnd: () => finishAsk(),
-    });
-    try { rec.start(); } catch (e) { showBanner('Could not start listening: ' + (e.message || e)); finishAsk(); }
+    };
+    engine = useCloud ? makeCloudEngine(handlers) : makePhoneEngine(handlers);
+    try { await engine.start(); }
+    catch (e) { showBanner(e.message || String(e)); finishAsk(); }
   }
   function renderAskLive() {
     if (!askState) return;
     const q = (askState.finals.join(' ') + ' ' + askState.interim).trim();
     answerMeta.textContent = q ? 'Heard: ' + q : 'Say your question, then pause';
   }
-  function finishAsk() {
+  function finishAsk(discard) {
     if (!askState) return;
+    clearTimeout(askState.timer);
     const q = (askState.finals.join(' ').trim() || askState.interim.trim());
     askState = null;
+    try { engine && engine.stop(); } catch (e) {} engine = null;
+    if (discard) { askBtn.textContent = 'Ask'; askBtn.dataset.on = 'false'; listenBtn.disabled = false; return; }
     askBtn.textContent = 'Ask'; askBtn.dataset.on = 'false';
     listenBtn.disabled = false;
     if (!q) {
@@ -1702,7 +1974,7 @@
       sBtn.addEventListener('click', () => { sBtn.disabled = true; sBtn.textContent = 'Working…'; digestStory(st).then(() => renderStoryList()); });
       const dBtn = document.createElement('button'); dBtn.type = 'button'; dBtn.className = 'btn'; dBtn.textContent = 'Delete';
       dBtn.addEventListener('click', () => {
-        if (dBtn.dataset.armed) { stories.splice(stories.indexOf(st), 1); saveStories(); refreshReadouts(); renderStoryList(); return; }
+        if (dBtn.dataset.armed) { removeStory(st); refreshReadouts(); renderStoryList(); return; }
         dBtn.dataset.armed = '1'; dBtn.textContent = 'Sure? Delete'; setTimeout(() => { delete dBtn.dataset.armed; dBtn.textContent = 'Delete'; }, 3000);
       });
       row.append(use, tBtn, sBtn, dBtn);
@@ -1732,7 +2004,7 @@
     e.target.value = '';
   });
   listenBtn.addEventListener('click', () => { if (listening) stopStory(true); else startStory(); });
-  askBtn.addEventListener('click', () => { if (askState) { try { rec.stop(); } catch (e) { finishAsk(); } } else startAsk(); });
+  askBtn.addEventListener('click', () => { if (askState) finishAsk(); else startAsk(); });
 
   // ---------- buttons ----------
   startBtn.addEventListener('click', () => { if (running) stop(); else start(); });
@@ -1766,18 +2038,18 @@
   // It is also copied into this browser's storage, so the plain address works as long as that lasts.
   let keyInLink = false;
   function keyFromLink() {
-    const m = /^#key=([^&\s]+)/.exec(location.hash || '');
-    if (!m) return;
-    const k = decodeURIComponent(m[1]).trim();
-    if (!k) return;
-    keyInLink = true;
-    const isNew = k !== S.key;
-    S.key = k;
-    S.saveKey = true;
+    const h = (location.hash || '').replace(/^#/, '');
+    if (!h) return;
+    let q; try { q = new URLSearchParams(h); } catch (e) { return; }
+    const k = (q.get('key') || '').trim(), sk = (q.get('stt') || '').trim();
+    if (!k && !sk) return;
+    let changed = false;
+    if (k) { keyInLink = true; if (k !== S.key) changed = true; S.key = k; S.saveKey = true; }
+    if (sk) { if (sk !== S.sttKey) changed = true; S.sttKey = sk; }
     saveSettings();
     refreshReadouts();
-    if (isNew) showBanner('API key taken from the link. Bookmark this page or add it to the Home Screen and the key comes with it.', 'note');
-    if (!running) setStatus('idle', 'Ready · key in link');
+    if (changed) showBanner((k && sk ? 'Both keys' : k ? 'API key' : 'Speech key') + ' taken from the link. Bookmark this page or add it to the Home Screen and the keys come with it.', 'note');
+    if (!running && k) setStatus('idle', 'Ready · key in link');
   }
   window.addEventListener('hashchange', keyFromLink);
   keyFromLink();
