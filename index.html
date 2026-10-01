@@ -506,6 +506,9 @@
 
     <label class="check"><input type="checkbox" id="keepAwake"> Keep the screen awake while running</label>
     <label class="check"><input type="checkbox" id="saveKey"> Remember the API key on this phone</label>
+    <label class="check"><input type="checkbox" id="rotateText"> Turn the answer text to match how the phone is tilted (camera view stays put)</label>
+    <label class="check"><input type="checkbox" id="uprightPhoto"> Send the photo upright when the phone is tilted</label>
+    <div class="field" style="margin-top:-4px"><div class="hint">Tilt is read from the motion sensor; iOS asks for permission on Start. Works best with Orientation Lock on, so Safari itself never rotates the page.</div></div>
 
     <div class="sheet-actions">
       <button class="btn quiet" type="button" id="forgetKey">Forget key</button>
@@ -563,6 +566,8 @@
     textSize: 20,
     keepAwake: true,
     saveKey: true,
+    rotateText: true,
+    uprightPhoto: true,
   };
   const STORE = 'lensloop.settings';
   let S = loadSettings();
@@ -775,14 +780,23 @@
     if (!vw || !vh) throw new Error('The camera has not delivered a frame yet.');
     const scale = Math.min(1, S.imgSize / Math.max(vw, vh));
     const w = Math.round(vw * scale), h = Math.round(vh * scale);
-    canvas.width = w; canvas.height = h;
-    ctx.drawImage(video, 0, 0, w, h);
+    // When the page is locked to portrait and the phone is physically sideways, the frame holds the
+    // scene rotated; turn it back upright so the photo Claude sees is oriented like the room.
+    const rot = S.uprightPhoto ? -contentRotation() : 0;
+    const swap = rot === 90 || rot === -90;
+    canvas.width = swap ? h : w; canvas.height = swap ? w : h;
+    ctx.save();
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate(rot * Math.PI / 180);
+    ctx.drawImage(video, -w / 2, -h / 2, w, h);
+    ctx.restore();
+    const cw = canvas.width, ch = canvas.height;
     const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-    const tw = 160, th = Math.max(1, Math.round(h * tw / w));
+    const tw = 160, th = Math.max(1, Math.round(ch * tw / cw));
     thumbCanvas.width = tw; thumbCanvas.height = th;
     tctx.drawImage(canvas, 0, 0, tw, th);
     const thumb = thumbCanvas.toDataURL('image/jpeg', 0.6);
-    return { b64: dataUrl.slice(dataUrl.indexOf(',') + 1), thumb, w, h };
+    return { b64: dataUrl.slice(dataUrl.indexOf(',') + 1), thumb, w: cw, h: ch };
   }
 
   // ---------- wake lock ----------
@@ -804,6 +818,7 @@
   async function start() {
     if (!S.key) { openSheet(); $('apiKey').focus(); return; }
     startBtn.disabled = true;
+    await enableTilt(); // must run inside the tap: iOS only grants motion access from a user gesture
     setStatus('armed', 'Opening camera');
     try {
       await openCamera();
@@ -1167,6 +1182,8 @@
     $('thumbSize').value = String(S.textSize);
     $('keepAwake').checked = !!S.keepAwake;
     $('saveKey').checked = !!S.saveKey;
+    $('rotateText').checked = !!S.rotateText;
+    $('uprightPhoto').checked = !!S.uprightPhoto;
     sheet.hidden = false; sheetBack.hidden = false;
   }
   function closeSheet() { sheet.hidden = true; sheetBack.hidden = true; }
@@ -1201,6 +1218,9 @@
     S.textSize = parseInt($('thumbSize').value, 10) || 20;
     S.keepAwake = $('keepAwake').checked;
     S.saveKey = $('saveKey').checked;
+    S.rotateText = $('rotateText').checked;
+    S.uprightPhoto = $('uprightPhoto').checked;
+    applyPanelRotation();
     saveSettings();
     refreshReadouts();
     closeSheet();
@@ -1208,6 +1228,58 @@
     if (running && (S.facing !== prevFacing || S.deviceId !== prevDevice)) openCamera().catch((err) => showBanner(err.message));
     if (running) { if (S.keepAwake) keepAwake(); else releaseWake(); }
   });
+
+  // ---------- tilt: turn the answer panel to match the phone, leave the camera alone ----------
+  // tilt is the CSS rotation that makes portrait-layout content upright for the viewer:
+  // 0 = phone upright, 90 = right edge up, -90 = left edge up, 180 = upside down.
+  let tilt = 0;
+  let tiltArmed = false;
+  let tiltPending = null, tiltTimer = null;
+  const uiLandscape = () => window.innerWidth > window.innerHeight;
+  // If Safari rotated the page itself (Orientation Lock off), it already turned the content.
+  const contentRotation = () => (S.rotateText && !uiLandscape()) ? tilt : 0;
+  function onOrient(e) {
+    if (e.beta == null || e.gamma == null) return;
+    const b = e.beta * Math.PI / 180, g = e.gamma * Math.PI / 180;
+    // the "up" direction of the room expressed in the phone's own axes
+    const ux = -Math.sin(g) * Math.cos(b), uy = Math.sin(b), uz = Math.cos(g) * Math.cos(b);
+    if (Math.abs(uz) > 0.8) return; // lying nearly flat: keep whatever it was
+    const ax = Math.abs(ux), ay = Math.abs(uy);
+    if (Math.max(ax, ay) < 0.55) return; // too close to the boundary to decide
+    const cand = ay >= ax ? (uy >= 0 ? 0 : 180) : (ux > 0 ? 90 : -90);
+    if (cand === tilt) { tiltPending = null; clearTimeout(tiltTimer); tiltTimer = null; return; }
+    if (cand !== tiltPending) {
+      tiltPending = cand;
+      clearTimeout(tiltTimer);
+      tiltTimer = setTimeout(() => { tilt = tiltPending; tiltPending = null; tiltTimer = null; applyPanelRotation(); }, 350);
+    }
+  }
+  async function enableTilt() {
+    if (tiltArmed) return;
+    if (typeof DeviceOrientationEvent === 'undefined') return;
+    if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+      try { if ((await DeviceOrientationEvent.requestPermission()) !== 'granted') return; } catch (e) { return; }
+    }
+    window.addEventListener('deviceorientation', onOrient);
+    tiltArmed = true;
+  }
+  const stageEl = document.querySelector('.stage');
+  function applyPanelRotation() {
+    const p = $('answer');
+    const rot = p.classList.contains('collapsed') ? 0 : contentRotation();
+    if (rot === 0) { p.style.cssText = ''; return; }
+    const sw = stageEl.clientWidth, sh = stageEl.clientHeight;
+    const W = sw - 16, H = sh - 124;              // the panel's rectangle in the portrait layout
+    const cx = 8 + W / 2, cy = 116 + H / 2;
+    if (rot === 180) {
+      p.style.cssText = `left:8px;top:116px;width:${W}px;height:${H}px;right:auto;bottom:auto;transform:rotate(180deg)`;
+    } else {
+      // same rectangle on screen, but the panel's own width runs along the screen's height
+      p.style.cssText = `left:${cx - H / 2}px;top:${cy - W / 2}px;width:${H}px;height:${W}px;right:auto;bottom:auto;transform:rotate(${rot}deg)`;
+    }
+  }
+  window.addEventListener('resize', applyPanelRotation);
+  window.addEventListener('orientationchange', () => setTimeout(applyPanelRotation, 150));
 
   // ---------- buttons ----------
   startBtn.addEventListener('click', () => { if (running) stop(); else start(); });
@@ -1217,6 +1289,7 @@
     answerEl.classList.toggle('collapsed', !open);
     toggleBtn.textContent = open ? 'Hide' : 'Show';
     toggleBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    applyPanelRotation();
   }
   toggleBtn.addEventListener('click', () => setPanel(answerEl.classList.contains('collapsed')));
   $('viewfinder').addEventListener('click', () => setPanel(answerEl.classList.contains('collapsed')));
