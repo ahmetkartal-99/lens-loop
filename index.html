@@ -3,7 +3,6 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<script src="https://accounts.google.com/gsi/client" async defer></script>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -786,11 +785,12 @@
     answerBody.style.fontSize = S.textSize + 'px';
   }
   function showBanner(msg, kind) {
+    delete banner.dataset.action;
     banner.textContent = msg;
     banner.className = 'banner' + (kind === 'note' ? ' note' : '');
     banner.hidden = false;
   }
-  function hideBanner() { banner.hidden = true; }
+  function hideBanner() { banner.hidden = true; delete banner.dataset.action; }
   const fmtTime = (d) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const fmtF = (n) => 'F-' + String(n).padStart(4, '0');
   const secs = (ms) => (ms / 1000).toFixed(1) + ' s';
@@ -1971,41 +1971,53 @@
   // Each storyline is one JSON file (the record) plus one readable .txt in a "Lens Loop" folder. Sync runs after
   // every change and on open while the sign-in is valid (about an hour); after that the sheet offers a reconnect.
   const DRIVE_TOKEN_KEY = 'lensloop.drive';
-  let driveToken = null, driveExp = 0, tokenClient = null, syncTimer = 0, syncing = false, syncAgain = false;
-  let onDriveToken = null, onDriveError = null;
+  let driveToken = null, driveExp = 0, syncTimer = 0, syncing = false, syncAgain = false;
+  const driveConnected = () => !!driveToken && driveExp > Date.now();
   (function loadDriveToken() {
     try { const t = JSON.parse(localStorage.getItem(DRIVE_TOKEN_KEY) || 'null'); if (t && t.token && t.exp > Date.now() + 60000) { driveToken = t.token; driveExp = t.exp; } } catch (e) {}
   })();
-  const driveConnected = () => !!driveToken && driveExp > Date.now();
-  const gisReady = () => !!(window.google && google.accounts && google.accounts.oauth2);
-  function connectDrive() {
-    return new Promise((resolve, reject) => {
-      if (!GOOGLE_CLIENT_ID) { reject(new Error('No Google client ID is set in the page.')); return; }
-      if (!gisReady()) { reject(new Error('Google sign-in did not load. Check the connection and try again.')); return; }
-      if (!tokenClient) {
-        tokenClient = google.accounts.oauth2.initTokenClient({
-          client_id: GOOGLE_CLIENT_ID, scope: DRIVE_SCOPE,
-          callback: (r) => { const f = onDriveToken; onDriveToken = onDriveError = null; f && f(r); },
-          error_callback: (e) => { const f = onDriveError; onDriveToken = onDriveError = null; f && f(e); },
-        });
-      }
-      onDriveToken = (r) => {
-        if (!r || r.error) { reject(new Error((r && (r.error_description || r.error)) || 'Sign-in failed')); return; }
-        driveToken = r.access_token; driveExp = Date.now() + Math.max(60, (r.expires_in || 3600) - 60) * 1000;
-        try { localStorage.setItem(DRIVE_TOKEN_KEY, JSON.stringify({ token: driveToken, exp: driveExp })); } catch (e) {}
-        S.driveOn = true; saveSettings();
-        resolve();
-      };
-      onDriveError = (e) => reject(new Error(e && e.type === 'popup_closed' ? 'Sign-in window was closed.' : 'Sign-in window could not open.'));
-      tokenClient.requestAccessToken({ prompt: '' });
-    });
+  function storeDriveToken(token, expiresIn) {
+    driveToken = token; driveExp = Date.now() + Math.max(60, (parseInt(expiresIn, 10) || 3600) - 60) * 1000;
+    try { localStorage.setItem(DRIVE_TOKEN_KEY, JSON.stringify({ token: driveToken, exp: driveExp })); } catch (e) {}
+    S.driveOn = true; saveSettings();
   }
+  const pageUrl = () => location.origin + location.pathname.replace(/index\.html$/, '');
+  const keysHash = () => { const q = new URLSearchParams(); if (S.key) q.set('key', S.key); if (S.sttKey) q.set('stt', S.sttKey); const h = q.toString(); return h ? '#' + h : ''; };
+  // Sends the page to Google and back. Google answers in the URL fragment, which the page reads on return.
+  // With silent=true (prompt=none) there is nothing to tap when the Google session is still signed in.
+  function redirectAuth(silent) {
+    const state = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    try { localStorage.setItem('lensloop.gauth', JSON.stringify({ state, silent: !!silent, at: Date.now() })); } catch (e) {}
+    const q = new URLSearchParams({ client_id: GOOGLE_CLIENT_ID, redirect_uri: pageUrl(), response_type: 'token', scope: DRIVE_SCOPE, include_granted_scopes: 'true', state });
+    if (silent) q.set('prompt', 'none');
+    location.assign('https://accounts.google.com/o/oauth2/v2/auth?' + q.toString());
+  }
+  // Runs once at load: picks up the token (or error) Google put in the fragment and puts the key link back.
+  const authReturn = (function tokenFromRedirect() {
+    const h = (location.hash || '').replace(/^#/, '');
+    if (!/(^|&)(access_token|error)=/.test(h)) return null;
+    let q; try { q = new URLSearchParams(h); } catch (e) { return null; }
+    let pending = null; try { pending = JSON.parse(localStorage.getItem('lensloop.gauth') || 'null'); } catch (e) {}
+    try { localStorage.removeItem('lensloop.gauth'); } catch (e) {}
+    const ok = pending && q.get('state') === pending.state;
+    try { window.history.replaceState(null, '', location.pathname + location.search + keysHash()); } catch (e) {}
+    if (!ok) return { error: 'state' };
+    if (q.get('access_token')) { storeDriveToken(q.get('access_token'), q.get('expires_in')); S.driveRedirectOk = true; saveSettings(); return { ok: true, silent: pending.silent }; }
+    return { error: q.get('error') || 'denied', silent: pending.silent };
+  })();
+  // Signed in before, token expired, redirect sign-in known to work: bounce through Google without a tap.
+  (function silentRefresh() {
+    if (authReturn || !S.driveOn || driveConnected() || !S.driveRedirectOk || !GOOGLE_CLIENT_ID) return;
+    if (Date.now() - (S.driveSilentAt || 0) < 10 * 60 * 1000) return;   // one try per ten minutes, never a loop
+    S.driveSilentAt = Date.now(); saveSettings();
+    redirectAuth(true);
+  })();
   function disconnectDrive() {
     const t = driveToken;
     driveToken = null; driveExp = 0;
     try { localStorage.removeItem(DRIVE_TOKEN_KEY); } catch (e) {}
     S.driveOn = false; saveSettings();
-    if (t && gisReady()) { try { google.accounts.oauth2.revoke(t, () => {}); } catch (e) {} }
+    if (t) { try { fetch('https://oauth2.googleapis.com/revoke?token=' + encodeURIComponent(t), { method: 'POST' }).catch(() => {}); } catch (e) {} }
     renderDriveRow();
   }
   async function drive(path, opts) {
@@ -2142,11 +2154,20 @@
       con.hidden = false; con.textContent = 'Connect Google Drive'; syn.hidden = true; off.hidden = true;
     }
   }
-  $('driveConnect').addEventListener('click', async () => {
+  async function driveConnectTap() {
+    if (listening || askState) { showBanner('Finish the recording first, then connect Google Drive.', 'note'); return; }
     renderDriveRow('Opening Google sign-in…');
-    try { await connectDrive(); renderDriveRow(); await syncDrive(); }
-    catch (e) { renderDriveRow((e.message || String(e)) + ' Tap Connect to try again.'); }
-  });
+    redirectAuth(false);   // through Google and back to this page; works in Safari tabs and Home Screen apps alike
+  }
+  $('driveConnect').addEventListener('click', driveConnectTap);
+  banner.addEventListener('click', () => { if (banner.dataset.action === 'drive') { hideBanner(); driveConnectTap(); } });
+  if (authReturn && authReturn.error && !authReturn.silent) {
+    showBanner(authReturn.error === 'state' ? 'Google sign-in did not match this page; tap Connect in the storylines list to try again.' : 'Google sign-in was not completed (' + authReturn.error + '). Tap here to try again.', 'note');
+    banner.dataset.action = 'drive';
+  } else if (S.driveOn && !driveConnected() && !(authReturn && authReturn.ok)) {
+    showBanner('Google Drive sign-in has expired — tap here to reconnect so new storylines keep syncing.', 'note');
+    banner.dataset.action = 'drive';
+  }
   $('driveSync').addEventListener('click', () => syncDrive());
   $('driveOff').addEventListener('click', disconnectDrive);
 
