@@ -374,6 +374,9 @@
     margin: -4px 0 14px;
   }
   .transcript { font-size: 16px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .live-strip { padding: 8px 14px; border-bottom: 1px solid var(--line); font-size: 13px; line-height: 1.4; color: var(--muted); cursor: pointer; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .live-strip b { color: var(--bad); font-family: var(--mono); font-size: 11px; letter-spacing: .06em; margin-right: 6px; }
+  .live-strip .interim { color: var(--text); }
   .transcript .interim { color: var(--muted); }
   .transcript .empty { color: var(--muted); }
   .story-list { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
@@ -423,13 +426,15 @@
         <button class="copy" id="copyBtn" type="button" hidden>Copy</button>
         <button class="tog" id="toggleBtn" type="button" aria-expanded="true">Hide</button>
       </div>
+      <div class="live-strip" id="liveStrip" hidden></div>
       <div class="answer-scroll" id="answerScroll">
         <div class="banner" id="banner" hidden></div>
         <div class="answer-body" id="answerBody">
           <div class="placeholder" id="intro">
             <p><b>Set the phone down, tap Start, and leave it.</b></p>
-            <p>Every <span id="introInterval">15</span> seconds the camera takes one frame and sends it to Claude. The answer streams into this panel and replaces the previous one. Earlier answers stay in the list below. Tap the camera or "Hide" to tuck this panel away.</p>
-            <p><b>Listen</b> records a brainstorming session as a storyline and keeps it on this phone. <b>Ask</b> takes one spoken question and answers it from the saved storylines — Claude works out which storyline it belongs to. Camera frames are answered with the storylines in mind too.</p>
+            <p>One tap of Start opens the camera and the microphone (iOS asks once), records everything you say as a storyline, and watches the camera: a frame goes to Claude every <span id="introInterval">15</span> seconds whenever the picture has changed, so a note or sketch held up gets read against your storylines. Nothing to tap until you are done.</p>
+            <p>Talk to it with the word <b>Lens</b>: "Lens, what does the toll-keeper take?" asks a question (a camera frame goes along), "Lens, look at this" reads what is in front of the camera, "Lens, new chapter" starts a new storyline, "Lens, stop recording" ends the session. Those sentences are not written into the transcript.</p>
+            <p id="introDrive" hidden>Once, before you start: <button class="btn" type="button" id="introDriveBtn">Connect Google Drive</button> — every storyline is then mirrored to a "Lens Loop" folder on your Drive.</p>
             <p id="introKey">First, add your Claude API key in settings (the gear at the top right).</p>
           </div>
         </div>
@@ -591,6 +596,13 @@
         <label class="check" style="margin:4px 0 0"><input type="checkbox" id="askWithFrame"> Attach a camera frame to spoken questions</label>
       </div>
     </div>
+    <div class="row">
+      <div class="field">
+        <label>Session</label>
+        <label class="check" style="margin:4px 0 0"><input type="checkbox" id="sessionListen"> Start also records a storyline (microphone on)</label>
+        <label class="check" style="margin:4px 0 0"><input type="checkbox" id="skipStill"> Skip camera frames when nothing in the picture changed</label>
+      </div>
+    </div>
     <div class="field" style="margin-top:-6px"><div class="hint"><b>Listen</b> records a storyline for as long as you talk — through ElevenLabs when a key is set, otherwise with the phone's own dictation (iOS asks for the microphone; keep Siri &amp; Dictation on). <b>Ask</b> takes one spoken question and answers it from the saved storylines, picking the right one itself. Camera frames are answered with the storylines in mind too. Storylines are kept on this phone without a limit on their number or length; when they outgrow one request, the ones a question needs are chosen first and every other one is still known by its summary.</div></div>
     <div class="field" style="margin-top:-4px"><div class="hint">Tilt is read from the motion sensor; iOS asks for permission on Start. Works best with Orientation Lock on, so Safari itself never rotates the page.</div></div>
 
@@ -624,6 +636,7 @@
 </form>
 
 <canvas id="canvas" hidden></canvas>
+<canvas id="sigCanvas" hidden></canvas>
 <canvas id="thumbCanvas" hidden></canvas>
 
 <script>
@@ -690,6 +703,8 @@
     sttKey: '',
     sttEngine: 'auto',
     boostNames: true,
+    sessionListen: true,
+    skipStill: true,
   };
   const STORE = 'lensloop.settings';
   let S = loadSettings();
@@ -741,7 +756,8 @@
   }
 
   // ---------- DOM ----------
-  const video = $('video'), canvas = $('canvas'), thumbCanvas = $('thumbCanvas');
+  const video = $('video'), canvas = $('canvas'), thumbCanvas = $('thumbCanvas'), sigCanvas = $('sigCanvas');
+  const sctx = sigCanvas.getContext('2d', { willReadFrequently: true });
   const ctx = canvas.getContext('2d'), tctx = thumbCanvas.getContext('2d');
   const statusEl = $('status'), statusText = $('statusText');
   const answerBody = $('answerBody'), answerMeta = $('answerMeta'), banner = $('banner'), copyBtn = $('copyBtn');
@@ -754,6 +770,7 @@
   let stream = null;
   let tickTimer = null;
   let nextAt = 0;
+  let skippedSince = -1;   // frame number the picture has not changed since (timer frames held back)
   let frameNo = 0;
   let reqSeq = 0;
   let active = [];        // requests in flight
@@ -777,8 +794,9 @@
     $('roStories').innerHTML = '<b>' + n + '</b> storyline' + (n === 1 ? '' : 's');
     $('roStories').hidden = !n; $('roStoriesWrap').hidden = !n;
     $('storyBadge').textContent = String(n); $('storyBadge').hidden = !n;
-    const introInterval = $('introInterval'), introKey = $('introKey'); // gone once the first answer renders
+    const introInterval = $('introInterval'), introKey = $('introKey'), introDrive = $('introDrive'); // gone once the first answer renders
     if (introInterval) introInterval.textContent = S.interval;
+    if (introDrive) introDrive.hidden = !GOOGLE_CLIENT_ID || !!S.driveOn;
     if (introKey) introKey.textContent = S.key
       ? 'API key is set. Tap Start when the phone is in position.'
       : 'First, add your Claude API key in settings (the gear at the top right).';
@@ -796,24 +814,38 @@
   const secs = (ms) => (ms / 1000).toFixed(1) + ' s';
 
   // ---------- camera ----------
-  async function openCamera() {
+  let micStream = null;   // the microphone track opened together with the camera (one permission prompt)
+  async function openCamera(withMic) {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       throw new Error('This browser cannot open the camera here. Open the page over https:// in Safari.');
     }
     stopCamera();
     // Ask for the most pixels the lens offers; the frame is scaled down to the chosen size afterwards.
     const quality = { width: { ideal: 3840 }, height: { ideal: 2160 } };
-    const byFacing = { audio: false, video: { facingMode: { ideal: S.facing }, ...quality } };
+    const audio = withMic ? { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } : false;
+    const byFacing = { audio, video: { facingMode: { ideal: S.facing }, ...quality } };
+    const get = async (c) => {
+      try { return await navigator.mediaDevices.getUserMedia(c); }
+      catch (e) {
+        if (!c.audio) throw e;
+        const s2 = await navigator.mediaDevices.getUserMedia(Object.assign({}, c, { audio: false }));   // camera without the microphone rather than nothing
+        showBanner('The microphone could not be opened with the camera; recording uses the phone\'s dictation instead.', 'note');
+        return s2;
+      }
+    };
     if (S.deviceId) {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { deviceId: { exact: S.deviceId }, ...quality } });
+        stream = await get({ audio, video: { deviceId: { exact: S.deviceId }, ...quality } });
       } catch (e) {
         S.deviceId = ''; saveSettings(); // that lens is gone; fall back to the facing choice
-        stream = await navigator.mediaDevices.getUserMedia(byFacing);
+        stream = await get(byFacing);
       }
     } else {
-      stream = await navigator.mediaDevices.getUserMedia(byFacing);
+      stream = await get(byFacing);
     }
+    const at = stream.getAudioTracks();
+    micStream = at.length ? new MediaStream(at) : null;
+    if (listening && engine && engine.setMic) engine.setMic(micStream);   // lens switched mid-session: keep the recording going
     video.srcObject = stream;
     try { await video.play(); } catch (e) { /* autoplay blocked; muted video usually plays anyway */ }
     await waitForFrames();
@@ -897,7 +929,7 @@
   }
   function stopCamera() {
     if (stream) { for (const t of stream.getTracks()) t.stop(); }
-    stream = null;
+    stream = null; micStream = null;
     video.srcObject = null;
     $('vfPlaceholder').hidden = false;
     $('zoomRow').hidden = true;
@@ -946,11 +978,13 @@
   // ---------- loop ----------
   async function start() {
     if (!S.key) { openSheet(); $('apiKey').focus(); return; }
+    if (askState) finishAsk(true);
     startBtn.disabled = true;
     await enableTilt(); // must run inside the tap: iOS only grants motion access from a user gesture
-    setStatus('armed', 'Opening camera');
+    const withMic = S.sessionListen !== false && !listening && cloudWanted();
+    setStatus('armed', withMic ? 'Opening camera and microphone' : 'Opening camera');
     try {
-      await openCamera();
+      await openCamera(withMic);
     } catch (e) {
       setStatus('error', 'Camera unavailable');
       showBanner(e.message || String(e));
@@ -964,7 +998,9 @@
     snapBtn.disabled = false;
     hideBanner();
     keepAwake();
+    lastSig = null;
     tick();
+    if (S.sessionListen !== false && !listening) startStory(micStream ? { micStream } : {});
   }
   function stop() {
     running = false;
@@ -972,6 +1008,7 @@
     pending = null;
     for (const r of active) r.ctrl.abort();
     active = [];
+    if (listening) stopStory(true);   // the recording ends with the session and is saved
     stopCamera();
     if (!listening) releaseWake();
     startBtn.textContent = 'Start';
@@ -992,9 +1029,28 @@
     nextAt = Date.now() + S.interval * 1000;
     tickTimer = setTimeout(tick, S.interval * 1000);
   }
+  let lastSig = null;
+  // A coarse grey signature of the thumbnail; the timer only sends a frame when it differs from the last one sent.
+  function frameSignature() {
+    const w = 32, h = 24;
+    sigCanvas.width = w; sigCanvas.height = h;
+    sctx.drawImage(thumbCanvas, 0, 0, w, h);
+    const d = sctx.getImageData(0, 0, w, h).data, out = new Uint8Array(w * h);
+    for (let i = 0; i < out.length; i++) out[i] = (d[i * 4] * 3 + d[i * 4 + 1] * 6 + d[i * 4 + 2]) / 10;
+    return out;
+  }
+  function sigDiff(a, b) { if (!a || !b || a.length !== b.length) return 255; let s = 0; for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]); return s / a.length; }
   function snap(source) {
     let frame;
     try { frame = captureFrame(); } catch (e) { showBanner(e.message); return; }
+    if (source === 'timer' && S.skipStill !== false) {
+      const sig = frameSignature();
+      if (sigDiff(sig, lastSig) < 7) { skippedSince = frameNo; return; }   // same picture as the last frame sent
+      lastSig = sig;
+    } else if (S.skipStill !== false) {
+      try { lastSig = frameSignature(); } catch (e) {}
+    }
+    skippedSince = -1;
     frameNo += 1;
     frame.no = frameNo;
     frame.at = new Date();
@@ -1150,6 +1206,7 @@
     if (req.text) lastGoodText = req.text;
     if (req === current) {
       showingTranscript = false;
+      renderLiveStrip();
       const inAll = req.inTok + (req.cacheW || 0) + (req.cacheR || 0);
       const bits = [req.frame.tag, fmtTime(req.frame.at), `${secs(took)}`, `${inAll}${req.cacheR ? ' (' + req.cacheR + ' cached)' : ''}→${req.outTok} tok`, `$${req.cost.toFixed(3)}`];
       answerMeta.textContent = bits.join(' · ');
@@ -1223,12 +1280,18 @@
       }
     } else if (running && statusEl.dataset.kind === 'done' && current) {
       setStatus('done', `Answered ${current.frame.tag} · next in ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s`);
-    } else if (listening && story) {
+    } else if (running && listening && story && !awaitingQuestion) {
+      setStatus('streaming', `Session ${mmss(Date.now() - story.startedAt)} · ${skippedSince >= 0 ? 'picture unchanged' : 'watching'} · ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s`);
+      if (showingTranscript) answerMeta.textContent = `● REC · ${mmss(Date.now() - story.startedAt)} · ${storyWords(story)} words · ${story.engine === 'cloud' ? 'ElevenLabs' : 'phone'}`;
+    } else if (listening && story && !awaitingQuestion) {
       setStatus('streaming', `Listening ${mmss(Date.now() - story.startedAt)}`);
       if (showingTranscript) answerMeta.textContent = `● REC · ${mmss(Date.now() - story.startedAt)} · ${storyWords(story)} words · ${story.engine === 'cloud' ? 'ElevenLabs' : 'phone'}`;
+    } else if (running && skippedSince >= 0 && statusEl.dataset.kind !== 'thinking' && statusEl.dataset.kind !== 'streaming') {
+      setStatus('idle', `Picture unchanged · next look in ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s`);
     } else if (askState) {
       setStatus('armed', 'Listening for your question…');
     }
+    if (listening && story && !liveStrip.hidden) { const b = liveStrip.querySelector('b'); if (b) b.textContent = '● REC ' + mmss(Date.now() - story.startedAt); }
   }, 250);
   function renderMetaOnly(r) {
     const phase = r.firstTextAt ? 'answering' : 'thinking';
@@ -1343,6 +1406,8 @@
     $('sttKey').value = S.sttKey || '';
     $('sttEngine').value = S.sttEngine || 'auto';
     $('boostNames').checked = S.boostNames !== false;
+    $('sessionListen').checked = S.sessionListen !== false;
+    $('skipStill').checked = S.skipStill !== false;
     $('useStories').checked = !!S.useStories;
     $('askWithFrame').checked = !!S.askWithFrame;
     sheet.hidden = false; sheetBack.hidden = false;
@@ -1390,6 +1455,8 @@
     S.sttKey = $('sttKey').value.trim();
     S.sttEngine = $('sttEngine').value;
     S.boostNames = $('boostNames').checked;
+    S.sessionListen = $('sessionListen').checked;
+    S.skipStill = $('skipStill').checked;
     S.useStories = $('useStories').checked;
     S.askWithFrame = $('askWithFrame').checked;
     applyPanelRotation();
@@ -1622,6 +1689,7 @@
     return out;
   }
   const CLOUD_FATAL = { auth_error: 'ElevenLabs rejected the key (check it has Speech to Text access).', quota_exceeded: 'The ElevenLabs plan is out of speech-to-text hours.', unaccepted_terms: 'ElevenLabs needs the Speech to Text terms accepted once in its web app.' };
+  let ownedMic = null;   // microphone opened by the engine itself (no camera running); kept across storylines
   function makeCloudEngine(o) {
     let ws = null, ac = null, mic = null, queue = [], open = false, closed = false, retries = 0, bytes = 0;
     const E = { kind: 'cloud', bytes: () => bytes };
@@ -1668,28 +1736,40 @@
       if (open && ws && ws.readyState === 1) ws.send(msg);
       else { queue.push(msg); if (queue.length > 240) queue.shift(); }   // up to a minute buffered while reconnecting
     }
+    let ownMic = false, src = null, node = null;
+    function wire(ms) {
+      try { src && src.disconnect(); } catch (e) {}
+      src = ac.createMediaStreamSource(ms);
+      src.connect(node);
+    }
     E.start = async () => {
       ac = new (window.AudioContext || window.webkitAudioContext)();
       try { await ac.resume(); } catch (e) {}
-      mic = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      if (o.micStream && o.micStream.getAudioTracks().length) { mic = o.micStream; ownMic = false; }
+      else {
+        if (!(ownedMic && ownedMic.active && ownedMic.getAudioTracks().some((t) => t.readyState === 'live'))) ownedMic = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+        mic = ownedMic; ownMic = true;
+      }
       try { await ac.audioWorklet.addModule('pcm-worklet.js'); }
       catch (e) {
         const url = URL.createObjectURL(new Blob([PCM_WORKLET], { type: 'application/javascript' }));
         await ac.audioWorklet.addModule(url);
         URL.revokeObjectURL(url);
       }
-      const node = new AudioWorkletNode(ac, 'pcm-capture', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+      node = new AudioWorkletNode(ac, 'pcm-capture', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
       node.port.onmessage = (e) => { if (!closed) sendAudio(e.data); };
-      const src = ac.createMediaStreamSource(mic);
       const sink = ac.createGain(); sink.gain.value = 0;
-      src.connect(node); node.connect(sink); sink.connect(ac.destination);
+      node.connect(sink); sink.connect(ac.destination);
+      wire(mic);
       E.node = node;
       await connect();
     };
-    E.stop = () => {
+    E.setMic = (ms) => { if (closed || !ac || !node || !ms) return; mic = ms; ownMic = false; wire(ms); };
+    E.stop = (keepMic) => {
       closed = true;
       try { ws && ws.close(); } catch (e) {} ws = null; open = false;
-      try { mic && mic.getTracks().forEach((t) => t.stop()); } catch (e) {} mic = null;
+      if (ownMic && !keepMic) { try { mic && mic.getTracks().forEach((t) => t.stop()); } catch (e) {} if (mic === ownedMic) ownedMic = null; }
+      mic = null;
       try { ac && ac.close(); } catch (e) {} ac = null;
     };
     return E;
@@ -1757,26 +1837,54 @@
   }
 
   // --- recording a storyline ---
-  async function startStory() {
+  // Spoken commands all start with the word "Lens" so ordinary brainstorming never triggers them.
+  function parseCommand(text) {
+    const m = /^(?:hey\s+|ok\s+|okay\s+)?(?:lens(?:\s*loop)?|lenz|lense)\b[\s,.!?:;-]*(.*)$/i.exec(text.trim());
+    if (!m) return null;
+    const rest = m[1].trim().replace(/[.!?]+$/, '').trim();
+    const low = rest.toLowerCase();
+    if (!rest) return { kind: 'await' };
+    if (/^(?:start\s+(?:a\s+)?)?(?:new|next|another|fresh)\s+(?:storyline|story\s*line|chapter|story|session|recording)\b/.test(low)) return { kind: 'new' };
+    if (/^(?:stop|end|finish|close)\b(?:\s+(?:the\s+)?(?:recording|listening|session|storyline|everything))?$/.test(low) || /^(?:that'?s\s+all|i'?m\s+done|we'?re\s+done)\b/.test(low)) return { kind: 'stop' };
+    if (/^(?:take|snap|grab)\s+(?:a\s+)?(?:picture|photo|frame|shot|snapshot)\b/.test(low) || /^(?:look\s+at|read|check|see)\s+(?:this|that|the\s+note|my\s+notes?|the\s+page|the\s+sketch)\b/.test(low)) return { kind: 'snap', text: rest };
+    return { kind: 'question', text: rest };
+  }
+  let awaitingQuestion = 0;
+  function handleUtterance(text) {
+    if (!story) return;
+    const cmd = parseCommand(text);
+    if (!cmd && awaitingQuestion && Date.now() - awaitingQuestion < 12000) { awaitingQuestion = 0; sendQuestion(text.trim().replace(/[.!?]+$/, '')); return; }
+    if (!cmd) { story.finals.push({ t: Math.round((Date.now() - story.startedAt) / 1000), text }); saveDraft(); return; }
+    awaitingQuestion = 0;
+    if (cmd.kind === 'await') { awaitingQuestion = Date.now(); setStatus('armed', 'Listening for your question…'); return; }
+    if (cmd.kind === 'question') { sendQuestion(cmd.text); return; }
+    if (cmd.kind === 'snap') { if (running && stream) sendQuestion(cmd.text || 'What is in this picture?', true); else showBanner('The camera is not running, so there is nothing to look at.', 'note'); return; }
+    if (cmd.kind === 'new') { const next = story.engine; stopStory(true, true); startStory({ micStream, continuing: next }); return; }
+    if (cmd.kind === 'stop') { if (running) stop(); else stopStory(true); return; }
+  }
+  async function startStory(opts) {
+    opts = opts || {};
     if (askState) finishAsk(true);
     const useCloud = cloudWanted();
     if (!useCloud && !SR) { showBanner(NO_SR); return; }
     story = { id: 'st_' + Date.now().toString(36), startedAt: Date.now(), finals: [], interim: '', engine: useCloud ? 'cloud' : 'phone' };
     listening = true;
-    listenBtn.innerHTML = '<span class="dot-rec"></span>Stop';
+    listenBtn.innerHTML = '<span class="dot-rec"></span>' + (running ? 'Rec' : 'Stop');
     listenBtn.dataset.on = 'true';
     askBtn.disabled = true;
     keepAwake();
     setPanel(true);
-    showingTranscript = true;
+    if (!(current && !current.endedAt)) showingTranscript = true;
     hideBanner();
     copyBtn.hidden = true;
     renderTranscript();
+    renderLiveStrip();
     const handlers = {
       continuous: true,
+      micStream: opts.micStream || null,
       keyterms: useCloud ? cloudKeyterms() : [],
-      onFinal: (text) => { if (!story || !text) return; story.finals.push({ t: Math.round((Date.now() - story.startedAt) / 1000), text }); story.interim = ''; renderTranscript(); saveDraft(); },
-      onInterim: (t) => { if (story) { story.interim = t; renderTranscript(); } },
+      onFinal: (text) => { if (!story || !text) return; story.interim = ''; handleUtterance(text); renderTranscript(); renderLiveStrip(); },
+      onInterim: (t) => { if (story) { story.interim = t; renderTranscript(); renderLiveStrip(); } },
       onFatal: (msg) => {
         if (!listening) return;
         if (story.engine === 'cloud' && SR) {
@@ -1792,15 +1900,25 @@
     try { await engine.start(); }
     catch (e) { handlers.onFatal(e.message || String(e)); }
   }
+  const liveStrip = $('liveStrip');
+  function renderLiveStrip() {
+    if (!listening || !story) { liveStrip.hidden = true; return; }
+    liveStrip.hidden = false;
+    const tail = story.finals.slice(-3).map((f) => f.text).join(' ').slice(-160);
+    liveStrip.innerHTML = '<b>● REC ' + mmss(Date.now() - story.startedAt) + '</b>' + esc(tail) + (story.interim ? ' <span class="interim">' + esc(story.interim) + '</span>' : (tail ? '' : '<span class="empty">listening…</span>'));
+  }
+  liveStrip.addEventListener('click', () => { if (listening && story) { showingTranscript = true; setPanel(true); renderTranscript(); } });
   function saveDraft() {
     try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ id: story.id, startedAt: story.startedAt, finals: story.finals })); } catch (e) { /* no room; the in-memory copy still saves on stop */ }
   }
   function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch (e) {} }
-  function stopStory(save) {
+  function stopStory(save, quiet) {
     listening = false;
-    try { engine && engine.stop(); } catch (e) {} engine = null;
+    awaitingQuestion = 0;
+    try { engine && engine.stop(!!quiet); } catch (e) {} engine = null;
     listenBtn.textContent = 'Listen'; listenBtn.dataset.on = 'false';
     askBtn.disabled = false;
+    liveStrip.hidden = true;
     if (!running) releaseWake();
     const st = story; story = null;
     showingTranscript = false;
@@ -1809,6 +1927,7 @@
     const words = text.split(/\s+/).filter(Boolean).length;
     if (!save || words < 3) {
       clearDraft();
+      if (quiet) return;
       setStatus('idle', words ? 'Recording discarded' : 'Nothing was heard');
       answerMeta.textContent = 'No storyline saved';
       answerBody.innerHTML = '<div class="placeholder"><p><b>Nothing to save.</b></p><p>Fewer than three words were recognised. Check the microphone permission and the listening language in settings, then tap Listen again.</p></div>';
@@ -1823,8 +1942,10 @@
     scheduleSync();   // the draft stays until the storyline is safely on disk
     refreshReadouts();
     setStatus('done', `Saved «${saved.title}» · ${words} words`);
-    answerMeta.textContent = `Saved · ${mmss(saved.seconds * 1000)} · ${words} words`;
-    answerBody.innerHTML = `<div class="placeholder"><p><b>Storyline saved.</b></p><p>${esc(words + ' words over ' + mmss(saved.seconds * 1000))}. Claude is writing its title and summary now; find it under the book icon at the top. Ask a question by voice with <b>Ask</b>, or show the camera a note.</p></div>`;
+    if (!quiet && !(current && !current.endedAt)) {
+      answerMeta.textContent = `Saved · ${mmss(saved.seconds * 1000)} · ${words} words`;
+      answerBody.innerHTML = `<div class="placeholder"><p><b>Storyline saved.</b></p><p>${esc(words + ' words over ' + mmss(saved.seconds * 1000))}. Claude is writing its title and summary now; find it under the book icon at the top.</p></div>`;
+    }
     digestStory(saved);
   }
   function renderTranscript() {
@@ -1957,13 +2078,14 @@
     }
     sendQuestion(q);
   }
-  function sendQuestion(q) {
+  function sendQuestion(q, withFrame) {
     askNo += 1;
     const frame = { no: askNo, tag: 'Q-' + String(askNo).padStart(3, '0'), at: new Date(), thumb: MIC_THUMB, question: q, b64: null };
-    if (S.askWithFrame && stream && video.videoWidth) {
-      try { const f = captureFrame(); frame.b64 = f.b64; frame.thumb = f.thumb; } catch (e) { /* no frame, text only */ }
+    if ((withFrame || S.askWithFrame) && stream && video.videoWidth) {
+      try { const f = captureFrame(); frame.b64 = f.b64; frame.thumb = f.thumb; if (S.skipStill !== false) { try { lastSig = frameSignature(); } catch (e) {} } } catch (e) { /* no frame, text only */ }
     }
     showingTranscript = false;
+    setPanel(true);
     send(frame);
   }
 
@@ -2160,6 +2282,7 @@
     redirectAuth(false);   // through Google and back to this page; works in Safari tabs and Home Screen apps alike
   }
   $('driveConnect').addEventListener('click', driveConnectTap);
+  const introDriveBtn = $('introDriveBtn'); if (introDriveBtn) introDriveBtn.addEventListener('click', driveConnectTap);
   banner.addEventListener('click', () => { if (banner.dataset.action === 'drive') { hideBanner(); driveConnectTap(); } });
   if (authReturn && authReturn.error && !authReturn.silent) {
     showBanner(authReturn.error === 'state' ? 'Google sign-in did not match this page; tap Connect in the storylines list to try again.' : 'Google sign-in was not completed (' + authReturn.error + '). Tap here to try again.', 'note');
@@ -2229,7 +2352,7 @@
     } catch (err) { showBanner('That file could not be read as a storylines export.'); }
     e.target.value = '';
   });
-  listenBtn.addEventListener('click', () => { if (listening) stopStory(true); else startStory(); });
+  listenBtn.addEventListener('click', () => { if (listening) stopStory(true); else startStory({ micStream }); });
   askBtn.addEventListener('click', () => { if (askState) finishAsk(); else startAsk(); });
 
   // ---------- buttons ----------

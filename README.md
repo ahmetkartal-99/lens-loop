@@ -11,6 +11,16 @@ A single-page web app for a phone: prop the phone up, open the page, tap **Start
 - On phones whose browser exposes camera zoom (iOS 17+), zoom presets appear on the view (widest lens, 1×, 2×) and the widest is used by default; every lens the phone reports is also listed in the camera picker. The camera is asked for its highest resolution before the frame is scaled to the chosen size.
 - A link of the form `…/lens-loop/#key=sk-ant-…` carries the key in the fragment, which browsers never send to the server. The page reads it on every open and keeps it in the address, so a bookmark or Home Screen icon made from that link launches with the key. It is also copied into the browser's storage so the plain address works while that lasts.
 
+## One tap, then hands-free
+
+- **Start** asks iOS once for motion access and for the camera and microphone together (one prompt), opens the camera, starts the frame loop and starts recording a storyline. From then on nothing needs tapping: the recording runs for as long as you talk, a camera frame goes to Claude every N seconds **only when the picture has changed** (a coarse comparison with the last frame sent, so a static desk costs nothing), and the storyline is saved, summarised and mirrored to Drive when the session ends. The Home Screen app remembers the permissions, and the Drive sign-in refreshes itself.
+- Spoken commands all begin with the word **Lens**, so ordinary talk never triggers one, and the command sentences are left out of the transcript:
+  - "Lens, *question*" — answers from the storylines, with the current camera frame attached (say just "Lens." and the next sentence is taken as the question);
+  - "Lens, look at this" / "take a picture" / "read this" — sends the current frame with those words;
+  - "Lens, new chapter" / "new storyline" — saves the current storyline and starts the next one, same microphone;
+  - "Lens, stop recording" / "end session" / "that's all" — ends the session and saves.
+- While recording, a strip under the answer shows the clock and the last words heard; tapping it shows the whole transcript. The Listen/Ask/Snap buttons still work by hand.
+
 ## Storylines (listening, memory, questions)
 
 - **Listen** records a spoken session of any length — an hour, two, more. With an ElevenLabs API key in settings (or in the link as `&stt=…`) the audio is streamed to **ElevenLabs Scribe v2 Realtime** (chosen for the lowest independent word-error rate of any speech API that can be used straight from a phone browser; 90+ languages; 50 key terms per session, which the page fills with the names and invented words from your saved storylines so they come out spelled right). The microphone is captured with an AudioWorklet, resampled to 16 kHz PCM and sent over a WebSocket; each connection uses a single-use token fetched with the key, and the page reconnects by itself if the service ends a session. Without a key, or if the key is refused mid-recording, the phone's own dictation engine takes over (iOS ends its sessions about once a minute; the page restarts them). The transcript appears live and is saved as a draft every few seconds, so a closed tab or a crash loses nothing: the recording is restored on the next open.
