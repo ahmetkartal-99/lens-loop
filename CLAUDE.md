@@ -17,6 +17,8 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
 - Model and effort come from the two constants near the top of the script (`MODEL`, `EFFORT`); settings cannot
   override them past the current open.
 - Keep it one self-contained file: no build step, no framework, no external script beyond what is already loaded.
+- Bump the `BUILD` stamp (near `MODEL`/`EFFORT`) with every change: it is shown at the foot of Settings and is what
+  `freshBuild` compares to reload a phone that is still running a cached build.
 - Commit messages end with the attribution lines the session asks for; push to `main` only after the tests below pass.
 - When a change is approved by the author, move the baseline to that commit: `git push -f origin main:baseline`
   (and, where tags can be pushed, `git tag -f baseline && git push -f origin baseline`, plus a dated tag).
@@ -62,12 +64,15 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
 10. **Recovery.** A frame whose request failed is sent again on the next tick even if the picture did not move
     (`retryFrame`, sooner with backoff after a passing failure); a failed spoken question is asked again once;
     a camera the phone took away is reopened (`cameraCheck`); wake lock and engines resume on `visibilitychange`.
-11. **Answer panel.** "ANSWER:" headline, storyline tag, cost/latency readouts (cached tokens counted), history
+11. **Always the latest build.** `freshBuild` fetches the page past the cache shortly after opening and reloads
+    once when the server's `BUILD` differs (never mid-session or during a sign-in bounce); the build stamp is at
+    the foot of Settings. A declined motion permission shows a banner instead of silently leaving text unturned.
+12. **Answer panel.** "ANSWER:" headline, storyline tag, cost/latency readouts (cached tokens counted), history
     of 40, copy, Read button, settings sheet, intro text, privacy/terms pages, PWA icons.
 
 ## Tests (run before every push)
 
 - `node --check` on the script body, then `node test/live-prompt.test.js` (prompt assembly, no browser).
-- `node test/session.e2e.js` and `node test/drive-renewal.e2e.js` (headless Chromium via Playwright,
+- `node test/session.e2e.js`, `node test/drive-renewal.e2e.js` and `node test/fresh-build.e2e.js` (headless Chromium via Playwright,
   `npm i -D playwright` if missing): a real session with a fake camera, fake dictation and a fake Claude
   endpoint; checks request bodies, cache marks, retries and the Drive renewal frame.

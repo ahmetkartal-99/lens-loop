@@ -664,6 +664,7 @@
       <button class="btn" type="button" id="cancelBtn">Cancel</button>
       <button class="btn primary" type="submit" id="saveBtn">Save</button>
     </div>
+    <div class="hint" id="buildStamp" style="margin-top:14px;text-align:right"></div>
   </form>
 </div>
 
@@ -729,6 +730,10 @@
   // 'low', 'medium', 'high', 'xhigh', 'max'. Model IDs: 'claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5'.
   const MODEL = 'claude-fable-5-1';
   const EFFORT = 'max';
+  // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
+  // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
+  // window still shows the old one — see freshBuild below, which catches that).
+  const BUILD = '2026-10-02 19:52';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -1667,7 +1672,12 @@
     if (tiltArmed) return;
     if (typeof DeviceOrientationEvent === 'undefined') return;
     if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-      try { if ((await DeviceOrientationEvent.requestPermission()) !== 'granted') return; } catch (e) { return; }
+      let state = 'denied';
+      try { state = await DeviceOrientationEvent.requestPermission(); } catch (e) { /* no gesture or not available */ }
+      if (state !== 'granted') {
+        if (S.rotateText) showBanner('Motion access was not allowed, so the text cannot turn with the phone. Open the page again and tap Allow when it asks about motion and orientation.', 'note');
+        return;
+      }
     }
     window.addEventListener('deviceorientation', onOrient);
     tiltArmed = true;
@@ -2555,6 +2565,25 @@
   }
   loadStories().then(() => { refreshReadouts(); recoverDraft(); if (!storySheet.hidden) renderStoryList(); digestMissing(); if (driveConnected()) scheduleSync(); });
 
+  // ----- always the latest build -----
+  // GitHub Pages serves the page with a ten-minute cache, so a Home Screen app relaunched soon after a deploy
+  // still runs the previous build. Shortly after opening, the page is fetched past the cache; when its build
+  // stamp differs from this one the page reloads itself once (never during a session or a sign-in bounce).
+  $('buildStamp').textContent = 'Lens Loop · build ' + BUILD;
+  setTimeout(async function freshBuild() {
+    if (location.protocol === 'file:' || running || listening || askState || leaving || authReturn) return;
+    try {
+      const res = await fetch(location.pathname + location.search, { cache: 'reload', credentials: 'omit' });
+      if (!res.ok) return;
+      const m = /const BUILD = '([^']+)'/.exec(await res.text());
+      if (!m || m[1] === BUILD || running || listening || askState || leaving) return;
+      let seen = ''; try { seen = sessionStorage.getItem('lensloop.reloadedFor') || ''; } catch (e) {}
+      if (seen === m[1]) return;   // reloaded for this build already: whatever came back, do not loop
+      try { sessionStorage.setItem('lensloop.reloadedFor', m[1]); } catch (e) {}
+      location.reload();
+    } catch (e) { /* offline or blocked: the build in hand is the one that runs */ }
+  }, 1200);
+
   // --- asking by voice ---
   async function startAsk() {
     if (listening) return;
@@ -2638,7 +2667,9 @@
   const keysHash = () => { const q = new URLSearchParams(); if (S.key) q.set('key', S.key); if (S.sttKey) q.set('stt', S.sttKey); const h = q.toString(); return h ? '#' + h : ''; };
   // Sends the page to Google and back. Google answers in the URL fragment, which the page reads on return.
   // With silent=true (prompt=none) there is nothing to tap when the Google session is still signed in.
+  let leaving = false;   // a navigation to Google is under way
   function redirectAuth(silent) {
+    leaving = true;
     const state = Math.random().toString(36).slice(2) + Date.now().toString(36);
     try { localStorage.setItem('lensloop.gauth', JSON.stringify({ state, silent: !!silent, at: Date.now() })); } catch (e) {}
     const q = new URLSearchParams({ client_id: GOOGLE_CLIENT_ID, redirect_uri: pageUrl(), response_type: 'token', scope: DRIVE_SCOPE, include_granted_scopes: 'true', state });
