@@ -680,6 +680,12 @@
 <script>
 (() => {
   'use strict';
+  // Opened inside a hidden frame by the page itself to renew the Google Drive sign-in (see driveRenewSilently):
+  // hand Google's answer to the page and do nothing else here.
+  if (window.top !== window.self) {
+    const h = (location.hash || '').replace(/^#/, '');
+    if (/(^|&)(access_token|error)=/.test(h)) { try { window.parent.postMessage({ lensloop: 'oauth', hash: h }, location.origin); } catch (e) {} return; }
+  }
   const $ = (id) => document.getElementById(id);
 
   // ---------- settings ----------
@@ -1012,7 +1018,36 @@
     if (document.visibilityState !== 'visible') return;
     if ((running || listening) && !wakeLock) keepAwake();
     if (listening && engine && engine.resume) engine.resume();
+    if (running && video.paused && video.srcObject) video.play().catch(() => {});
   });
+
+  // ---------- camera watchdog ----------
+  // The phone takes the camera away for a call, an alarm or another app and does not always hand it back:
+  // the video track ends or stays muted, the picture freezes, and the loop would quietly compare the same
+  // frozen frame with itself for the rest of the session. While running, the track is checked every two
+  // seconds and the camera reopened when it has died, with attempts spaced out while it keeps failing.
+  let camTimer = null, camReopening = false, camMutedSince = 0, camFailAt = 0, camFails = 0;
+  async function cameraCheck() {
+    if (!running || camReopening || document.visibilityState === 'hidden') return;
+    const track = stream && stream.getVideoTracks()[0];
+    const now = Date.now();
+    let dead = !track || track.readyState === 'ended';
+    if (!dead && track.muted) { if (!camMutedSince) camMutedSince = now; dead = now - camMutedSince > 8000; }
+    else camMutedSince = 0;
+    if (!dead) { if (video.paused && video.srcObject) { try { await video.play(); } catch (e) {} } return; }
+    if (now - camFailAt < Math.min(60000, 5000 * Math.pow(2, Math.min(camFails, 4)))) return;
+    camReopening = true;
+    setStatus('armed', 'Camera lost — reopening');
+    try {
+      await openCamera(false);   // picture only: the recording's microphone is the engine's own and reopens by itself
+      camFails = 0; camFailAt = 0; camMutedSince = 0;
+      lastSig = null; prevSig = null;
+      setStatus(running ? 'done' : 'idle', 'Camera back');
+    } catch (e) {
+      camFails++; camFailAt = Date.now();
+      setStatus('error', 'Camera unavailable — trying again');
+    } finally { camReopening = false; }
+  }
 
   // ---------- loop ----------
   async function start() {
@@ -1039,14 +1074,18 @@
     hideBanner();
     keepAwake();
     lastSig = null; prevSig = null;
+    retryFrame = false; failStreak = 0;
     tick();
     clearInterval(watchTimer); watchTimer = setInterval(watchFrame, 500);
+    camMutedSince = 0; camFailAt = 0; camFails = 0;
+    clearInterval(camTimer); camTimer = setInterval(cameraCheck, 2000);
     if (S.sessionListen !== false && !listening) startStory(micStream ? { micStream } : {});
   }
   function stop() {
     running = false;
     clearTimeout(tickTimer); tickTimer = null; nextAt = 0;
     clearInterval(watchTimer); watchTimer = null;
+    clearInterval(camTimer); camTimer = null;
     pending = null;
     for (const r of active) r.ctrl.abort();
     active = [];
@@ -1109,7 +1148,7 @@
   function snap(source) {
     let frame;
     try { frame = captureFrame(); } catch (e) { showBanner(e.message); return; }
-    if (source === 'timer' && S.skipStill !== false) {
+    if (source === 'timer' && S.skipStill !== false && !retryFrame) {
       const sig = frameSignature();
       if (sigDiff(sig, lastSig) < 7) { skippedSince = frameNo; return; }   // same picture as the last frame sent
       lastSig = sig;
@@ -1151,8 +1190,24 @@
     send(frame);
   }
 
+  // A frame whose request failed is not left behind: the still-picture check is skipped once, so the next
+  // timer tick sends the same scene again even though nothing in front of the camera moved, and after a
+  // passing failure (network, rate limit, overloaded API) that tick comes sooner, spaced out further while
+  // the failures continue. A failed key or a bad request waits for the regular interval like any frame.
+  let retryFrame = false, failStreak = 0;
+  const transientError = (e) => /HTTP (408|409|425|429|5\d\d) |Failed to fetch|Load failed|NetworkError|network|timed? ?out|overloaded|ECONN/i.test(String((e && e.message) || e)) || (e && e.name === 'TypeError');
+  function retryLater(req) {
+    if (!running) return;
+    retryFrame = true;
+    failStreak++;
+    if (!transientError(req.error)) return;
+    const delay = Math.min(S.interval * 1000, 5000 * Math.pow(2, Math.min(failStreak, 4) - 1));
+    clearTimeout(tickTimer); nextAt = Date.now() + delay; tickTimer = setTimeout(tick, delay);
+  }
+
   // ---------- API ----------
   async function send(frame) {
+    retryFrame = false;
     const req = {
       id: ++reqSeq, frame, ctrl: new AbortController(),
       startedAt: Date.now(), firstTextAt: 0, endedAt: 0,
@@ -1284,10 +1339,14 @@
         setStatus('error', `Failed on ${req.frame.tag}`);
         showBanner(`Request for ${req.frame.tag} failed after ${secs(took)}: ${req.error.message}`);
         answerMeta.textContent = `${req.frame.tag} · ${fmtTime(req.frame.at)} · failed`;
+        if (req.frame.question) {   // a spoken question is asked again once after a passing failure
+          if (transientError(req.error) && !req.frame.retried && (running || listening)) { req.frame.retried = true; setTimeout(() => { if (running || listening) send(req.frame); }, 4000); }
+        } else if (req.frame.b64) retryLater(req);
       }
       pushHistory(req);
       return;
     }
+    failStreak = 0;
     if (req.text) { lastGoodText = req.text; try { cacheStore(lastSig, req.text); } catch (e) {} }
     if (req.frame.b64 && req.text && S.useStories) recordVisual(req);
     if (req === current) {
@@ -1689,9 +1748,18 @@
   // What the model is told about the saved storylines. The whole block is marked for prompt caching,
   // so while the camera loop runs or questions follow each other it is billed at the cache-read rate.
   const usableStories = () => stories.filter((st) => st.use !== false && st.text);
-  const visualNotes = (st) => (st.visuals && st.visuals.length)
-    ? '\n\nVISUAL NOTES — things shown to the camera for this storyline (sketches, maps, pages), with what they showed:\n' + st.visuals.map((v) => `- ${new Date(v.at).toLocaleString()} ${v.tag}${v.question ? ' (asked: ' + v.question + ')' : ''}: ${v.caption}`).join('\n')
-    : '';
+  // Camera notes in the prompt: the newest VISUALS_SAVED_MAX of a saved storyline (the record keeps them all),
+  // so a storyline shown hundreds of pages can never crowd the transcripts out of the request.
+  const VISUALS_SAVED_MAX = 120;
+  const VISUALS_HEAD = '\n\nVISUAL NOTES — things shown to the camera for this storyline (sketches, maps, pages), with what they showed:\n';
+  const visualLine = (v) => `- ${new Date(v.at).toLocaleString()} ${v.tag}${v.question ? ' (asked: ' + v.question + ')' : ''}: ${v.caption}`;
+  const visualNotes = (st) => {
+    const all = st.visuals || [];
+    if (!all.length) return '';
+    const keep = all.slice(-VISUALS_SAVED_MAX);
+    return VISUALS_HEAD + (keep.length < all.length ? `(the ${all.length - keep.length} earliest of ${all.length} notes are left out here)\n` : '') + keep.map(visualLine).join('\n');
+  };
+  const storyChars = (st) => st.text.length + visualNotes(st).length + 400;
   const storyIndexLine = (st, i) => `${i + 1}. «${st.title}» — recorded ${new Date(st.createdAt).toLocaleString()}, ${Math.max(1, Math.round((st.seconds || 0) / 60))} min, ${st.words || 0} words.` +
     (st.summary ? ' ' + st.summary : '') + (st.keys ? ' Key terms: ' + st.keys + '.' : '') + (st.visuals && st.visuals.length ? ` ${st.visuals.length} visual note${st.visuals.length === 1 ? '' : 's'}.` : '');
   // Everything heard up to this instant: the finished sentences plus the one still being spoken.
@@ -1702,15 +1770,75 @@
     return done + (now ? (done ? ' ' : '') + now + ' [still being spoken]' : '');
   };
   function storiesOverBudget() {
-    return usableStories().reduce((n, st) => n + st.text.length + 400, 0) + liveText().length > STORY_BUDGET_CHARS;
+    return usableStories().reduce((n, st) => n + storyChars(st), 0) + liveChars() > STORY_BUDGET_CHARS;
   }
-  // What has been said so far in the session that is still being recorded: sent uncached after the saved
-  // storylines, so questions can draw on it at any moment without waiting for the recording to end.
-  function liveBlock() {
-    const t = liveText();
-    if (!t) return null;
-    return `CURRENT SESSION — still being recorded (started ${fmtTime(new Date(story.startedAt))}, ${mmss(Date.now() - story.startedAt)} so far, ${storyWords(story)} words). ` +
-      'This is the storyline being spoken right now, complete up to the moment of this request (a trailing fragment marked [still being spoken] is the sentence in progress). It is as valid a source as the saved ones and usually the most relevant one for a question asked now. Refer to it as "STORYLINE: Current session".\n\n' + t + visualNotes(story);
+  // ----- the session being recorded, as the model sees it -----
+  // What has been said so far goes in after the saved storylines, so questions can draw on it at any moment
+  // without waiting for the recording to end. It is sent as frozen blocks of about LIVE_CHUNK_CHARS (an
+  // utterance never straddles two) with the cache mark on the last frozen one, then a small open tail: between
+  // one request and the next only the newest sentences, the sentence in progress and the elapsed time are new,
+  // so the hours already spoken are billed at the cache-read rate on every frame instead of full input price,
+  // and the request does not get slower as the session grows. The camera notes of the session are frozen the
+  // same way after the words. There is no limit on how long a session runs: past LIVE_BUDGET_CHARS the oldest
+  // blocks are left out of the request, a quarter at a time so the cache is not rebuilt every few minutes, and
+  // the model is told how much is missing; the recording and the draft keep every word.
+  const LIVE_CHUNK_CHARS = 4000, LIVE_BUDGET_CHARS = 240000, LIVE_KEEP_CHARS = 180000;
+  const VISUALS_LIVE_MAX = 60, VISUALS_LIVE_HIGH = 80;
+  function chunkItems(items, text, min) {
+    // consecutive items packed into blocks of at least `min` characters; the last, unfinished block is the tail
+    const frozen = []; let cur = [], len = 0;
+    for (const it of items) {
+      const s = text(it);
+      cur.push(s); len += s.length + 1;
+      if (len >= min) { frozen.push(cur); cur = []; len = 0; }
+    }
+    return { frozen, tail: cur };
+  }
+  const countWords = (s) => s.split(/\s+/).filter(Boolean).length;
+  function liveParts() {
+    if (!listening || !story) return null;
+    const st = story;
+    const words = chunkItems(st.finals, (f) => f.text, LIVE_CHUNK_CHARS);
+    const notes = chunkItems(st.visuals || [], visualLine, LIVE_CHUNK_CHARS);
+    // the drop counters only ever grow, so the blocks that stay keep their exact text (and their cache) between requests
+    st.liveDrop = Math.min(st.liveDrop || 0, words.frozen.length);
+    st.visualDrop = Math.min(st.visualDrop || 0, notes.frozen.length);
+    const wordChars = () => words.frozen.slice(st.liveDrop).reduce((n, b) => n + b.join(' ').length + 1, 0) + words.tail.join(' ').length;
+    if (wordChars() > LIVE_BUDGET_CHARS) { while (st.liveDrop < words.frozen.length && wordChars() > LIVE_KEEP_CHARS) st.liveDrop++; }
+    const noteCount = () => notes.frozen.slice(st.visualDrop).reduce((n, b) => n + b.length, 0) + notes.tail.length;
+    if (noteCount() > VISUALS_LIVE_HIGH) { while (st.visualDrop < notes.frozen.length && noteCount() > VISUALS_LIVE_MAX) st.visualDrop++; }
+    let omitted = null;
+    if (st.liveDrop) {
+      const gone = words.frozen.slice(0, st.liveDrop);
+      const n = gone.reduce((k, b) => k + b.length, 0);
+      omitted = { words: gone.reduce((k, b) => k + b.reduce((m, s) => m + countWords(s), 0), 0), until: (st.finals[n - 1] && st.finals[n - 1].t) || 0 };
+    }
+    const notesOmitted = notes.frozen.slice(0, st.visualDrop).reduce((k, b) => k + b.length, 0);
+    const frozenWords = words.frozen.slice(st.liveDrop).map((b) => b.join(' '));
+    const frozenNotes = notes.frozen.slice(st.visualDrop).map((b) => b.join('\n'));
+    const interim = (st.interim || '').trim();
+    const tailWords = words.tail.join(' ') + (interim ? (words.tail.length ? ' ' : '') + interim + ' [still being spoken]' : '');
+    return { frozenWords, frozenNotes, tailWords, tailNotes: notes.tail.join('\n'), omitted, notesOmitted, notesTotal: (st.visuals || []).length };
+  }
+  function liveBlocks() {
+    const lp = liveParts();
+    if (!lp || !(lp.frozenWords.length || lp.tailWords || lp.frozenNotes.length || lp.tailNotes)) return null;
+    const blocks = [];
+    blocks.push(`CURRENT SESSION — still being recorded (started ${fmtTime(new Date(story.startedAt))}). ` +
+      'This is the storyline being spoken right now, complete up to the moment of this request (a trailing fragment marked [still being spoken] is the sentence in progress; a line in square brackets gives the time and word count at this request). It is as valid a source as the saved ones and usually the most relevant one for a question asked now. Refer to it as "STORYLINE: Current session".' +
+      (lp.omitted ? ` The first ${lp.omitted.words} words of this session (up to ${mmss(lp.omitted.until * 1000)} in) are left out of this request to fit; the recording keeps them.` : '') +
+      (lp.notesOmitted ? ` The ${lp.notesOmitted} earliest of its ${lp.notesTotal} visual notes are left out here.` : ''));
+    for (const b of lp.frozenWords) blocks.push(b);
+    lp.frozenNotes.forEach((b, i) => blocks.push((i === 0 ? VISUALS_HEAD.trimStart() : '') + b));
+    const frozenCount = blocks.length;
+    let tail = lp.tailWords + (lp.tailWords ? '\n' : '') + `[${mmss(Date.now() - story.startedAt)} into the session at this request, ${storyWords(story)} words so far]`;
+    if (lp.tailNotes) tail += (lp.frozenNotes.length ? '\n' : VISUALS_HEAD) + lp.tailNotes;
+    return { blocks, frozenCount, tail };
+  }
+  // characters the live session adds to a request (what the saved storylines' budget leaves room for)
+  function liveChars() {
+    const lb = liveBlocks();
+    return lb ? lb.blocks.reduce((n, b) => n + b.length + 2, 0) + lb.tail.length : 0;
   }
   // Full transcripts of the storylines that fit the budget. When the library is bigger than one request can
   // hold, `prefer` (chosen per question by routeStorylines) goes in first and the newest fill what is left;
@@ -1722,9 +1850,10 @@
     const want = new Set(prefer || []);
     const order = [...list].sort((a, b) => (want.has(b.id) - want.has(a.id)) || (b.createdAt - a.createdAt));
     let used = 0; const picked = new Set();
+    const room = STORY_BUDGET_CHARS - liveChars();
     for (const st of order) {
-      const size = st.text.length + 400;
-      if (used + size > STORY_BUDGET_CHARS - liveText().length) continue;
+      const size = storyChars(st);
+      if (used + size > room) continue;
       used += size; picked.add(st.id);
     }
     const idx = list.map((st, i) => storyIndexLine(st, i) + (picked.has(st.id) ? '' : ' [index only in this request]')).join('\n');
@@ -1745,7 +1874,7 @@
   // the storylines this question needs, so their full transcripts are the ones sent.
   async function routeStorylines(frame, req) {
     const list = usableStories().sort((a, b) => a.createdAt - b.createdAt);
-    const idx = list.map((st, i) => storyIndexLine(st, i)).join('\n') + (liveText() ? '\n(The session being recorded right now is always included in full; do not number it.)' : '');
+    const idx = list.map((st, i) => storyIndexLine(st, i)).join('\n') + (liveText() ? '\n(The session being recorded right now is always included; do not number it.)' : '');
     const content = [];
     if (frame.b64) content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: frame.b64 } });
     content.push({ type: 'text', text: (frame.question ? 'Spoken question from the user: ' + frame.question : 'The attached photo is the question (a note, a sketch, a page).') +
@@ -1774,10 +1903,12 @@
     const blocks = [{ type: 'text', text: SYSTEM_RULES }];
     const sb = storylineBlock(prefer);
     if (sb) blocks.push({ type: 'text', text: sb, cache_control: { type: 'ephemeral' } });
-    const lb = S.useStories ? liveBlock() : null;
+    const lb = S.useStories ? liveBlocks() : null;
     if (lb) {
       if (!sb) blocks.push({ type: 'text', text: 'The user is a fiction author recording a spoken brainstorming session right now. When a question (spoken, or written or drawn in the photo) concerns it, answer from it and put "STORYLINE: Current session" on the second line; otherwise write "STORYLINE: none" and answer normally.' });
-      blocks.push({ type: 'text', text: lb });
+      // frozen blocks, the last one carrying the cache mark; the open tail after it is the only part re-read at full price
+      lb.blocks.forEach((text, i) => blocks.push(i === lb.frozenCount - 1 ? { type: 'text', text, cache_control: { type: 'ephemeral' } } : { type: 'text', text }));
+      blocks.push({ type: 'text', text: lb.tail });
     }
     return blocks;
   }
@@ -1953,11 +2084,12 @@
         if (open && ws) {
           if (now - lastMsgAt > 12000) { forceReconnect('no answer from ElevenLabs — reconnecting'); return; }         // half-dead socket
           if (ws.bufferedAmount > 1500000) { forceReconnect('connection stalled — reconnecting'); return; }          // network not draining
-          // speech is clearly arriving at the microphone but no text has come back for a long while
-          if (lastSpeechAt && now - lastSpeechAt < 5000 && now - Math.max(lastTextAt, E.openedAt || 0) > 25000 && now - (E.lastForce || 0) > 30000) {
+          // sound is clearly arriving at the microphone but no text has come back for a long while: reconnect,
+          // and keep doing so at a growing spacing (room noise during a quiet stretch looks the same from here;
+          // the engine never gives up on its own, the first committed sentence resets the count)
+          if (lastSpeechAt && now - lastSpeechAt < 5000 && now - Math.max(lastTextAt, E.openedAt || 0) > 25000 && now - (E.lastForce || 0) > Math.min(300000, 30000 * Math.pow(2, Math.min(forced, 4)))) {
             E.lastForce = now; forced++;
-            if (forced >= 3) { closed = true; o.onFatal('ElevenLabs returned no text for a long while although the microphone hears speech.'); E.stop(); return; }
-            forceReconnect('no text coming back — reconnecting');
+            forceReconnect('no text coming back — reconnecting' + (forced > 1 ? ' (' + forced + ')' : ''));
           }
         }
         if (track && track.readyState === 'ended' && !reacquiring) reacquire('microphone ended');
@@ -2180,7 +2312,7 @@
         const name = safeName((st && st.title) || ('Recording ' + new Date(p.createdAt).toLocaleString())) + ' · part ' + String(p.part).padStart(2, '0') + '.' + audioExt(p.mime);
         const made = await drive('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',
           Object.assign({ method: 'POST' }, multipartBlob({ name, parents: [folderId], appProperties: { lensloop: 'audio', storyId: p.storyId, part: String(p.part) } }, p.blob, p.mime)));
-        p.driveId = made.id; p.name = name;
+        p.driveId = made.id; p.name = name; p.blob = null;   // on Drive now; the phone keeps only the record
         await dbRun('readwrite', (store) => store.put(p), 'audio');
       }
     } catch (e) { /* kept locally; the next sync retries */ }
@@ -2258,7 +2390,7 @@
         const name = safeName((st && st.title) || 'Storyline') + ' · ' + f.tag + ' ' + new Date(f.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }).replace(/:/g, '.') + '.jpg';
         const made = await drive('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',
           Object.assign({ method: 'POST' }, multipartBlob({ name, parents: [folderId], description: f.caption, appProperties: { lensloop: 'frame', storyId: f.storyId, tag: f.tag } }, f.blob, 'image/jpeg')));
-        f.driveId = made.id; f.name = name;
+        f.driveId = made.id; f.name = name; f.blob = null;   // on Drive now; the phone keeps only the record, so long sessions never fill its storage
         await dbRun('readwrite', (store) => store.put(f), 'frames');
       }
     } catch (e) { /* kept locally; the next sync retries */ }
@@ -2468,7 +2600,8 @@
 
   // --- Google Drive mirror ---
   // Each storyline is one JSON file (the record) plus one readable .txt in a "Lens Loop" folder. Sync runs after
-  // every change and on open while the sign-in is valid (about an hour); after that the sheet offers a reconnect.
+  // every change and on open while the sign-in is valid (about an hour). The sign-in is renewed by the page
+  // itself where it can be (driveRenewSilently, silentRefresh); otherwise the sheet offers a reconnect.
   const DRIVE_TOKEN_KEY = 'lensloop.drive';
   let driveToken = null, driveExp = 0, syncTimer = 0, syncing = false, syncAgain = false;
   const driveConnected = () => !!driveToken && driveExp > Date.now();
@@ -2511,6 +2644,47 @@
     S.driveSilentAt = Date.now(); saveSettings();
     redirectAuth(true);
   })();
+  // --- renewing the sign-in without a tap ---
+  // A Google token lives about an hour. While a session runs the page cannot bounce through Google (that
+  // would end the recording), so a few minutes before the token runs out the sign-in is renewed in a hidden
+  // frame instead: the page itself is loaded there, Google answers into its fragment, and that copy hands the
+  // token to this one and stops (see the top of the script). This works wherever the browser lets
+  // accounts.google.com use its cookies inside a frame (desktop browsers, Android Chrome). Safari on the
+  // iPhone does not, so there the mirror pauses when the hour is up; everything is kept on the phone and goes
+  // up at the next sign-in, which the page does by itself the next time it opens.
+  const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
+  let driveFrame = null, driveFrameTriedExp = 0;
+  function driveRenewSilently() {
+    if (driveFrame || !GOOGLE_CLIENT_ID || !S.driveOn || !driveToken || !S.driveRedirectOk) return;
+    if (driveFrameTriedExp === driveExp) return;   // one try per token
+    driveFrameTriedExp = driveExp;
+    const state = 'frame-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    const q = new URLSearchParams({ client_id: GOOGLE_CLIENT_ID, redirect_uri: pageUrl(), response_type: 'token', scope: DRIVE_SCOPE, include_granted_scopes: 'true', state, prompt: 'none' });
+    const el = document.createElement('iframe');
+    el.setAttribute('aria-hidden', 'true'); el.tabIndex = -1;
+    el.style.cssText = 'position:fixed;left:-9999px;top:0;width:2px;height:2px;border:0;opacity:0;pointer-events:none';
+    driveFrame = { el, state, timer: setTimeout(() => driveFrameDone(null), 30000) };
+    el.src = AUTH_URL + '?' + q.toString();
+    document.body.appendChild(el);
+  }
+  function driveFrameDone(q) {
+    if (!driveFrame) return;
+    const f = driveFrame; driveFrame = null;
+    clearTimeout(f.timer);
+    try { f.el.remove(); } catch (e) {}
+    if (!(q && q.get('access_token'))) return;
+    storeDriveToken(q.get('access_token'), q.get('expires_in'));
+    renderDriveRow();
+    if (listening && story) renderLiveStrip();
+    scheduleSync();   // whatever waited while the sign-in was out (storylines, audio parts, photos) goes up now
+  }
+  window.addEventListener('message', (e) => {
+    if (e.origin !== location.origin || !e.data || e.data.lensloop !== 'oauth' || !driveFrame) return;
+    let q; try { q = new URLSearchParams(String(e.data.hash || '')); } catch (err) { return; }
+    if (q.get('state') !== driveFrame.state) return;
+    driveFrameDone(q);
+  });
+  setInterval(() => { if (S.driveOn && driveToken && driveExp - Date.now() < 5 * 60 * 1000) driveRenewSilently(); }, 30000);
   function disconnectDrive() {
     const t = driveToken;
     driveToken = null; driveExp = 0;
