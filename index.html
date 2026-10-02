@@ -1621,7 +1621,13 @@
   const usableStories = () => stories.filter((st) => st.use !== false && st.text);
   const storyIndexLine = (st, i) => `${i + 1}. «${st.title}» — recorded ${new Date(st.createdAt).toLocaleString()}, ${Math.max(1, Math.round((st.seconds || 0) / 60))} min, ${st.words || 0} words.` +
     (st.summary ? ' ' + st.summary : '') + (st.keys ? ' Key terms: ' + st.keys + '.' : '');
-  const liveText = () => (listening && story && story.finals.length) ? story.finals.map((f) => f.text).join(' ') : '';
+  // Everything heard up to this instant: the finished sentences plus the one still being spoken.
+  const liveText = () => {
+    if (!listening || !story) return '';
+    const done = story.finals.map((f) => f.text).join(' ');
+    const now = (story.interim || '').trim();
+    return done + (now ? (done ? ' ' : '') + now + ' [still being spoken]' : '');
+  };
   function storiesOverBudget() {
     return usableStories().reduce((n, st) => n + st.text.length + 400, 0) + liveText().length > STORY_BUDGET_CHARS;
   }
@@ -1631,7 +1637,7 @@
     const t = liveText();
     if (!t) return null;
     return `CURRENT SESSION — still being recorded (started ${fmtTime(new Date(story.startedAt))}, ${mmss(Date.now() - story.startedAt)} so far, ${storyWords(story)} words). ` +
-      'This is the storyline being spoken right now; it is as valid a source as the saved ones and usually the most relevant one for a question asked now. Refer to it as "STORYLINE: Current session".\n\n' + t;
+      'This is the storyline being spoken right now, complete up to the moment of this request (a trailing fragment marked [still being spoken] is the sentence in progress). It is as valid a source as the saved ones and usually the most relevant one for a question asked now. Refer to it as "STORYLINE: Current session".\n\n' + t;
   }
   // Full transcripts of the storylines that fit the budget. When the library is bigger than one request can
   // hold, `prefer` (chosen per question by routeStorylines) goes in first and the newest fill what is left;
