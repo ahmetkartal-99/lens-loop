@@ -1316,7 +1316,7 @@
     } else if (askState) {
       setStatus('armed', 'Listening for your question…');
     }
-    if (listening && story && !liveStrip.hidden) { const b = liveStrip.querySelector('b'); if (b) b.textContent = '● REC ' + mmss(Date.now() - story.startedAt) + ' · ' + (story.engine === 'cloud' ? 'ElevenLabs' : 'phone dictation') + (!S.driveOn ? '' : !driveConnected() ? ' · Drive: sign-in expired' : (livePushedAt && Date.now() - livePushedAt < 60000) ? ' · Drive ✓' : ' · Drive …'); }
+    if (listening && story && !liveStrip.hidden) { const b = liveStrip.querySelector('b'); if (b) b.textContent = stripHead(); }
   }, 250);
   function renderMetaOnly(r) {
     const phase = r.firstTextAt ? 'answering' : 'thinking';
@@ -1716,13 +1716,22 @@
   const SCRIBE_WS_URL = 'wss://api.elevenlabs.io/v1/speech-to-text/realtime';
   const PCM_WORKLET = `
     class PcmCapture extends AudioWorkletProcessor {
-      constructor() { super(); this.ratio = sampleRate / 16000; this.pos = 0; this.prev = 0; this.out = new Int16Array(4000); this.n = 0; this.box = Math.max(1, Math.round(this.ratio)); this.hist = new Float32Array(this.box); this.hi = 0; this.sum = 0; }
+      constructor() { super(); this.ratio = sampleRate / 16000; this.pos = 0; this.prev = 0; this.out = new Int16Array(4000); this.n = 0; this.box = Math.max(1, Math.round(this.ratio)); this.hist = new Float32Array(this.box); this.hi = 0; this.sum = 0; this.env = 0; this.gain = 1; this.blocks = 0; this.peak = 0; }
       push(v) { const x = Math.max(-1, Math.min(1, v)); this.out[this.n++] = x < 0 ? x * 32768 : x * 32767; if (this.n === this.out.length) { this.port.postMessage(this.out.buffer, [this.out.buffer]); this.out = new Int16Array(4000); this.n = 0; } }
       smooth(v) { if (this.box === 1) return v; this.sum += v - this.hist[this.hi]; this.hist[this.hi] = v; this.hi = (this.hi + 1) % this.box; return this.sum / this.box; }
       process(inputs) {
         const x = inputs[0] && inputs[0][0]; if (!x) return true;
-        if (this.ratio === 1) { for (let i = 0; i < x.length; i++) this.push(x[i]); return true; }
-        const y = new Float32Array(x.length); for (let i = 0; i < x.length; i++) y[i] = this.smooth(x[i]);
+        // automatic gain: quiet voices are lifted towards a comfortable level, loud ones left alone (never clipped)
+        let s = 0; for (let i = 0; i < x.length; i++) s += x[i] * x[i];
+        const rms = Math.sqrt(s / x.length);
+        this.env = Math.max(rms, this.env * 0.9985);
+        const want = Math.min(24, Math.max(1, 0.1 / Math.max(this.env, 1e-4)));
+        this.gain += (want - this.gain) * 0.05;
+        this.peak = Math.max(this.peak, rms * this.gain);
+        if (++this.blocks >= 32) { this.port.postMessage({ level: Math.min(1, this.peak) }); this.blocks = 0; this.peak = 0; }
+        const g = this.gain;
+        if (this.ratio === 1) { for (let i = 0; i < x.length; i++) this.push(x[i] * g); return true; }
+        const y = new Float32Array(x.length); for (let i = 0; i < x.length; i++) y[i] = this.smooth(x[i] * g);
         let p = this.pos;
         while (p < y.length - 1) { const i = Math.floor(p), f = p - i; const a = i < 0 ? this.prev : y[i]; this.push(a + (y[i + 1] - a) * f); p += this.ratio; }
         this.pos = p - y.length; this.prev = y[y.length - 1];
@@ -1746,10 +1755,14 @@
   }
   const CLOUD_FATAL = { auth_error: 'ElevenLabs rejected the key (check it has Speech to Text access).', quota_exceeded: 'The ElevenLabs plan is out of speech-to-text hours.', unaccepted_terms: 'ElevenLabs needs the Speech to Text terms accepted once in its web app.' };
   let ownedMic = null;   // microphone opened by the engine itself (no camera running); kept across storylines
+  const MIC_CONSTRAINTS = { audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } };
   function makeCloudEngine(o) {
     let ws = null, ac = null, mic = null, queue = [], open = false, closed = false, retries = 0, bytes = 0;
-    const E = { kind: 'cloud', bytes: () => bytes };
+    let lastMsgAt = 0, lastTextAt = 0, lastSpeechAt = 0, level = 0, state = '', watchdog = null, forced = 0, reacquiring = false;
+    const E = { kind: 'cloud', bytes: () => bytes, level: () => level, state: () => state };
+    const note = (t) => { state = t; o.onNote && o.onNote(t); };
     async function connect() {
+      note('connecting');
       const res = await fetch(SCRIBE_TOKEN_URL, { method: 'POST', headers: { 'xi-api-key': S.sttKey } });
       if (!res.ok) {
         if (res.status === 401 || res.status === 403) throw Object.assign(new Error(CLOUD_FATAL.auth_error), { fatal: true });
@@ -1757,19 +1770,22 @@
         throw new Error('ElevenLabs token request failed (HTTP ' + res.status + ')');
       }
       const { token } = await res.json();
-      const q = new URLSearchParams({ model_id: 'scribe_v2_realtime', audio_format: 'pcm_16000', commit_strategy: 'vad', token });
+      // vad_threshold low so quiet speech still commits; keepalive makes the server talk during silence, which
+      // lets the watchdog tell a quiet room from a dead connection.
+      const q = new URLSearchParams({ model_id: 'scribe_v2_realtime', audio_format: 'pcm_16000', commit_strategy: 'vad', vad_threshold: '0.3', vad_silence_threshold_secs: '0.8', keepalive_interval_ms: '3000', token });
       const lang = (S.sttLang || '').split('-')[0];
       if (lang) q.set('language_code', lang);
       for (const k of o.keyterms || []) q.append('keyterms', k);
       await new Promise((resolve, reject) => {
         const sock = new WebSocket(SCRIBE_WS_URL + '?' + q.toString());
         let settled = false;
-        sock.onopen = () => { ws = sock; open = true; retries = 0; for (const m of queue) sock.send(m); queue = []; settled = true; resolve(); };
+        sock.onopen = () => { ws = sock; open = true; retries = 0; lastMsgAt = Date.now(); note(''); for (const m of queue) sock.send(m); queue = []; settled = true; resolve(); };
         sock.onmessage = (e) => {
+          lastMsgAt = Date.now();
           let m; try { m = JSON.parse(e.data); } catch (err) { return; }
           const t = m.message_type || '';
-          if (t === 'partial_transcript') o.onInterim(m.text || '');
-          else if (t === 'committed_transcript') { if ((m.text || '').trim()) o.onFinal(m.text.trim()); o.onInterim(''); }
+          if (t === 'partial_transcript') { if ((m.text || '').trim()) lastTextAt = Date.now(); o.onInterim(m.text || ''); }
+          else if (t === 'committed_transcript') { if ((m.text || '').trim()) { lastTextAt = Date.now(); forced = 0; o.onFinal(m.text.trim()); } o.onInterim(''); }
           else if (CLOUD_FATAL[t]) { closed = true; o.onFatal(CLOUD_FATAL[t]); E.stop(); }
           else if (t === 'rate_limited' || t === 'commit_throttled' || t === 'queue_overflow') { /* transient: keep streaming */ }
           else if (/error|exceeded|exhausted|insufficient/.test(t)) { try { sock.close(); } catch (err) {} }
@@ -1778,13 +1794,26 @@
         sock.onclose = () => { if (ws === sock) { ws = null; open = false; } if (!settled) { settled = true; reject(new Error('ElevenLabs closed the connection')); return; } if (!closed) reconnect(); };
       });
     }
+    let reconnecting = false;
     async function reconnect() {
-      if (closed) return;
-      retries++;
-      await new Promise((r) => setTimeout(r, Math.min(8000, 300 * Math.pow(2, retries - 1))));
-      if (closed) return;
-      try { await connect(); }
-      catch (e) { if (e.fatal) { closed = true; o.onFatal(e.message); E.stop(); } else reconnect(); }
+      if (closed || reconnecting) return;
+      reconnecting = true;
+      try {
+        while (!closed) {
+          retries++;
+          note(retries > 1 ? 'reconnecting (' + retries + ')' : 'reconnecting');
+          await new Promise((r) => setTimeout(r, Math.min(8000, 300 * Math.pow(2, Math.min(retries, 6) - 1))));
+          if (closed) return;
+          try { await connect(); return; }
+          catch (e) { if (e.fatal) { closed = true; o.onFatal(e.message); E.stop(); return; } }
+        }
+      } finally { reconnecting = false; }
+    }
+    function forceReconnect(why) {
+      note(why);
+      const sock = ws; ws = null; open = false;
+      if (sock) { try { sock.onclose = null; sock.close(); } catch (e) {} }
+      reconnect();
     }
     function sendAudio(buf) {
       bytes += buf.byteLength;
@@ -1792,18 +1821,38 @@
       if (open && ws && ws.readyState === 1) ws.send(msg);
       else { queue.push(msg); if (queue.length > 240) queue.shift(); }   // up to a minute buffered while reconnecting
     }
-    let ownMic = false, src = null, node = null;
+    let ownMic = false, src = null, node = null, track = null;
     function wire(ms) {
       try { src && src.disconnect(); } catch (e) {}
       src = ac.createMediaStreamSource(ms);
       src.connect(node);
+      track = ms.getAudioTracks()[0] || null;
+      if (track) { track.onended = () => reacquire('microphone ended'); track.onmute = () => setTimeout(() => { if (track && track.muted && !closed) reacquire('microphone muted'); }, 3000); }
+    }
+    // The microphone track can be taken away by iOS (a call, another app, an interruption). Get it back.
+    async function reacquire(why) {
+      if (closed || reacquiring) return;
+      reacquiring = true; note(why + ' — reopening');
+      try {
+        for (let i = 0; i < 20 && !closed; i++) {
+          try {
+            const ms = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
+            if (ownMic) { try { mic && mic.getTracks().forEach((t) => t.stop()); } catch (e) {} }
+            mic = ms; ownedMic = ms; ownMic = true;
+            try { await ac.resume(); } catch (e) {}
+            wire(ms); note(''); o.onMic && o.onMic(ms);
+            return;
+          } catch (e) { await new Promise((r) => setTimeout(r, 3000)); }
+        }
+        note('microphone lost');
+      } finally { reacquiring = false; }
     }
     E.start = async () => {
       ac = new (window.AudioContext || window.webkitAudioContext)();
       try { await ac.resume(); } catch (e) {}
       if (o.micStream && o.micStream.getAudioTracks().length) { mic = o.micStream; ownMic = false; }
       else {
-        if (!(ownedMic && ownedMic.active && ownedMic.getAudioTracks().some((t) => t.readyState === 'live'))) ownedMic = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+        if (!(ownedMic && ownedMic.active && ownedMic.getAudioTracks().some((t) => t.readyState === 'live'))) ownedMic = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
         mic = ownedMic; ownMic = true;
       }
       try { await ac.audioWorklet.addModule('pcm-worklet.js'); }
@@ -1813,17 +1862,43 @@
         URL.revokeObjectURL(url);
       }
       node = new AudioWorkletNode(ac, 'pcm-capture', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
-      node.port.onmessage = (e) => { if (!closed) sendAudio(e.data); };
+      node.port.onmessage = (e) => {
+        if (closed) return;
+        if (e.data && e.data.level !== undefined) { level = e.data.level; if (level > 0.02) lastSpeechAt = Date.now(); return; }
+        sendAudio(e.data);
+      };
       const sink = ac.createGain(); sink.gain.value = 0;
       node.connect(sink); sink.connect(ac.destination);
       wire(mic);
       E.node = node;
+      // iOS suspends ("interrupts") the audio engine after a call, an alarm or a switch away; it does not come back by itself.
+      ac.onstatechange = () => { if (!closed && ac && ac.state !== 'running') ac.resume().catch(() => {}); };
+      watchdog = setInterval(() => {
+        if (closed) return;
+        if (ac && ac.state !== 'running') ac.resume().catch(() => {});
+        const now = Date.now();
+        if (open && ws) {
+          if (now - lastMsgAt > 12000) { forceReconnect('no answer from ElevenLabs — reconnecting'); return; }         // half-dead socket
+          if (ws.bufferedAmount > 1500000) { forceReconnect('connection stalled — reconnecting'); return; }          // network not draining
+          // speech is clearly arriving at the microphone but no text has come back for a long while
+          if (lastSpeechAt && now - lastSpeechAt < 5000 && now - Math.max(lastTextAt, E.openedAt || 0) > 25000 && now - (E.lastForce || 0) > 30000) {
+            E.lastForce = now; forced++;
+            if (forced >= 3) { closed = true; o.onFatal('ElevenLabs returned no text for a long while although the microphone hears speech.'); E.stop(); return; }
+            forceReconnect('no text coming back — reconnecting');
+          }
+        }
+        if (track && track.readyState === 'ended' && !reacquiring) reacquire('microphone ended');
+      }, 2000);
       await connect();
+      E.openedAt = Date.now();
     };
     E.setMic = (ms) => { if (closed || !ac || !node || !ms) return; mic = ms; ownMic = false; wire(ms); };
     E.micStream = () => mic;
+    E.resume = () => { if (!closed && ac && ac.state !== 'running') ac.resume().catch(() => {}); };
     E.stop = (keepMic) => {
       closed = true;
+      clearInterval(watchdog); watchdog = null;
+      if (track) { track.onended = null; track.onmute = null; }
       try { ws && ws.close(); } catch (e) {} ws = null; open = false;
       if (ownMic && !keepMic) { try { mic && mic.getTracks().forEach((t) => t.stop()); } catch (e) {} if (mic === ownedMic) ownedMic = null; }
       mic = null;
@@ -1942,6 +2017,8 @@
       keyterms: useCloud ? cloudKeyterms() : [],
       onFinal: (text) => { if (!story || !text) return; story.interim = ''; handleUtterance(text); renderTranscript(); renderLiveStrip(); },
       onInterim: (t) => { if (story) { story.interim = t; renderTranscript(); renderLiveStrip(); } },
+      onNote: (t) => { if (story) { story.note = t; renderLiveStrip(); } },
+      onMic: (ms) => { micStream = ms; stopAudioCapture(); startAudioCapture(ms); },   // the engine got a fresh microphone; record from it too
       onFatal: (msg) => {
         if (!listening) return;
         if (story.engine === 'cloud' && SR) {
@@ -1963,12 +2040,19 @@
     }
   }
   const liveStrip = $('liveStrip');
+  const LEVELS = ['▁', '▂', '▃', '▅', '▇'];
+  function stripHead() {
+    const lv = engine && engine.level ? engine.level() : 0;
+    const bars = story.engine === 'cloud' ? ' ' + LEVELS[Math.min(4, Math.floor(Math.sqrt(lv) * 5))] : '';
+    const st = engine && engine.state ? engine.state() : (story.note || '');
+    const dr = !S.driveOn ? '' : !driveConnected() ? ' · Drive: sign-in expired' : (livePushedAt && Date.now() - livePushedAt < 60000) ? ' · Drive ✓' : ' · Drive …';
+    return '● REC ' + mmss(Date.now() - story.startedAt) + ' · ' + (story.engine === 'cloud' ? 'ElevenLabs' : 'phone dictation') + bars + (st ? ' · ' + st : '') + dr;
+  }
   function renderLiveStrip() {
     if (!listening || !story) { liveStrip.hidden = true; return; }
     liveStrip.hidden = false;
     const tail = story.finals.slice(-3).map((f) => f.text).join(' ').slice(-160);
-    const dr = !S.driveOn ? '' : !driveConnected() ? ' · Drive: sign-in expired' : (livePushedAt && Date.now() - livePushedAt < 60000) ? ' · Drive ✓' : ' · Drive …';
-    liveStrip.innerHTML = '<b>● REC ' + mmss(Date.now() - story.startedAt) + ' · ' + (story.engine === 'cloud' ? 'ElevenLabs' : 'phone dictation') + dr + '</b>' + esc(tail) + (story.interim ? ' <span class="interim">' + esc(story.interim) + '</span>' : (tail ? '' : '<span class="empty">listening…</span>'));
+    liveStrip.innerHTML = '<b>' + stripHead() + '</b>' + esc(tail) + (story.interim ? ' <span class="interim">' + esc(story.interim) + '</span>' : (tail ? '' : '<span class="empty">listening…</span>'));
   }
   liveStrip.addEventListener('click', () => { if (listening && story) { showingTranscript = true; setPanel(true); renderTranscript(); } });
   // ----- audio of the session, saved in parts as it is recorded -----
