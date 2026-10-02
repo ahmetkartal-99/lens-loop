@@ -1101,11 +1101,10 @@
     return out;
   }
   function sigDiff(a, b) { if (!a || !b || a.length !== b.length) return 255; let s = 0; for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]); return s / a.length; }
-  // --- snap cache: re-snapping the same image returns the same answer ---
-  const snapCache = [];  // { sig, text, readPos }  — last 20
-  function sigKey(sig) { if (!sig) return null; let h = ''; for (let i = 0; i < sig.length; i += 4) h += sig[i].toString(16).padStart(2, '0'); return h; }
+  // --- snap cache: a picture that already has an answer gets it back from memory instead of a new request ---
+  const snapCache = [];  // { sig, text } — last 20
   function cacheHit(sig) { if (!sig) return null; for (const c of snapCache) { if (sigDiff(sig, c.sig) < 7) return c; } return null; }
-  function cacheStore(sig, text) { if (!sig || !text) return; const existing = cacheHit(sig); if (existing) { existing.text = text; return; } snapCache.push({ sig: new Uint8Array(sig), text, readPos: 0 }); if (snapCache.length > 20) snapCache.shift(); }
+  function cacheStore(sig, text) { if (!sig || !text) return; const existing = cacheHit(sig); if (existing) { existing.text = text; return; } snapCache.push({ sig: new Uint8Array(sig), text }); if (snapCache.length > 20) snapCache.shift(); }
 
   function snap(source) {
     let frame;
@@ -1117,24 +1116,18 @@
     } else {
       try { lastSig = frameSignature(); } catch (e) {}
     }
-    // check snap cache: same image → show cached answer + open reader
+    // the same picture as an earlier answer: show that answer again in the panel, no new request
     if (source === 'change' || source === 'button') {
-      const sig = lastSig || (function () { try { return frameSignature(); } catch (e) { return null; } })();
-      const hit = cacheHit(sig);
+      const hit = cacheHit(lastSig);
       if (hit) {
         frameNo += 1; frame.no = frameNo; frame.at = new Date(); frame.tag = fmtF(frameNo);
         frameCounter.textContent = frame.tag; lastShot.src = frame.thumb; lastShot.hidden = false;
         flash.classList.remove('on'); void flash.offsetWidth; flash.classList.add('on');
         lastGoodText = hit.text;
-        const { head, body, story } = splitAnswer(hit.text);
         answerBody.innerHTML = renderAnswer(hit.text, false); answerBody.classList.remove('stale');
         answerMeta.textContent = frame.tag + ' · ' + fmtTime(frame.at) + ' · cached';
         copyBtn.hidden = false; $('readBtn').hidden = false;
         setStatus(running ? 'done' : 'idle', 'Cached answer for ' + frame.tag);
-        openReader(body || hit.text, head || 'Cached answer', { force: true });
-        // restore reading position and auto-start scrolling
-        if (hit.readPos > 0 && hit.readPos < reader.words.length) { reader.pos = hit.readPos; paintReader(); }
-        startAuto();
         return;
       }
     }
@@ -2795,15 +2788,12 @@
     }
     if (best > reader.pos) { reader.pos = Math.min(best, reader.words.length); paintReader(); }
   }
-  async function openReader(text, title, opts) {
+  async function openReader(text, title) {
     if (!text || !text.trim()) { showBanner('Nothing to read here yet.', 'note'); return; }
-    const force = opts && opts.force;
-    if (!force && (running || listening)) { showBanner('Stop the session first, then open Read.', 'note'); return; }
+    if (running || listening) { showBanner('Stop the session first, then open Read.', 'note'); return; }
     buildReader(text, title);
     reader.open = true; readerEl.classList.add('open'); readerEl.setAttribute('aria-hidden', 'false');
     keepAwake();
-    // when forced open during a session (cache hit), don't start a second mic — use auto-scroll instead
-    if (force) { readerState.textContent = 'auto-scroll · use controls above'; return; }
     const useCloud = cloudWanted();
     if (!useCloud && !SR) { readerState.textContent = 'no voice tracking — scroll to read'; return; }
     readerState.textContent = 'listening — read aloud';
@@ -2818,9 +2808,6 @@
     catch (e) { readerState.textContent = 'voice tracking off'; }
   }
   function closeReader() {
-    // save reading position to snap cache so re-snap resumes here
-    const cachedText = lastGoodText;
-    if (cachedText) { const hit = snapCache.find((c) => c.text === cachedText); if (hit) hit.readPos = reader.pos; }
     reader.open = false; readerEl.classList.remove('open'); readerEl.setAttribute('aria-hidden', 'true');
     stopAuto();
     try { reader.engine && reader.engine.stop(); } catch (e) {} reader.engine = null;
