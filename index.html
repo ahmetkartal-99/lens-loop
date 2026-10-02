@@ -1304,7 +1304,7 @@
     } else if (running && statusEl.dataset.kind === 'done' && current) {
       setStatus('done', `Answered ${current.frame.tag} · next in ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s`);
     } else if (running && listening && story && !awaitingQuestion) {
-      setStatus('streaming', `Session ${mmss(Date.now() - story.startedAt)} · ${skippedSince >= 0 ? 'picture unchanged' : 'watching'} · ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s`);
+      setStatus('streaming', `Session ${mmss(Date.now() - story.startedAt)} · ${story.engine === 'cloud' ? 'ElevenLabs' : 'phone'} · ${skippedSince >= 0 ? 'picture unchanged' : 'watching'}`);
       if (showingTranscript) answerMeta.textContent = `● REC · ${mmss(Date.now() - story.startedAt)} · ${storyWords(story)} words · ${story.engine === 'cloud' ? 'ElevenLabs' : 'phone'}`;
     } else if (listening && story && !awaitingQuestion) {
       setStatus('streaming', `Listening ${mmss(Date.now() - story.startedAt)}`);
@@ -1314,7 +1314,7 @@
     } else if (askState) {
       setStatus('armed', 'Listening for your question…');
     }
-    if (listening && story && !liveStrip.hidden) { const b = liveStrip.querySelector('b'); if (b) b.textContent = '● REC ' + mmss(Date.now() - story.startedAt); }
+    if (listening && story && !liveStrip.hidden) { const b = liveStrip.querySelector('b'); if (b) b.textContent = '● REC ' + mmss(Date.now() - story.startedAt) + ' · ' + (story.engine === 'cloud' ? 'ElevenLabs' : 'phone dictation'); }
   }, 250);
   function renderMetaOnly(r) {
     const phase = r.firstTextAt ? 'answering' : 'thinking';
@@ -1932,7 +1932,7 @@
     if (!listening || !story) { liveStrip.hidden = true; return; }
     liveStrip.hidden = false;
     const tail = story.finals.slice(-3).map((f) => f.text).join(' ').slice(-160);
-    liveStrip.innerHTML = '<b>● REC ' + mmss(Date.now() - story.startedAt) + '</b>' + esc(tail) + (story.interim ? ' <span class="interim">' + esc(story.interim) + '</span>' : (tail ? '' : '<span class="empty">listening…</span>'));
+    liveStrip.innerHTML = '<b>● REC ' + mmss(Date.now() - story.startedAt) + ' · ' + (story.engine === 'cloud' ? 'ElevenLabs' : 'phone dictation') + '</b>' + esc(tail) + (story.interim ? ' <span class="interim">' + esc(story.interim) + '</span>' : (tail ? '' : '<span class="empty">listening…</span>'));
   }
   liveStrip.addEventListener('click', () => { if (listening && story) { showingTranscript = true; setPanel(true); renderTranscript(); } });
   function saveDraft() {
@@ -2312,7 +2312,9 @@
   const introDriveBtn = $('introDriveBtn'); if (introDriveBtn) introDriveBtn.addEventListener('click', driveConnectTap);
   banner.addEventListener('click', () => { if (banner.dataset.action === 'drive') { hideBanner(); driveConnectTap(); } });
   if (authReturn && authReturn.error && !authReturn.silent) {
-    showBanner(authReturn.error === 'state' ? 'Google sign-in did not match this page; tap Connect in the storylines list to try again.' : 'Google sign-in was not completed (' + authReturn.error + '). Tap here to try again.', 'note');
+    showBanner(authReturn.error === 'state' ? 'Google sign-in did not match this page; tap Connect in the storylines list to try again.'
+      : authReturn.error === 'access_denied' ? 'Google refused the sign-in: the app is still in "Testing" on Google Cloud, which only admits listed testers. In Google Cloud → Google Auth Platform → Audience press "Publish app" (or add your Gmail under Test users), then tap here to connect again.'
+      : 'Google sign-in was not completed (' + authReturn.error + '). Tap here to try again.', 'note');
     banner.dataset.action = 'drive';
   } else if (S.driveOn && !driveConnected() && !(authReturn && authReturn.ok)) {
     showBanner('Google Drive sign-in has expired — tap here to reconnect so new storylines keep syncing.', 'note');
