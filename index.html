@@ -366,6 +366,21 @@
   .sheet-actions .btn.quiet { border-color: transparent; background: transparent; color: var(--muted); margin-right: auto; }
   .reader { position: fixed; inset: 0; z-index: 60; background: var(--panel); display: none; flex-direction: column; }
   .reader.open { display: flex; }
+  /* The hands-free feed (auto-opened during a session) is not a full-screen page: it takes the answer panel's
+     place over the lower part of the camera, dark and translucent, so the status bar, the camera strip and the
+     Stop/Snap buttons stay in view and in reach. The manual Read view keeps the whole screen. */
+  .reader.feed {
+    position: absolute; inset: auto; left: 8px; right: 8px; bottom: 8px; top: 116px; z-index: 5;
+    background: var(--overlay); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+    border: 1px solid rgba(255,255,255,.14); border-radius: 14px; overflow: hidden;
+    --text: #ECE7DE; --muted: #A5AEB8; --panel: rgba(255,255,255,.06); --panel-2: rgba(255,255,255,.09); --line: rgba(255,255,255,.14);
+    color: var(--text);
+  }
+  .stage.feeding .answer { visibility: hidden; }   /* the feed stands in for the answer panel; no second layer showing through */
+  .reader.feed .reader-head { padding: 8px 10px; gap: 6px; flex-wrap: wrap; }
+  .reader.feed .reader-head .r-title { flex: 1 1 60px; min-width: 0; }
+  .reader.feed .reader-body { padding: 18vh 18px 18vh; }
+  .reader.feed .reader-body .w { font-size: var(--feed-size, 28px); }
   .reader-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
   .reader-head .r-title { font-family: var(--mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .reader-head .r-state { font-family: var(--mono); font-size: 11px; color: var(--accent); }
@@ -462,6 +477,25 @@
         </details>
       </div>
     </article>
+
+    <section class="reader" id="reader" aria-hidden="true">
+      <div class="reader-head">
+        <span class="r-title" id="readerTitle">Reading</span>
+        <span class="r-state" id="readerState"></span>
+        <div class="reader-speed">
+          <button type="button" id="spdDown" aria-label="Slower">-</button>
+          <span class="spd-label" id="spdLabel">1.0×</span>
+          <button type="button" id="spdUp" aria-label="Faster">+</button>
+        </div>
+        <button class="btn" type="button" id="autoBtn">Auto</button>
+        <div class="reader-size">
+          <button type="button" id="readSmaller" aria-label="Smaller text">A-</button>
+          <button type="button" id="readBigger" aria-label="Bigger text">A+</button>
+        </div>
+        <button class="btn" type="button" id="readerClose">Done</button>
+      </div>
+      <div class="reader-body" id="readerBody"></div>
+    </section>
   </section>
 
   <footer class="bar bottom">
@@ -654,24 +688,6 @@
   </div>
 </form>
 
-<section class="reader" id="reader" aria-hidden="true">
-  <div class="reader-head">
-    <span class="r-title" id="readerTitle">Reading</span>
-    <span class="r-state" id="readerState"></span>
-    <div class="reader-speed">
-      <button type="button" id="spdDown" aria-label="Slower">-</button>
-      <span class="spd-label" id="spdLabel">1.0×</span>
-      <button type="button" id="spdUp" aria-label="Faster">+</button>
-    </div>
-    <button class="btn" type="button" id="autoBtn">Auto</button>
-    <div class="reader-size">
-      <button type="button" id="readSmaller" aria-label="Smaller text">A-</button>
-      <button type="button" id="readBigger" aria-label="Bigger text">A+</button>
-    </div>
-    <button class="btn" type="button" id="readerClose">Done</button>
-  </div>
-  <div class="reader-body" id="readerBody"></div>
-</section>
 
 <canvas id="canvas" hidden></canvas>
 <canvas id="sigCanvas" hidden></canvas>
@@ -2977,6 +2993,9 @@
     const force = opts && opts.force;
     if (!force && (running || listening)) { showBanner('Stop the session first, then open Read.', 'note'); return; }
     buildReader(text, title);
+    // the hands-free feed takes the answer panel's place over the lower part of the camera (see .reader.feed);
+    // the manual Read view is the full-screen page
+    readerEl.classList.toggle('feed', !!force); stageEl.classList.toggle('feeding', !!force);
     reader.open = true; readerEl.classList.add('open'); readerEl.setAttribute('aria-hidden', 'false');
     keepAwake();
     // when forced open during a session (cache hit or auto-open), use auto-scroll instead of voice
@@ -2998,16 +3017,17 @@
     // save reading position to snap cache so re-snap resumes here
     const cachedText = lastGoodText;
     if (cachedText) { const hit = snapCache.find((c) => c.text === cachedText); if (hit) hit.readPos = reader.pos; }
-    reader.open = false; readerEl.classList.remove('open'); readerEl.setAttribute('aria-hidden', 'true');
+    reader.open = false; readerEl.classList.remove('open', 'feed'); stageEl.classList.remove('feeding'); readerEl.setAttribute('aria-hidden', 'true');
     stopAuto();
     try { reader.engine && reader.engine.stop(); } catch (e) {} reader.engine = null;
     if (!running && !listening) releaseWake();
   }
   $('readerClose').addEventListener('click', closeReader);
-  let readSize = 34;
-  const applyReadSize = () => document.documentElement.style.setProperty('--read-size', readSize + 'px');
-  $('readBigger').addEventListener('click', () => { readSize = Math.min(72, readSize + 4); applyReadSize(); });
-  $('readSmaller').addEventListener('click', () => { readSize = Math.max(20, readSize - 4); applyReadSize(); });
+  let readSize = 34, feedSize = 28;   // the full-screen Read view and the hands-free feed are sized separately
+  const applyReadSize = () => { document.documentElement.style.setProperty('--read-size', readSize + 'px'); document.documentElement.style.setProperty('--feed-size', feedSize + 'px'); };
+  const inFeed = () => readerEl.classList.contains('feed');
+  $('readBigger').addEventListener('click', () => { if (inFeed()) feedSize = Math.min(56, feedSize + 4); else readSize = Math.min(72, readSize + 4); applyReadSize(); });
+  $('readSmaller').addEventListener('click', () => { if (inFeed()) feedSize = Math.max(16, feedSize - 4); else readSize = Math.max(20, readSize - 4); applyReadSize(); });
   applyReadSize();
 
   // --- auto-scroll: advance one word at a time on an interval ---
