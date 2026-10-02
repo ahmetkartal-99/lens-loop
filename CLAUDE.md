@@ -1,12 +1,14 @@
 # Lens Loop — baseline for every future change
 
 Lens Loop is one file, `index.html` (plus `pcm-worklet.js`), published by GitHub Pages from `main` at
-https://ahmetkartal-99.github.io/lens-loop/. The git tag **`baseline`** marks the state the author approved;
-`baseline-<date>` tags are dated copies of approved states. Everything in the inventory below exists at the
+https://ahmetkartal-99.github.io/lens-loop/. The branch **`baseline`** on GitHub marks the state the author
+approved (the same commit also carries the local tags `baseline` and `baseline-<date>`; some sessions cannot
+push tags, so the branch is the one that is always there). Everything in the inventory below exists at the
 baseline and **must survive every change**. A feature is never removed, narrowed, or quietly degraded unless
 the author asks for exactly that in the current conversation — an earlier session once stripped the hands-free
 feed and it had to be restored commit by commit. When unsure whether something is still intact, diff against
-the baseline: `git diff baseline -- index.html`, or read `git show baseline:index.html`.
+the baseline: `git fetch origin baseline && git diff origin/baseline -- index.html`, or read
+`git show origin/baseline:index.html`.
 
 ## Rules
 
@@ -16,8 +18,8 @@ the baseline: `git diff baseline -- index.html`, or read `git show baseline:inde
   override them past the current open.
 - Keep it one self-contained file: no build step, no framework, no external script beyond what is already loaded.
 - Commit messages end with the attribution lines the session asks for; push to `main` only after the tests below pass.
-- When a change is approved by the author, move the `baseline` tag to that commit and push it
-  (`git tag -f baseline && git push -f origin baseline`); add a dated tag for the record.
+- When a change is approved by the author, move the baseline to that commit: `git push -f origin main:baseline`
+  (and, where tags can be pushed, `git tag -f baseline && git push -f origin baseline`, plus a dated tag).
 
 ## Must-keep inventory
 
