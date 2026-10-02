@@ -375,11 +375,6 @@
   .reader-body .w.cur { color: var(--accent-ink); background: var(--accent); border-radius: 6px; box-shadow: 0 0 0 4px var(--accent); }
   .reader-size { display: flex; gap: 6px; }
   .reader-size button { width: 34px; height: 34px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); border-radius: 8px; font-size: 18px; }
-  .reader-speed { display: flex; gap: 4px; align-items: center; }
-  .reader-speed button { width: 30px; height: 30px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); border-radius: 8px; font-size: 14px; }
-  .reader-speed .spd-label { font-family: var(--mono); font-size: 10px; color: var(--muted); min-width: 28px; text-align: center; }
-  #autoBtn { min-width: 40px; }
-  #autoBtn.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
   .story-tag {
     display: inline-block;
     font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
@@ -658,12 +653,6 @@
   <div class="reader-head">
     <span class="r-title" id="readerTitle">Reading</span>
     <span class="r-state" id="readerState"></span>
-    <div class="reader-speed">
-      <button type="button" id="spdDown" aria-label="Slower">-</button>
-      <span class="spd-label" id="spdLabel">1.0×</span>
-      <button type="button" id="spdUp" aria-label="Faster">+</button>
-    </div>
-    <button class="btn" type="button" id="autoBtn">Auto</button>
     <div class="reader-size">
       <button type="button" id="readSmaller" aria-label="Smaller text">A-</button>
       <button type="button" id="readBigger" aria-label="Bigger text">A+</button>
@@ -1101,11 +1090,6 @@
     return out;
   }
   function sigDiff(a, b) { if (!a || !b || a.length !== b.length) return 255; let s = 0; for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]); return s / a.length; }
-  // --- snap cache: a picture that already has an answer gets it back from memory instead of a new request ---
-  const snapCache = [];  // { sig, text } — last 20
-  function cacheHit(sig) { if (!sig) return null; for (const c of snapCache) { if (sigDiff(sig, c.sig) < 7) return c; } return null; }
-  function cacheStore(sig, text) { if (!sig || !text) return; const existing = cacheHit(sig); if (existing) { existing.text = text; return; } snapCache.push({ sig: new Uint8Array(sig), text }); if (snapCache.length > 20) snapCache.shift(); }
-
   function snap(source) {
     let frame;
     try { frame = captureFrame(); } catch (e) { showBanner(e.message); return; }
@@ -1115,21 +1099,6 @@
       lastSig = sig;
     } else {
       try { lastSig = frameSignature(); } catch (e) {}
-    }
-    // the same picture as an earlier answer: show that answer again in the panel, no new request
-    if (source === 'change' || source === 'button') {
-      const hit = cacheHit(lastSig);
-      if (hit) {
-        frameNo += 1; frame.no = frameNo; frame.at = new Date(); frame.tag = fmtF(frameNo);
-        frameCounter.textContent = frame.tag; lastShot.src = frame.thumb; lastShot.hidden = false;
-        flash.classList.remove('on'); void flash.offsetWidth; flash.classList.add('on');
-        lastGoodText = hit.text;
-        answerBody.innerHTML = renderAnswer(hit.text, false); answerBody.classList.remove('stale');
-        answerMeta.textContent = frame.tag + ' · ' + fmtTime(frame.at) + ' · cached';
-        copyBtn.hidden = false; $('readBtn').hidden = false;
-        setStatus(running ? 'done' : 'idle', 'Cached answer for ' + frame.tag);
-        return;
-      }
     }
     skippedSince = -1;
     frameNo += 1;
@@ -1284,7 +1253,7 @@
       pushHistory(req);
       return;
     }
-    if (req.text) { lastGoodText = req.text; try { cacheStore(lastSig, req.text); } catch (e) {} }
+    if (req.text) lastGoodText = req.text;
     if (req.frame.b64 && req.text && S.useStories) recordVisual(req);
     if (req === current) {
       showingTranscript = false;
@@ -1299,12 +1268,6 @@
       if (req.stop === 'max_tokens') showBanner('The reply hit the max output tokens limit and was cut off. Raise the limit in settings if this keeps happening.', 'note');
       else if (req.stop === 'refusal') showBanner('Claude declined to answer this frame.', 'note');
       setStatus(running ? 'done' : 'idle', running ? `Answered ${req.frame.tag} · next in ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s` : 'Idle');
-      // auto-open reader with metered feed
-      if (req.text && req.frame.b64) {
-        const { head, body } = splitAnswer(req.text);
-        openReader(body || req.text, head || req.frame.tag, { force: true });
-        startAuto();
-      }
     }
     pushHistory(req);
   }
@@ -2815,7 +2778,6 @@
   }
   function closeReader() {
     reader.open = false; readerEl.classList.remove('open'); readerEl.setAttribute('aria-hidden', 'true');
-    stopAuto();
     try { reader.engine && reader.engine.stop(); } catch (e) {} reader.engine = null;
     if (!running && !listening) releaseWake();
   }
@@ -2825,35 +2787,6 @@
   $('readBigger').addEventListener('click', () => { readSize = Math.min(72, readSize + 4); applyReadSize(); });
   $('readSmaller').addEventListener('click', () => { readSize = Math.max(20, readSize - 4); applyReadSize(); });
   applyReadSize();
-
-  // --- auto-scroll: advance one word at a time on an interval ---
-  let autoTimer = null, autoSpeed = 0.5;  // words per second (0.5 = ~30s per 15 words)
-  const autoBtn = $('autoBtn'), spdLabel = $('spdLabel');
-  function autoTick() {
-    if (!reader.open || reader.pos >= reader.words.length - 1) { stopAuto(); return; }
-    reader.pos++; paintReader();
-  }
-  function startAuto() {
-    if (autoTimer) clearInterval(autoTimer);
-    autoTimer = setInterval(autoTick, 1000 / autoSpeed);
-    autoBtn.classList.add('on'); autoBtn.textContent = 'Pause';
-    readerState.textContent = 'auto-scrolling';
-    // stop voice engine if running — auto replaces it
-    try { reader.engine && reader.engine.stop(); } catch (e) {} reader.engine = null;
-  }
-  function stopAuto() {
-    if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
-    autoBtn.classList.remove('on'); autoBtn.textContent = 'Auto';
-    if (reader.open && reader.pos < reader.words.length - 1) readerState.textContent = 'paused';
-    else if (reader.open) readerState.textContent = 'done';
-  }
-  autoBtn.addEventListener('click', () => { autoTimer ? stopAuto() : startAuto(); });
-  function updateSpeed() {
-    spdLabel.textContent = autoSpeed.toFixed(1) + '×';
-    if (autoTimer) { clearInterval(autoTimer); autoTimer = setInterval(autoTick, 1000 / autoSpeed); }
-  }
-  $('spdUp').addEventListener('click', () => { autoSpeed = Math.min(5.0, +(autoSpeed + 0.1).toFixed(1)); updateSpeed(); });
-  $('spdDown').addEventListener('click', () => { autoSpeed = Math.max(0.3, +(autoSpeed - 0.1).toFixed(1)); updateSpeed(); });
   $('readBtn').addEventListener('click', () => {
     const t = current && current.text ? splitAnswer(current.text).body || current.text : lastGoodText;
     openReader(t, 'Reading the answer');
