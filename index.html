@@ -364,6 +364,17 @@
   .key-row input { flex: 1; min-width: 0; }
   .sheet-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; margin-top: 6px; }
   .sheet-actions .btn.quiet { border-color: transparent; background: transparent; color: var(--muted); margin-right: auto; }
+  .reader { position: fixed; inset: 0; z-index: 60; background: var(--panel); display: none; flex-direction: column; }
+  .reader.open { display: flex; }
+  .reader-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .reader-head .r-title { font-family: var(--mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .reader-head .r-state { font-family: var(--mono); font-size: 11px; color: var(--accent); }
+  .reader-body { flex: 1; overflow-y: auto; padding: 40vh 24px 40vh; -webkit-overflow-scrolling: touch; }
+  .reader-body .w { font-size: var(--read-size, 34px); line-height: 1.5; font-weight: 700; color: var(--muted); transition: color .15s, background .15s; }
+  .reader-body .w.read { color: var(--text); }
+  .reader-body .w.cur { color: var(--accent-ink); background: var(--accent); border-radius: 6px; box-shadow: 0 0 0 4px var(--accent); }
+  .reader-size { display: flex; gap: 6px; }
+  .reader-size button { width: 34px; height: 34px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); border-radius: 8px; font-size: 18px; }
   .story-tag {
     display: inline-block;
     font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
@@ -423,6 +434,7 @@
     <article class="answer" id="answer">
       <div class="answer-head">
         <span class="meta" id="answerMeta">No frames yet</span>
+        <button class="copy" id="readBtn" type="button" hidden>Read</button>
         <button class="copy" id="copyBtn" type="button" hidden>Copy</button>
         <button class="tog" id="toggleBtn" type="button" aria-expanded="true">Hide</button>
       </div>
@@ -636,6 +648,19 @@
     <button class="btn" type="button" id="storyClose">Close</button>
   </div>
 </form>
+
+<section class="reader" id="reader" aria-hidden="true">
+  <div class="reader-head">
+    <span class="r-title" id="readerTitle">Reading</span>
+    <span class="r-state" id="readerState"></span>
+    <div class="reader-size">
+      <button type="button" id="readSmaller" aria-label="Smaller text">A-</button>
+      <button type="button" id="readBigger" aria-label="Bigger text">A+</button>
+    </div>
+    <button class="btn" type="button" id="readerClose">Done</button>
+  </div>
+  <div class="reader-body" id="readerBody"></div>
+</section>
 
 <canvas id="canvas" hidden></canvas>
 <canvas id="sigCanvas" hidden></canvas>
@@ -1239,6 +1264,7 @@
       answerBody.innerHTML = renderAnswer(req.text || '(no text in the reply)', false);
       answerBody.classList.remove('stale');
       copyBtn.hidden = !req.text;
+      $('readBtn').hidden = !req.text;
       if (req.stop === 'max_tokens') showBanner('The reply hit the max output tokens limit and was cut off. Raise the limit in settings if this keeps happening.', 'note');
       else if (req.stop === 'refusal') showBanner('Claude declined to answer this frame.', 'note');
       setStatus(running ? 'done' : 'idle', running ? `Answered ${req.frame.tag} · next in ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s` : 'Idle');
@@ -2642,12 +2668,14 @@
       tBtn.addEventListener('click', () => li.classList.toggle('open'));
       const sBtn = document.createElement('button'); sBtn.type = 'button'; sBtn.className = 'btn'; sBtn.textContent = st.summary ? 'Re-summarise' : 'Summarise';
       sBtn.addEventListener('click', () => { sBtn.disabled = true; sBtn.textContent = 'Working…'; digestStory(st).then(() => renderStoryList()); });
+      const rBtn = document.createElement('button'); rBtn.type = 'button'; rBtn.className = 'btn'; rBtn.textContent = 'Read aloud';
+      rBtn.addEventListener('click', () => { closeStories(); openReader(st.text, st.title); });
       const dBtn = document.createElement('button'); dBtn.type = 'button'; dBtn.className = 'btn'; dBtn.textContent = 'Delete';
       dBtn.addEventListener('click', () => {
         if (dBtn.dataset.armed) { removeStory(st); refreshReadouts(); renderStoryList(); return; }
         dBtn.dataset.armed = '1'; dBtn.textContent = 'Sure? Delete'; setTimeout(() => { delete dBtn.dataset.armed; dBtn.textContent = 'Delete'; }, 3000);
       });
-      row.append(use, tBtn, sBtn, dBtn);
+      row.append(use, tBtn, rBtn, sBtn, dBtn);
       const txt = document.createElement('div'); txt.className = 's-text'; txt.textContent = st.text;
       li.append(title, meta, sum, row, txt);
       storyList.appendChild(li);
@@ -2681,6 +2709,89 @@
   startBtn.addEventListener('click', () => { if (running) stop(); else start(); });
   snapBtn.addEventListener('click', () => { if (running) snap('manual'); });
   const answerEl = $('answer'), toggleBtn = $('toggleBtn');
+  // ---------- read-along: your own lore text, big, following your voice (karaoke-style) ----------
+  // The highlight tracks what you read aloud and matches it against the displayed words, so you can read
+  // your chapter out loud hands-free without losing your place. It only ever highlights this text; it
+  // generates nothing and records nothing.
+  const reader = { words: [], norm: [], pos: 0, engine: null, open: false };
+  const readerEl = $('reader'), readerBody = $('readerBody'), readerState = $('readerState'), readerTitle = $('readerTitle');
+  const normWord = (w) => w.toLowerCase().replace(/[^\p{L}\p{N}']/gu, '');
+  function buildReader(text, title) {
+    readerTitle.textContent = title || 'Reading';
+    const raw = (text || '').split(/(\s+)/);
+    reader.words = []; reader.norm = [];
+    readerBody.innerHTML = '';
+    
+    raw.forEach((tok) => {
+      if (/^\s+$/.test(tok)) { readerBody.appendChild(document.createTextNode(tok.includes('\n') ? '\n' : ' ')); return; }
+      if (!tok) return;
+      const n = normWord(tok);
+      const span = document.createElement('span'); span.className = 'w'; span.textContent = tok;
+      readerBody.appendChild(span);
+      reader.words.push(span); reader.norm.push(n);
+    });
+    reader.pos = 0; paintReader();
+  }
+  function paintReader() {
+    reader.words.forEach((el, i) => { el.className = 'w' + (i < reader.pos ? ' read' : i === reader.pos ? ' cur' : ''); });
+    const cur = reader.words[reader.pos];
+    if (cur) cur.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+  // Align what was heard against the text: walk the spoken words, advancing a local pointer by searching a
+  // small window ahead, so skips, repeats and mis-hearings still move the highlight forward (never back).
+  const wordEq = (a, b) => a === b || (a.length > 3 && b.length > 3 && (a.startsWith(b) || b.startsWith(a)));
+  function feedReader(spoken) {
+    const sp = spoken.split(/\s+/).map(normWord).filter(Boolean);
+    if (!sp.length) return;
+    // Match the most recent run of spoken words (longest wins) to the text just ahead of where we are, so
+    // the highlight follows the reader and common words like "the" never snap it to a far-off duplicate.
+    const N = reader.norm, lo = Math.max(0, reader.pos - 2), hi = Math.min(N.length, reader.pos + 24);
+    let best = -1;
+    for (let L = Math.min(5, sp.length); L >= 1 && best < 0; L--) {
+      const tail = sp.slice(sp.length - L);
+      for (let k = lo; k + L <= hi; k++) {
+        let ok = true;
+        for (let j = 0; j < L; j++) { if (!wordEq(N[k + j], tail[j])) { ok = false; break; } }
+        if (ok && (L > 1 || k >= reader.pos)) { best = k + L; break; }   // single-word matches only move forward
+      }
+    }
+    if (best > reader.pos) { reader.pos = Math.min(best, reader.words.length); paintReader(); }
+  }
+  async function openReader(text, title) {
+    if (!text || !text.trim()) { showBanner('Nothing to read here yet.', 'note'); return; }
+    if (running || listening) { showBanner('Stop the session first, then open Read.', 'note'); return; }
+    buildReader(text, title);
+    reader.open = true; readerEl.classList.add('open'); readerEl.setAttribute('aria-hidden', 'false');
+    keepAwake();
+    const useCloud = cloudWanted();
+    if (!useCloud && !SR) { readerState.textContent = 'no voice tracking — scroll to read'; return; }
+    readerState.textContent = 'listening — read aloud';
+    reader.engine = (useCloud ? makeCloudEngine : makePhoneEngine)({
+      continuous: true, keyterms: [],
+      onFinal: (t) => { if (reader.open) feedReader(t); },
+      onInterim: (t) => { if (reader.open) feedReader(t); },
+      onNote: () => {}, onMic: () => {},
+      onFatal: (msg) => { readerState.textContent = msg.slice(0, 40); },
+    });
+    try { await reader.engine.start(); }
+    catch (e) { readerState.textContent = 'voice tracking off'; }
+  }
+  function closeReader() {
+    reader.open = false; readerEl.classList.remove('open'); readerEl.setAttribute('aria-hidden', 'true');
+    try { reader.engine && reader.engine.stop(); } catch (e) {} reader.engine = null;
+    if (!running && !listening) releaseWake();
+  }
+  $('readerClose').addEventListener('click', closeReader);
+  let readSize = 34;
+  const applyReadSize = () => document.documentElement.style.setProperty('--read-size', readSize + 'px');
+  $('readBigger').addEventListener('click', () => { readSize = Math.min(72, readSize + 4); applyReadSize(); });
+  $('readSmaller').addEventListener('click', () => { readSize = Math.max(20, readSize - 4); applyReadSize(); });
+  applyReadSize();
+  $('readBtn').addEventListener('click', () => {
+    const t = current && current.text ? splitAnswer(current.text).body || current.text : lastGoodText;
+    openReader(t, 'Reading the answer');
+  });
+
   function setPanel(open) {
     answerEl.classList.toggle('collapsed', !open);
     toggleBtn.textContent = open ? 'Hide' : 'Show';
