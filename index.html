@@ -602,6 +602,7 @@
         <label>Session</label>
         <label class="check" style="margin:4px 0 0"><input type="checkbox" id="sessionListen"> Start also records a storyline (microphone on)</label>
         <label class="check" style="margin:4px 0 0"><input type="checkbox" id="skipStill"> Skip camera frames when nothing in the picture changed</label>
+        <label class="check" style="margin:4px 0 0"><input type="checkbox" id="saveAudio"> Save the audio to Google Drive in 2-minute parts while recording</label>
       </div>
     </div>
     <div class="field" style="margin-top:-6px"><div class="hint"><b>Listen</b> records a storyline for as long as you talk — through ElevenLabs when a key is set, otherwise with the phone's own dictation (iOS asks for the microphone; keep Siri &amp; Dictation on). <b>Ask</b> takes one spoken question and answers it from the saved storylines, picking the right one itself. Camera frames are answered with the storylines in mind too. Storylines are kept on this phone without a limit on their number or length; when they outgrow one request, the ones a question needs are chosen first and every other one is still known by its summary.</div></div>
@@ -706,6 +707,7 @@
     boostNames: true,
     sessionListen: true,
     skipStill: true,
+    saveAudio: true,
   };
   const STORE = 'lensloop.settings';
   let S = loadSettings();
@@ -1314,7 +1316,7 @@
     } else if (askState) {
       setStatus('armed', 'Listening for your question…');
     }
-    if (listening && story && !liveStrip.hidden) { const b = liveStrip.querySelector('b'); if (b) b.textContent = '● REC ' + mmss(Date.now() - story.startedAt) + ' · ' + (story.engine === 'cloud' ? 'ElevenLabs' : 'phone dictation'); }
+    if (listening && story && !liveStrip.hidden) { const b = liveStrip.querySelector('b'); if (b) b.textContent = '● REC ' + mmss(Date.now() - story.startedAt) + ' · ' + (story.engine === 'cloud' ? 'ElevenLabs' : 'phone dictation') + (!S.driveOn ? '' : !driveConnected() ? ' · Drive: sign-in expired' : (livePushedAt && Date.now() - livePushedAt < 60000) ? ' · Drive ✓' : ' · Drive …'); }
   }, 250);
   function renderMetaOnly(r) {
     const phase = r.firstTextAt ? 'answering' : 'thinking';
@@ -1431,6 +1433,7 @@
     $('boostNames').checked = S.boostNames !== false;
     $('sessionListen').checked = S.sessionListen !== false;
     $('skipStill').checked = S.skipStill !== false;
+    $('saveAudio').checked = S.saveAudio !== false;
     $('useStories').checked = !!S.useStories;
     $('askWithFrame').checked = !!S.askWithFrame;
     sheet.hidden = false; sheetBack.hidden = false;
@@ -1480,6 +1483,7 @@
     S.boostNames = $('boostNames').checked;
     S.sessionListen = $('sessionListen').checked;
     S.skipStill = $('skipStill').checked;
+    S.saveAudio = $('saveAudio').checked;
     S.useStories = $('useStories').checked;
     S.askWithFrame = $('askWithFrame').checked;
     applyPanelRotation();
@@ -1552,18 +1556,22 @@
     if (!window.indexedDB) return null;
     return new Promise((resolve) => {
       let req;
-      try { req = indexedDB.open('lensloop', 1); } catch (e) { resolve(null); return; }
-      req.onupgradeneeded = () => { const db = req.result; if (!db.objectStoreNames.contains('storylines')) db.createObjectStore('storylines', { keyPath: 'id' }); };
+      try { req = indexedDB.open('lensloop', 2); } catch (e) { resolve(null); return; }
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains('storylines')) db.createObjectStore('storylines', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('audio')) db.createObjectStore('audio', { keyPath: 'id' });
+      };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => resolve(null);
       req.onblocked = () => resolve(null);
     });
   })();
-  function dbRun(mode, fn) {
+  function dbRun(mode, fn, storeName) {
     return Promise.resolve(storyDB).then((db) => new Promise((resolve, reject) => {
       if (!db) { reject(new Error('no db')); return; }
-      const tx = db.transaction('storylines', mode);
-      const store = tx.objectStore('storylines');
+      const tx = db.transaction(storeName || 'storylines', mode);
+      const store = tx.objectStore(storeName || 'storylines');
       let out;
       try { out = fn(store); } catch (e) { reject(e); return; }
       tx.oncomplete = () => resolve(out && 'result' in out ? out.result : undefined);
@@ -1582,6 +1590,7 @@
   }
   function removeStory(st) {
     const i = stories.indexOf(st); if (i >= 0) stories.splice(i, 1);
+    if (st.audioParts) deleteAudioParts(st.id);
     if (st.driveId || st.driveTxtId) { S.driveTrash = (S.driveTrash || []).concat([st.driveId, st.driveTxtId].filter(Boolean)); saveSettings(); scheduleSync(); }
     if (!dbOk) return persistLocal();
     dbRun('readwrite', (store) => store.delete(st.id)).catch(() => {});
@@ -1612,8 +1621,17 @@
   const usableStories = () => stories.filter((st) => st.use !== false && st.text);
   const storyIndexLine = (st, i) => `${i + 1}. «${st.title}» — recorded ${new Date(st.createdAt).toLocaleString()}, ${Math.max(1, Math.round((st.seconds || 0) / 60))} min, ${st.words || 0} words.` +
     (st.summary ? ' ' + st.summary : '') + (st.keys ? ' Key terms: ' + st.keys + '.' : '');
+  const liveText = () => (listening && story && story.finals.length) ? story.finals.map((f) => f.text).join(' ') : '';
   function storiesOverBudget() {
-    return usableStories().reduce((n, st) => n + st.text.length + 400, 0) > STORY_BUDGET_CHARS;
+    return usableStories().reduce((n, st) => n + st.text.length + 400, 0) + liveText().length > STORY_BUDGET_CHARS;
+  }
+  // What has been said so far in the session that is still being recorded: sent uncached after the saved
+  // storylines, so questions can draw on it at any moment without waiting for the recording to end.
+  function liveBlock() {
+    const t = liveText();
+    if (!t) return null;
+    return `CURRENT SESSION — still being recorded (started ${fmtTime(new Date(story.startedAt))}, ${mmss(Date.now() - story.startedAt)} so far, ${storyWords(story)} words). ` +
+      'This is the storyline being spoken right now; it is as valid a source as the saved ones and usually the most relevant one for a question asked now. Refer to it as "STORYLINE: Current session".\n\n' + t;
   }
   // Full transcripts of the storylines that fit the budget. When the library is bigger than one request can
   // hold, `prefer` (chosen per question by routeStorylines) goes in first and the newest fill what is left;
@@ -1627,7 +1645,7 @@
     let used = 0; const picked = new Set();
     for (const st of order) {
       const size = st.text.length + 400;
-      if (used + size > STORY_BUDGET_CHARS) continue;
+      if (used + size > STORY_BUDGET_CHARS - liveText().length) continue;
       used += size; picked.add(st.id);
     }
     const idx = list.map((st, i) => storyIndexLine(st, i) + (picked.has(st.id) ? '' : ' [index only in this request]')).join('\n');
@@ -1648,7 +1666,7 @@
   // the storylines this question needs, so their full transcripts are the ones sent.
   async function routeStorylines(frame, req) {
     const list = usableStories().sort((a, b) => a.createdAt - b.createdAt);
-    const idx = list.map((st, i) => storyIndexLine(st, i)).join('\n');
+    const idx = list.map((st, i) => storyIndexLine(st, i)).join('\n') + (liveText() ? '\n(The session being recorded right now is always included in full; do not number it.)' : '');
     const content = [];
     if (frame.b64) content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: frame.b64 } });
     content.push({ type: 'text', text: (frame.question ? 'Spoken question from the user: ' + frame.question : 'The attached photo is the question (a note, a sketch, a page).') +
@@ -1677,6 +1695,11 @@
     const blocks = [{ type: 'text', text: SYSTEM_RULES }];
     const sb = storylineBlock(prefer);
     if (sb) blocks.push({ type: 'text', text: sb, cache_control: { type: 'ephemeral' } });
+    const lb = S.useStories ? liveBlock() : null;
+    if (lb) {
+      if (!sb) blocks.push({ type: 'text', text: 'The user is a fiction author recording a spoken brainstorming session right now. When a question (spoken, or written or drawn in the photo) concerns it, answer from it and put "STORYLINE: Current session" on the second line; otherwise write "STORYLINE: none" and answer normally.' });
+      blocks.push({ type: 'text', text: lb });
+    }
     return blocks;
   }
 
@@ -1792,6 +1815,7 @@
       await connect();
     };
     E.setMic = (ms) => { if (closed || !ac || !node || !ms) return; mic = ms; ownMic = false; wire(ms); };
+    E.micStream = () => mic;
     E.stop = (keepMic) => {
       closed = true;
       try { ws && ws.close(); } catch (e) {} ws = null; open = false;
@@ -1926,15 +1950,118 @@
     engine = useCloud ? makeCloudEngine(handlers) : makePhoneEngine(handlers);
     try { await engine.start(); }
     catch (e) { handlers.onFatal(e.message || String(e)); }
+    if (story && listening) {
+      const ms = opts.micStream || (engine && engine.micStream && engine.micStream()) || null;
+      startAudioCapture(ms);
+      livePushedWords = -1; clearInterval(livePushTimer); livePushTimer = setInterval(pushLive, 8000);
+    }
   }
   const liveStrip = $('liveStrip');
   function renderLiveStrip() {
     if (!listening || !story) { liveStrip.hidden = true; return; }
     liveStrip.hidden = false;
     const tail = story.finals.slice(-3).map((f) => f.text).join(' ').slice(-160);
-    liveStrip.innerHTML = '<b>● REC ' + mmss(Date.now() - story.startedAt) + ' · ' + (story.engine === 'cloud' ? 'ElevenLabs' : 'phone dictation') + '</b>' + esc(tail) + (story.interim ? ' <span class="interim">' + esc(story.interim) + '</span>' : (tail ? '' : '<span class="empty">listening…</span>'));
+    const dr = !S.driveOn ? '' : !driveConnected() ? ' · Drive: sign-in expired' : (livePushedAt && Date.now() - livePushedAt < 60000) ? ' · Drive ✓' : ' · Drive …';
+    liveStrip.innerHTML = '<b>● REC ' + mmss(Date.now() - story.startedAt) + ' · ' + (story.engine === 'cloud' ? 'ElevenLabs' : 'phone dictation') + dr + '</b>' + esc(tail) + (story.interim ? ' <span class="interim">' + esc(story.interim) + '</span>' : (tail ? '' : '<span class="empty">listening…</span>'));
   }
   liveStrip.addEventListener('click', () => { if (listening && story) { showingTranscript = true; setPanel(true); renderTranscript(); } });
+  // ----- audio of the session, saved in parts as it is recorded -----
+  // Each part is a complete, playable file (the recorder is restarted for every part), kept in IndexedDB and
+  // uploaded to the Drive folder as soon as it is done; parts that could not be uploaded go up at the next sync.
+  let audioRec = null, audioChunks = [], audioSegTimer = null, audioMime = '';
+  const AUDIO_SEG_MS = () => (S.audioSegSec || 120) * 1000;
+  const audioExt = (m) => /mp4/.test(m) ? 'm4a' : /ogg/.test(m) ? 'ogg' : 'webm';
+  function pickAudioMime() {
+    if (!window.MediaRecorder) return '';
+    return ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'].find((m) => { try { return MediaRecorder.isTypeSupported(m); } catch (e) { return false; } }) || '';
+  }
+  function startAudioCapture(ms) {
+    if (S.saveAudio === false || !ms || !ms.getAudioTracks().length) return;
+    audioMime = pickAudioMime();
+    if (!audioMime) return;
+    try { audioRec = new MediaRecorder(new MediaStream(ms.getAudioTracks()), { mimeType: audioMime, audioBitsPerSecond: 64000 }); }
+    catch (e) { audioRec = null; return; }
+    const st = story; let partStart = Date.now();
+    audioRec.ondataavailable = (e) => { if (e.data && e.data.size) audioChunks.push(e.data); };
+    audioRec.onstop = () => {
+      const blob = new Blob(audioChunks, { type: audioMime }); audioChunks = [];
+      const secs = Math.round((Date.now() - partStart) / 1000);
+      if (blob.size > 0 && st) {
+        st.audioParts = (st.audioParts || 0) + 1;
+        const part = { id: st.id + '_p' + String(st.audioParts).padStart(3, '0'), storyId: st.id, part: st.audioParts, blob, mime: audioMime, seconds: secs, createdAt: partStart, driveId: null, name: '' };
+        dbRun('readwrite', (store) => store.put(part), 'audio').then(() => uploadAudioParts()).catch(() => {});
+      }
+      partStart = Date.now();
+      if (listening && story === st && audioRec && audioRec.state === 'inactive') { try { audioRec.start(); } catch (e) {} }
+    };
+    try { audioRec.start(); } catch (e) { audioRec = null; return; }
+    clearInterval(audioSegTimer);
+    audioSegTimer = setInterval(() => { if (audioRec && audioRec.state === 'recording') { try { audioRec.stop(); } catch (e) {} } }, AUDIO_SEG_MS());
+  }
+  function stopAudioCapture() {
+    clearInterval(audioSegTimer); audioSegTimer = null;
+    const r = audioRec; audioRec = null;
+    if (r && r.state === 'recording') { try { r.stop(); } catch (e) {} }   // onstop saves and uploads the last part
+  }
+  let uploadingAudio = false;
+  async function uploadAudioParts() {
+    if (!driveConnected() || uploadingAudio) return;
+    uploadingAudio = true;
+    try {
+      const parts = await dbRun('readonly', (store) => store.getAll(), 'audio');
+      const pending = (parts || []).filter((p) => !p.driveId).sort((a, b) => a.createdAt - b.createdAt);
+      if (!pending.length) return;
+      const folderId = await driveFolder();
+      for (const p of pending) {
+        const st = stories.find((x) => x.id === p.storyId) || (story && story.id === p.storyId ? { title: liveTitle(story) } : null);
+        const name = safeName((st && st.title) || ('Recording ' + new Date(p.createdAt).toLocaleString())) + ' · part ' + String(p.part).padStart(2, '0') + '.' + audioExt(p.mime);
+        const made = await drive('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',
+          Object.assign({ method: 'POST' }, multipartBlob({ name, parents: [folderId], appProperties: { lensloop: 'audio', storyId: p.storyId, part: String(p.part) } }, p.blob, p.mime)));
+        p.driveId = made.id; p.name = name;
+        await dbRun('readwrite', (store) => store.put(p), 'audio');
+      }
+    } catch (e) { /* kept locally; the next sync retries */ }
+    finally { uploadingAudio = false; }
+  }
+  // audio file names follow the storyline's title once Claude has written it
+  async function renameAudioParts(st) {
+    if (!driveConnected()) return;
+    let parts = []; try { parts = (await dbRun('readonly', (store) => store.getAll(), 'audio')).filter((p) => p.storyId === st.id && p.driveId); } catch (e) { return; }
+    for (const p of parts) {
+      const name = safeName(st.title) + ' · part ' + String(p.part).padStart(2, '0') + '.' + audioExt(p.mime);
+      if (p.name === name) continue;
+      try { await drive('files/' + p.driveId, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) }); p.name = name; await dbRun('readwrite', (store) => store.put(p), 'audio'); } catch (e) { if (e.auth) return; }
+    }
+  }
+  async function deleteAudioParts(storyId) {
+    let parts = []; try { parts = (await dbRun('readonly', (store) => store.getAll(), 'audio')).filter((p) => p.storyId === storyId); } catch (e) { return; }
+    for (const p of parts) {
+      if (p.driveId) { S.driveTrash = (S.driveTrash || []).concat([p.driveId]); }
+      try { await dbRun('readwrite', (store) => store.delete(p.id), 'audio'); } catch (e) {}
+    }
+    saveSettings(); scheduleSync();
+  }
+
+  // ----- the transcript in progress, mirrored to Drive every few seconds -----
+  const liveTitle = (st) => 'Recording · ' + new Date(st.startedAt).toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + fmtTime(new Date(st.startedAt)).replace(/:\d\d(\s|$)/, '$1');
+  let livePushTimer = null, livePushing = false, livePushedWords = -1, livePushedAt = 0;
+  async function pushLive() {
+    if (!listening || !story || livePushing || !driveConnected()) return;
+    const words = storyWords(story);
+    if (words < 3 || words === livePushedWords) return;
+    livePushing = true;
+    const st = story;
+    try {
+      const folderId = await driveFolder();
+      const rec = { id: st.id, title: liveTitle(st), createdAt: st.startedAt, seconds: Math.round((Date.now() - st.startedAt) / 1000), words, text: st.finals.map((f) => f.text).join(' '), summary: '', keys: '', use: true, updatedAt: Date.now(), live: true, driveId: st.driveId, driveTxtId: st.driveTxtId };
+      await pushStory(rec, folderId);
+      st.driveId = rec.driveId; st.driveTxtId = rec.driveTxtId;
+      livePushedWords = words; livePushedAt = Date.now();
+      renderLiveStrip();
+    } catch (e) { if (e.auth) renderDriveRow(); }
+    finally { livePushing = false; }
+  }
+
   function saveDraft() {
     try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ id: story.id, startedAt: story.startedAt, finals: story.finals })); } catch (e) { /* no room; the in-memory copy still saves on stop */ }
   }
@@ -1942,6 +2069,8 @@
   function stopStory(save, quiet) {
     listening = false;
     awaitingQuestion = 0;
+    clearInterval(livePushTimer); livePushTimer = null;
+    stopAudioCapture();
     try { engine && engine.stop(!!quiet); } catch (e) {} engine = null;
     listenBtn.textContent = 'Listen'; listenBtn.dataset.on = 'false';
     askBtn.disabled = false;
@@ -1962,7 +2091,8 @@
     }
     const n = stories.length + 1;
     const saved = { id: st.id, title: `Storyline ${n} · ${new Date(st.startedAt).toLocaleDateString([], { month: 'short', day: 'numeric' })} ${fmtTime(new Date(st.startedAt)).replace(/:\d\d(\s|$)/, '$1')}`,
-      createdAt: st.startedAt, endedAt: Date.now(), seconds: Math.round((Date.now() - st.startedAt) / 1000), words, text, summary: '', keys: '', use: true };
+      createdAt: st.startedAt, endedAt: Date.now(), seconds: Math.round((Date.now() - st.startedAt) / 1000), words, text, summary: '', keys: '', use: true,
+      driveId: st.driveId || null, driveTxtId: st.driveTxtId || null, audioParts: st.audioParts || 0 };   // the live files on Drive become the saved storyline's files
     saved.updatedAt = Date.now();
     stories.push(saved);
     saveStories().then(() => clearDraft());
@@ -2196,6 +2326,11 @@
     return { headers: { 'content-type': 'multipart/related; boundary=' + b },
       body: `--${b}\r\ncontent-type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\ncontent-type: ${type}\r\n\r\n${body}\r\n--${b}--` };
   }
+  function multipartBlob(meta, blob, type) {
+    const b = 'lensloop' + Math.random().toString(36).slice(2);
+    return { headers: { 'content-type': 'multipart/related; boundary=' + b },
+      body: new Blob([`--${b}\r\ncontent-type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${b}\r\ncontent-type: ${type}\r\n\r\n`, blob, `\r\n--${b}--`]) };
+  }
   const safeName = (t) => (t || 'Storyline').replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 80);
   function storyRecord(st) { const o = Object.assign({}, st); delete o.driveId; delete o.driveTxtId; delete o.syncedAt; return o; }
   function storyText(st) {
@@ -2253,6 +2388,7 @@
       let pulled = 0, pushed = 0;
       // pull what is newer or missing here
       for (const [sid, f] of remote) {
+        if (story && sid === story.id) continue;   // the recording in progress on this device
         const local = stories.find((x) => x.id === sid);
         const remoteAt = parseInt((f.appProperties && f.appProperties.updatedAt) || '0', 10);
         if (local) { local.driveId = local.driveId || f.id; local.driveTxtId = local.driveTxtId || txtByStory.get(sid) || null; }
@@ -2272,6 +2408,8 @@
       }
       stories.sort((a, b) => a.createdAt - b.createdAt);
       await saveStories();
+      await uploadAudioParts();
+      for (const st of stories) { if (st.audioParts) await renameAudioParts(st); }
       S.driveSyncedAt = Date.now(); saveSettings();
       refreshReadouts();
       if (!storySheet.hidden) renderStoryList();

@@ -19,7 +19,9 @@ A single-page web app for a phone: prop the phone up, open the page, tap **Start
   - "Lens, look at this" / "take a picture" / "read this" — sends the current frame with those words;
   - "Lens, new chapter" / "new storyline" — saves the current storyline and starts the next one, same microphone;
   - "Lens, stop recording" / "end session" / "that's all" — ends the session and saves.
-- While recording, a strip under the answer shows the clock and the last words heard; tapping it shows the whole transcript. The Listen/Ask/Snap buttons still work by hand.
+- **The recording is usable while it is still running.** Everything said so far in the current session goes into every request as "Current session (still being recorded)", after the cached saved storylines, so a question shown to the camera or spoken five minutes into a two-hour session is answered from those five minutes at once — no need to stop first.
+- **Drive gets it live.** While recording, the transcript so far is written to the Drive folder every 8 seconds (the "Recording · …" `.json`/`.txt`, renamed to Claude's title when the session ends), and the audio itself is saved there in 2-minute parts as it is recorded (`<title> · part 01.m4a` …; each part is a complete playable file, kept on the phone first and uploaded as soon as it is done — parts that could not be uploaded go up at the next sync). The strip under the answer shows `Drive ✓` when the last push landed. Google's sign-in token lasts an hour; if it runs out mid-session the recording and the parts stay on the phone and are uploaded on the next open.
+- While recording, a strip under the answer shows the clock, the engine, the Drive state and the last words heard; tapping it shows the whole transcript. The Listen/Ask/Snap buttons still work by hand.
 
 ## Storylines (listening, memory, questions)
 
