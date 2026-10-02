@@ -1229,6 +1229,7 @@
       return;
     }
     if (req.text) lastGoodText = req.text;
+    if (req.frame.b64 && req.text && S.useStories) recordVisual(req);
     if (req === current) {
       showingTranscript = false;
       renderLiveStrip();
@@ -1556,11 +1557,12 @@
     if (!window.indexedDB) return null;
     return new Promise((resolve) => {
       let req;
-      try { req = indexedDB.open('lensloop', 2); } catch (e) { resolve(null); return; }
+      try { req = indexedDB.open('lensloop', 3); } catch (e) { resolve(null); return; }
       req.onupgradeneeded = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains('storylines')) db.createObjectStore('storylines', { keyPath: 'id' });
         if (!db.objectStoreNames.contains('audio')) db.createObjectStore('audio', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('frames')) db.createObjectStore('frames', { keyPath: 'id' });
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => resolve(null);
@@ -1591,6 +1593,7 @@
   function removeStory(st) {
     const i = stories.indexOf(st); if (i >= 0) stories.splice(i, 1);
     if (st.audioParts) deleteAudioParts(st.id);
+    if (st.visuals && st.visuals.length) deleteFrames(st.id);
     if (st.driveId || st.driveTxtId) { S.driveTrash = (S.driveTrash || []).concat([st.driveId, st.driveTxtId].filter(Boolean)); saveSettings(); scheduleSync(); }
     if (!dbOk) return persistLocal();
     dbRun('readwrite', (store) => store.delete(st.id)).catch(() => {});
@@ -1619,8 +1622,11 @@
   // What the model is told about the saved storylines. The whole block is marked for prompt caching,
   // so while the camera loop runs or questions follow each other it is billed at the cache-read rate.
   const usableStories = () => stories.filter((st) => st.use !== false && st.text);
+  const visualNotes = (st) => (st.visuals && st.visuals.length)
+    ? '\n\nVISUAL NOTES — things shown to the camera for this storyline (sketches, maps, pages), with what they showed:\n' + st.visuals.map((v) => `- ${new Date(v.at).toLocaleString()} ${v.tag}${v.question ? ' (asked: ' + v.question + ')' : ''}: ${v.caption}`).join('\n')
+    : '';
   const storyIndexLine = (st, i) => `${i + 1}. «${st.title}» — recorded ${new Date(st.createdAt).toLocaleString()}, ${Math.max(1, Math.round((st.seconds || 0) / 60))} min, ${st.words || 0} words.` +
-    (st.summary ? ' ' + st.summary : '') + (st.keys ? ' Key terms: ' + st.keys + '.' : '');
+    (st.summary ? ' ' + st.summary : '') + (st.keys ? ' Key terms: ' + st.keys + '.' : '') + (st.visuals && st.visuals.length ? ` ${st.visuals.length} visual note${st.visuals.length === 1 ? '' : 's'}.` : '');
   // Everything heard up to this instant: the finished sentences plus the one still being spoken.
   const liveText = () => {
     if (!listening || !story) return '';
@@ -1637,7 +1643,7 @@
     const t = liveText();
     if (!t) return null;
     return `CURRENT SESSION — still being recorded (started ${fmtTime(new Date(story.startedAt))}, ${mmss(Date.now() - story.startedAt)} so far, ${storyWords(story)} words). ` +
-      'This is the storyline being spoken right now, complete up to the moment of this request (a trailing fragment marked [still being spoken] is the sentence in progress). It is as valid a source as the saved ones and usually the most relevant one for a question asked now. Refer to it as "STORYLINE: Current session".\n\n' + t;
+      'This is the storyline being spoken right now, complete up to the moment of this request (a trailing fragment marked [still being spoken] is the sentence in progress). It is as valid a source as the saved ones and usually the most relevant one for a question asked now. Refer to it as "STORYLINE: Current session".\n\n' + t + visualNotes(story);
   }
   // Full transcripts of the storylines that fit the budget. When the library is bigger than one request can
   // hold, `prefer` (chosen per question by routeStorylines) goes in first and the newest fill what is left;
@@ -1655,7 +1661,7 @@
       used += size; picked.add(st.id);
     }
     const idx = list.map((st, i) => storyIndexLine(st, i) + (picked.has(st.id) ? '' : ' [index only in this request]')).join('\n');
-    const bodies = list.filter((st) => picked.has(st.id)).map((st) => `=== STORYLINE ${list.indexOf(st) + 1}: «${st.title}» ===\n${st.text}`).join('\n\n');
+    const bodies = list.filter((st) => picked.has(st.id)).map((st) => `=== STORYLINE ${list.indexOf(st) + 1}: «${st.title}» ===\n${st.text}${visualNotes(st)}`).join('\n\n');
     const skipped = list.length - picked.size;
     return 'The user is a fiction author who records spoken brainstorming and world-building sessions. Each saved session is a "storyline": a chapter, a plot thread or a lore session. ' +
       'The transcripts come from automatic speech recognition: names and invented words may be misspelled, split or merged, so resolve them from the index and the surrounding context, and treat spellings that sound alike as the same name. ' +
@@ -2143,7 +2149,7 @@
     const st = story;
     try {
       const folderId = await driveFolder();
-      const rec = { id: st.id, title: liveTitle(st), createdAt: st.startedAt, seconds: Math.round((Date.now() - st.startedAt) / 1000), words, text: st.finals.map((f) => f.text).join(' '), summary: '', keys: '', use: true, updatedAt: Date.now(), live: true, driveId: st.driveId, driveTxtId: st.driveTxtId };
+      const rec = { id: st.id, title: liveTitle(st), createdAt: st.startedAt, seconds: Math.round((Date.now() - st.startedAt) / 1000), words, text: st.finals.map((f) => f.text).join(' '), summary: '', keys: '', use: true, updatedAt: Date.now(), live: true, driveId: st.driveId, driveTxtId: st.driveTxtId, visuals: st.visuals || [] };
       await pushStory(rec, folderId);
       st.driveId = rec.driveId; st.driveTxtId = rec.driveTxtId;
       livePushedWords = words; livePushedAt = Date.now();
@@ -2152,8 +2158,65 @@
     finally { livePushing = false; }
   }
 
+  // ----- visual notes: every photo the camera analysed, kept with its storyline and mirrored to Drive -----
+  function findStoryByTitle(name) {
+    const want = (name || '').split(',')[0].trim().toLowerCase();
+    if (!want || want === 'none') return null;
+    return stories.find((st) => st.title.toLowerCase() === want) || stories.find((st) => st.title.toLowerCase().includes(want) || want.includes(st.title.toLowerCase())) || null;
+  }
+  function recordVisual(req) {
+    const { head, body, story: tag } = splitAnswer(req.text);
+    const isLive = /^current session/i.test(tag || '');
+    const target = (!isLive && findStoryByTitle(tag)) || (listening && story ? story : null) || findStoryByTitle(tag);
+    if (!target) return;
+    const note = { id: 'vf_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), at: req.frame.at.getTime(), tag: req.frame.tag, question: req.frame.question || '',
+      caption: (head || '').slice(0, 200) + (body ? ' — ' + body.replace(/\s+/g, ' ').slice(0, 300) : '') };
+    target.visuals = (target.visuals || []).concat([note]);
+    if (target === story) saveDraft(); else { target.updatedAt = Date.now(); saveStories(); scheduleSync(); }
+    fetch('data:image/jpeg;base64,' + req.frame.b64).then((r) => r.blob()).then((blob) =>
+      dbRun('readwrite', (store) => store.put({ id: note.id, storyId: target.id, blob, mime: 'image/jpeg', createdAt: note.at, tag: note.tag, caption: note.caption, driveId: null, name: '' }), 'frames')
+    ).then(() => uploadFrames()).catch(() => {});
+  }
+  let uploadingFrames = false;
+  async function uploadFrames() {
+    if (!driveConnected() || uploadingFrames) return;
+    uploadingFrames = true;
+    try {
+      const all = await dbRun('readonly', (store) => store.getAll(), 'frames');
+      const pending = (all || []).filter((f) => !f.driveId).sort((a, b) => a.createdAt - b.createdAt);
+      if (!pending.length) return;
+      const folderId = await driveFolder();
+      for (const f of pending) {
+        const st = stories.find((x) => x.id === f.storyId) || (story && story.id === f.storyId ? { title: liveTitle(story) } : null);
+        const name = safeName((st && st.title) || 'Storyline') + ' · ' + f.tag + ' ' + new Date(f.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }).replace(/:/g, '.') + '.jpg';
+        const made = await drive('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',
+          Object.assign({ method: 'POST' }, multipartBlob({ name, parents: [folderId], description: f.caption, appProperties: { lensloop: 'frame', storyId: f.storyId, tag: f.tag } }, f.blob, 'image/jpeg')));
+        f.driveId = made.id; f.name = name;
+        await dbRun('readwrite', (store) => store.put(f), 'frames');
+      }
+    } catch (e) { /* kept locally; the next sync retries */ }
+    finally { uploadingFrames = false; }
+  }
+  async function renameFrames(st) {
+    if (!driveConnected()) return;
+    let frames = []; try { frames = (await dbRun('readonly', (store) => store.getAll(), 'frames')).filter((f) => f.storyId === st.id && f.driveId); } catch (e) { return; }
+    for (const f of frames) {
+      const want = safeName(st.title) + ' · ' + f.tag + ' ' + new Date(f.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }).replace(/:/g, '.') + '.jpg';
+      if (f.name === want) continue;
+      try { await drive('files/' + f.driveId, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: want }) }); f.name = want; await dbRun('readwrite', (store) => store.put(f), 'frames'); } catch (e) { if (e.auth) return; }
+    }
+  }
+  async function deleteFrames(storyId) {
+    let frames = []; try { frames = (await dbRun('readonly', (store) => store.getAll(), 'frames')).filter((f) => f.storyId === storyId); } catch (e) { return; }
+    for (const f of frames) {
+      if (f.driveId) S.driveTrash = (S.driveTrash || []).concat([f.driveId]);
+      try { await dbRun('readwrite', (store) => store.delete(f.id), 'frames'); } catch (e) {}
+    }
+    saveSettings(); scheduleSync();
+  }
+
   function saveDraft() {
-    try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ id: story.id, startedAt: story.startedAt, finals: story.finals })); } catch (e) { /* no room; the in-memory copy still saves on stop */ }
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ id: story.id, startedAt: story.startedAt, finals: story.finals, visuals: story.visuals || [] })); } catch (e) { /* no room; the in-memory copy still saves on stop */ }
   }
   function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch (e) {} }
   function stopStory(save, quiet) {
@@ -2182,7 +2245,7 @@
     const n = stories.length + 1;
     const saved = { id: st.id, title: `Storyline ${n} · ${new Date(st.startedAt).toLocaleDateString([], { month: 'short', day: 'numeric' })} ${fmtTime(new Date(st.startedAt)).replace(/:\d\d(\s|$)/, '$1')}`,
       createdAt: st.startedAt, endedAt: Date.now(), seconds: Math.round((Date.now() - st.startedAt) / 1000), words, text, summary: '', keys: '', use: true,
-      driveId: st.driveId || null, driveTxtId: st.driveTxtId || null, audioParts: st.audioParts || 0 };   // the live files on Drive become the saved storyline's files
+      driveId: st.driveId || null, driveTxtId: st.driveTxtId || null, audioParts: st.audioParts || 0, visuals: st.visuals || [] };   // the live files on Drive become the saved storyline's files
     saved.updatedAt = Date.now();
     stories.push(saved);
     saveStories().then(() => clearDraft());
@@ -2251,7 +2314,7 @@
     const words = text.split(/\s+/).filter(Boolean).length;
     if (words >= 3 && !stories.some((st) => st.id === d.id)) {
       const last = d.finals[d.finals.length - 1];
-      stories.push({ id: d.id, title: 'Recovered session · ' + new Date(d.startedAt).toLocaleDateString(), createdAt: d.startedAt, endedAt: d.startedAt + (last.t || 0) * 1000, seconds: last.t || 0, words, text, summary: '', keys: '', use: true, updatedAt: Date.now() });
+      stories.push({ id: d.id, title: 'Recovered session · ' + new Date(d.startedAt).toLocaleDateString(), createdAt: d.startedAt, endedAt: d.startedAt + (last.t || 0) * 1000, seconds: last.t || 0, words, text, summary: '', keys: '', use: true, updatedAt: Date.now(), visuals: d.visuals || [] });
       scheduleSync();
       saveStories().then(() => clearDraft());
       showBanner('A recording that was cut off has been saved as "Recovered session". Open the storylines list to summarise it.', 'note');
@@ -2425,7 +2488,8 @@
   function storyRecord(st) { const o = Object.assign({}, st); delete o.driveId; delete o.driveTxtId; delete o.syncedAt; return o; }
   function storyText(st) {
     return `${st.title}\nRecorded ${new Date(st.createdAt).toLocaleString()} · ${mmss((st.seconds || 0) * 1000)} · ${st.words || 0} words\n\n` +
-      (st.summary ? 'Summary: ' + st.summary + '\n' : '') + (st.keys ? 'Key terms: ' + st.keys + '\n' : '') + '\nTranscript:\n' + st.text + '\n';
+      (st.summary ? 'Summary: ' + st.summary + '\n' : '') + (st.keys ? 'Key terms: ' + st.keys + '\n' : '') + '\nTranscript:\n' + st.text + '\n' +
+      (st.visuals && st.visuals.length ? '\nVisual notes (photos in this folder):\n' + st.visuals.map((v) => `- ${new Date(v.at).toLocaleString()} ${v.tag}: ${v.caption}`).join('\n') + '\n' : '');
   }
   async function pushStory(st, folderId) {
     const meta = { name: safeName(st.title) + '.json', appProperties: { lensloop: '1', storyId: st.id, updatedAt: String(st.updatedAt || 0) } };
@@ -2499,7 +2563,8 @@
       stories.sort((a, b) => a.createdAt - b.createdAt);
       await saveStories();
       await uploadAudioParts();
-      for (const st of stories) { if (st.audioParts) await renameAudioParts(st); }
+      await uploadFrames();
+      for (const st of stories) { if (st.audioParts) await renameAudioParts(st); if (st.visuals && st.visuals.length) await renameFrames(st); }
       S.driveSyncedAt = Date.now(); saveSettings();
       refreshReadouts();
       if (!storySheet.hidden) renderStoryList();
@@ -2565,7 +2630,7 @@
       const title = document.createElement('input'); title.className = 's-title'; title.type = 'text'; title.value = st.title; title.setAttribute('aria-label', 'Storyline title');
       title.addEventListener('change', () => { st.title = title.value.trim() || st.title; title.value = st.title; st.updatedAt = Date.now(); saveStories(); scheduleSync(); });
       const meta = document.createElement('div'); meta.className = 's-meta';
-      meta.textContent = `${new Date(st.createdAt).toLocaleString()} · ${mmss((st.seconds || 0) * 1000)} · ${st.words || 0} words`;
+      meta.textContent = `${new Date(st.createdAt).toLocaleString()} · ${mmss((st.seconds || 0) * 1000)} · ${st.words || 0} words` + (st.visuals && st.visuals.length ? ` · ${st.visuals.length} photo${st.visuals.length === 1 ? '' : 's'}` : '');
       const sum = document.createElement('div'); sum.className = 's-sum';
       sum.textContent = st.summary ? st.summary + (st.keys ? ' Key terms: ' + st.keys + '.' : '') : 'No summary yet.';
       const row = document.createElement('div'); row.className = 's-row';
