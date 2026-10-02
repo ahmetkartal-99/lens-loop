@@ -1299,6 +1299,12 @@
       if (req.stop === 'max_tokens') showBanner('The reply hit the max output tokens limit and was cut off. Raise the limit in settings if this keeps happening.', 'note');
       else if (req.stop === 'refusal') showBanner('Claude declined to answer this frame.', 'note');
       setStatus(running ? 'done' : 'idle', running ? `Answered ${req.frame.tag} · next in ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s` : 'Idle');
+      // auto-open reader with metered feed
+      if (req.text && req.frame.b64) {
+        const { head, body } = splitAnswer(req.text);
+        openReader(body || req.text, head || req.frame.tag, { force: true });
+        startAuto();
+      }
     }
     pushHistory(req);
   }
@@ -2821,7 +2827,7 @@
   applyReadSize();
 
   // --- auto-scroll: advance one word at a time on an interval ---
-  let autoTimer = null, autoSpeed = 1.0;  // words per second
+  let autoTimer = null, autoSpeed = 0.5;  // words per second (0.5 = ~30s per 15 words)
   const autoBtn = $('autoBtn'), spdLabel = $('spdLabel');
   function autoTick() {
     if (!reader.open || reader.pos >= reader.words.length - 1) { stopAuto(); return; }
@@ -2846,8 +2852,8 @@
     spdLabel.textContent = autoSpeed.toFixed(1) + '×';
     if (autoTimer) { clearInterval(autoTimer); autoTimer = setInterval(autoTick, 1000 / autoSpeed); }
   }
-  $('spdUp').addEventListener('click', () => { autoSpeed = Math.min(5.0, +(autoSpeed + 0.5).toFixed(1)); updateSpeed(); });
-  $('spdDown').addEventListener('click', () => { autoSpeed = Math.max(0.5, +(autoSpeed - 0.5).toFixed(1)); updateSpeed(); });
+  $('spdUp').addEventListener('click', () => { autoSpeed = Math.min(5.0, +(autoSpeed + 0.1).toFixed(1)); updateSpeed(); });
+  $('spdDown').addEventListener('click', () => { autoSpeed = Math.max(0.3, +(autoSpeed - 0.1).toFixed(1)); updateSpeed(); });
   $('readBtn').addEventListener('click', () => {
     const t = current && current.text ? splitAnswer(current.text).body || current.text : lastGoodText;
     openReader(t, 'Reading the answer');
