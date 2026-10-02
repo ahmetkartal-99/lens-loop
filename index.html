@@ -1673,19 +1673,24 @@
     tiltArmed = true;
   }
   const stageEl = document.querySelector('.stage');
+  // A box turned to the tilt: the same rectangle on screen, the element's own width running along the
+  // screen's height for a quarter turn. x, y, w, h describe the rectangle in the portrait layout.
+  function turnedCss(rot, x, y, w, h) {
+    if (rot === 0) return '';
+    if (rot === 180) return `left:${x}px;top:${y}px;width:${w}px;height:${h}px;right:auto;bottom:auto;transform:rotate(180deg)`;
+    const cx = x + w / 2, cy = y + h / 2;
+    return `left:${cx - h / 2}px;top:${cy - w / 2}px;width:${h}px;height:${w}px;right:auto;bottom:auto;transform:rotate(${rot}deg)`;
+  }
+  // The answer panel, the hands-free feed in its place and the full-screen Read view all follow the tilt.
   function applyPanelRotation() {
-    const p = $('answer');
-    const rot = p.classList.contains('collapsed') ? 0 : contentRotation();
-    if (rot === 0) { p.style.cssText = ''; return; }
+    const rot = contentRotation();
     const sw = stageEl.clientWidth, sh = stageEl.clientHeight;
-    const W = sw - 16, H = sh - 124;              // the panel's rectangle in the portrait layout
-    const cx = 8 + W / 2, cy = 116 + H / 2;
-    if (rot === 180) {
-      p.style.cssText = `left:8px;top:116px;width:${W}px;height:${H}px;right:auto;bottom:auto;transform:rotate(180deg)`;
-    } else {
-      // same rectangle on screen, but the panel's own width runs along the screen's height
-      p.style.cssText = `left:${cx - H / 2}px;top:${cy - W / 2}px;width:${H}px;height:${W}px;right:auto;bottom:auto;transform:rotate(${rot}deg)`;
-    }
+    const p = $('answer');
+    p.style.cssText = turnedCss(p.classList.contains('collapsed') ? 0 : rot, 8, 116, sw - 16, sh - 124);
+    const r = $('reader');
+    if (!r.classList.contains('open')) r.style.cssText = '';
+    else if (r.classList.contains('feed')) r.style.cssText = turnedCss(rot, 8, 116, sw - 16, sh - 124);
+    else r.style.cssText = turnedCss(rot, 0, 0, window.innerWidth, window.innerHeight);
   }
   window.addEventListener('resize', applyPanelRotation);
   window.addEventListener('orientationchange', () => setTimeout(applyPanelRotation, 150));
@@ -2997,6 +3002,7 @@
     // the manual Read view is the full-screen page
     readerEl.classList.toggle('feed', !!force); stageEl.classList.toggle('feeding', !!force);
     reader.open = true; readerEl.classList.add('open'); readerEl.setAttribute('aria-hidden', 'false');
+    applyPanelRotation();   // the reader follows the phone's tilt like the answer panel
     keepAwake();
     // when forced open during a session (cache hit or auto-open), use auto-scroll instead of voice
     if (force) { readerState.textContent = 'auto-scroll · use controls above'; return; }
@@ -3018,6 +3024,7 @@
     const cachedText = lastGoodText;
     if (cachedText) { const hit = snapCache.find((c) => c.text === cachedText); if (hit) hit.readPos = reader.pos; }
     reader.open = false; readerEl.classList.remove('open', 'feed'); stageEl.classList.remove('feeding'); readerEl.setAttribute('aria-hidden', 'true');
+    applyPanelRotation();
     stopAuto();
     try { reader.engine && reader.engine.stop(); } catch (e) {} reader.engine = null;
     if (!running && !listening) releaseWake();

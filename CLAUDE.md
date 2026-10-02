@@ -34,7 +34,7 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
    The feed is **not full-screen**: with the `feed` class it takes the answer panel's place over the lower part
    of the camera (dark, translucent, `.reader.feed`, the reader element lives inside `.stage`), so the status
    bar, the camera strip and the Snap/Stop buttons stay visible and tappable. Only the manual Read view fills
-   the screen.
+   the screen. Both turn with the phone's tilt exactly like the answer panel (`applyPanelRotation`, `turnedCss`).
 4. **Read-along.** The reader shows the text large with the Apple-Music-style highlight (`.w`, `.w.read`,
    `.w.cur`): when opened by hand with no session running it follows the reader's own voice (`feedReader`, phone
    or cloud engine); when forced open during a session it auto-scrolls instead. A+/A− sizing.
