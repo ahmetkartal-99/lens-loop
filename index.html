@@ -581,6 +581,16 @@
       <textarea id="prompt"></textarea>
     </div>
 
+    <div class="field" style="background:#1a1f2a;border-radius:10px;padding:12px 14px;margin:4px 0 8px">
+      <label style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        <input type="checkbox" id="sceneMode" style="width:18px;height:18px">
+        <span style="font-size:15px;font-weight:600">Scene mode — cold-read dialogue</span>
+      </label>
+      <div class="hint" style="margin-bottom:8px">When on, the camera reads scenario prompts and generates character dialogue for you to sight-read on the mic. The prompt above is ignored; the text below shapes the character.</div>
+      <label for="sceneCharacter" style="font-size:13px">Character voice (who are they, how do they talk?)</label>
+      <textarea id="sceneCharacter" placeholder="e.g. A calm, experienced GP in her 40s. Warm but direct. Uses plain language, avoids jargon with patients. Australian accent — occasional 'look' and 'right' as filler." style="min-height:72px"></textarea>
+    </div>
+
     <div class="row">
       <div class="field">
         <label for="imgSize">Image size (long side)</label>
@@ -749,6 +759,24 @@
     'Then a blank line, then a brief explanation. Never put anything before the ANSWER line. ' +
     'When the photo shows nothing worth answering — an empty desk or floor, a wall, a blur, the camera on the move, nothing to read and no question — the first line is exactly "ANSWER: nothing to read" and the explanation is one short line, so what was on screen before can stay. ' +
     'The user is waiting hands-free and reads the reply as it arrives, so reason no longer than the question needs: a plain photo or a simple question gets a quick, direct reply; keep the deepest deliberation for problems that call for it.';
+  // ----- Scene mode: the camera captures a scenario prompt, Claude generates character dialogue -----
+  const SCENE_SYSTEM_RULES =
+    'You are a dialogue generator for a fiction author who is sight-reading character lines on the mic. ' +
+    'The user\'s camera is pointed at a scenario card, prompt or situation description. Your job is to generate natural, ' +
+    'speakable dialogue for the character described below — lines the author will cold-read aloud for recording. ' +
+    'Format every reply the same way: the first line is "ANSWER: " followed by a short title of the scenario (at most eight words). ' +
+    'Then a blank line, then the character\'s dialogue as flowing speech — no stage directions, no action lines, no parenthetical ' +
+    'notes, no speaker labels, just the words the character would say, written to be spoken aloud in one take. ' +
+    'Write in the character\'s natural voice: contractions, hesitations ("well," "look,"), sentence fragments — whatever makes it ' +
+    'sound like a real person talking, not a textbook. Vary the rhythm. ' +
+    'When the photo shows nothing worth generating from — an empty desk, a wall, a blur — the first line is "ANSWER: nothing to read" ' +
+    'and the explanation is one short line, so what was on screen before can stay. ' +
+    'The author is recording and reads the text as it streams in, so start the dialogue immediately — no preamble.';
+  const SCENE_PROMPT =
+    'Look at this photo. It shows a scenario, prompt or situation card. Generate the character\'s dialogue ' +
+    'in response to this scenario — natural, speakable lines for a cold read on the mic. ' +
+    'If no scenario is visible, describe what is in the frame briefly.';
+
   const DIGEST_RULES =
     'You read automatic speech-to-text transcripts of a fiction author\'s spoken brainstorming and world-building sessions. ' +
     'Names and invented words may be mis-transcribed; keep the spelling the transcript uses most often. Reply only in the exact line format requested.';
@@ -761,7 +789,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-03 12:10';
+  const BUILD = '2026-10-03 12:40';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -807,6 +835,8 @@
     saveAudio: true,
     driveHelper: '',   // web-app URL of drive-helper.gs typed in settings; empty = the DRIVE_HELPER_URL above
     quietSec: 25,   // seconds without speech before new camera text may be generated or shown
+    sceneMode: false,   // when on, the camera generates character dialogue from scenario prompts instead of describing/solving
+    sceneCharacter: '', // who the character is, how they talk — fed into the system prompt in Scene mode
   };
   const STORE = 'lensloop.settings';
   let S = loadSettings();
@@ -1418,7 +1448,7 @@
     if (frame.question) {
       content.push({ type: 'text', text: 'Spoken question from the user: ' + frame.question + (frame.b64 ? '\n\nA frame from the camera is attached in case the question refers to it.' : '') });
     } else {
-      content.push({ type: 'text', text: S.prompt || DEFAULT_PROMPT });
+      content.push({ type: 'text', text: S.sceneMode ? SCENE_PROMPT : (S.prompt || DEFAULT_PROMPT) });
     }
     if (earlier.length) content.push({ type: 'text', text: 'Third line of the reply, after the STORYLINE line: "FRAMES: continues" when the current frame continues the earlier ones (then answer about the whole document so far, and say what it still lacks if it is plainly incomplete), or "FRAMES: new" when it is something else (then answer about the current frame alone).' });
     const body = {
@@ -1799,6 +1829,8 @@
     $('saveAudio').checked = S.saveAudio !== false;
     $('useStories').checked = !!S.useStories;
     $('askWithFrame').checked = !!S.askWithFrame;
+    $('sceneMode').checked = !!S.sceneMode;
+    $('sceneCharacter').value = S.sceneCharacter || '';
     sheet.hidden = false; sheetBack.hidden = false;
   }
   function closeSheet() { sheet.hidden = true; sheetBack.hidden = true; }
@@ -1851,6 +1883,8 @@
     S.saveAudio = $('saveAudio').checked;
     S.useStories = $('useStories').checked;
     S.askWithFrame = $('askWithFrame').checked;
+    S.sceneMode = $('sceneMode').checked;
+    S.sceneCharacter = $('sceneCharacter').value.trim();
     applyPanelRotation();
     saveSettings();
     refreshReadouts();
@@ -2153,7 +2187,8 @@
     return (txt.match(/\d+/g) || []).map((n) => list[parseInt(n, 10) - 1]).filter(Boolean).map((st) => st.id);
   }
   function buildSystem(prefer) {
-    const blocks = [{ type: 'text', text: SYSTEM_RULES }];
+    const sceneRules = S.sceneMode ? SCENE_SYSTEM_RULES + (S.sceneCharacter ? '\n\nCHARACTER:\n' + S.sceneCharacter : '') : '';
+    const blocks = [{ type: 'text', text: sceneRules || SYSTEM_RULES }];
     const sb = storylineBlock(prefer);
     if (sb) blocks.push({ type: 'text', text: sb, cache_control: { type: 'ephemeral' } });
     const lb = S.useStories ? liveBlocks() : null;
