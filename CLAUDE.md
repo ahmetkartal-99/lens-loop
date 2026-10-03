@@ -53,7 +53,7 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
    "Lens, next" (which also skips the quiet spell); "Lens, again / slower / faster / pause / play" drive the panel.
    Every answer, photo or not, becomes a note in its storyline; the Drive `.txt` lists them in full.
    **Documents page by page** (`docFrames`, `docFramesFor`, `rememberFrame`/`forgetFrame`): the frames of the last
-   ten minutes (≤11) go into every request before the current one, oldest first, the last one cache-marked; the
+   ten minutes (≤11) go into every request before the current one (except in Scene mode — see 13), oldest first, the last one cache-marked; the
    session's open tail now rides in the message after them (`buildSystem` returns `{ blocks, tail }`) so the
    frames stay cached. The reply's third line `FRAMES: continues|new` (`splitAnswer(...).frames`): `new` waits
    for `readingUnderWay()` to end before display; `nothing to read` (head) keeps the text, is never cached or
@@ -120,6 +120,13 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     the foot of Settings. A declined motion permission shows a banner instead of silently leaving text unturned.
 12. **Answer panel.** "ANSWER:" headline, storyline tag, cost/latency readouts (cached tokens counted), history
     of 40, copy, Read button, settings sheet, intro text, privacy/terms pages, PWA icons.
+13. **Scene mode** (`S.sceneMode`, Settings toggle; `S.sceneCharacter` = optional voice notes). The camera reads a
+    role-play card (e.g. an OET speaking card) and the model speaks THAT card's role as a monologue to cold-read —
+    the role comes from the card's own heading, never a tap. It is a focused tool: `buildSystem` sends only
+    `SCENE_SYSTEM_RULES` (+ voice notes), none of the storyline/live-session context or its "STORYLINE:" line; `send()`
+    sends ONE card (no earlier frames, no "FRAMES:" line — merging frames blends the patient and doctor cards and tips
+    the model into describing the "document"). The prompts forbid describing or reading the card back. Answers still
+    feed the reader, voice-follow and the storyline like any other.
 
 ## Tests (run before every push)
 
@@ -128,7 +135,8 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
   `node test/memory-voice.e2e.js`, `node test/drive-helper.e2e.js`, `node test/drive-expired-open.e2e.js` (the app
   opened hours later: a silent renewal, retries on a backoff, a dead token in Google's real shape, and the banner only
   when a tap is truly needed), `node test/drive-vanished.e2e.js` (files deleted from Drive behind the app's back,
-  against an in-memory Drive), `node test/latency.e2e.js` (audio cadence and
+  against an in-memory Drive), `node test/scene-mode.e2e.js` (Scene mode sends one card and the scene rules, not the
+  document scaffolding or session transcript), `node test/latency.e2e.js` (audio cadence and
   highlight reaction time), `node test/document.e2e.js` (a document page by page, the desk, a new subject) and
   `node test/hour-session.e2e.js` (an hour of dictation compressed into half a
   minute through the real ElevenLabs engine path with the socket mocked: draft, prompt, audio parts, saved

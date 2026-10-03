@@ -772,6 +772,9 @@
     'If a CHARACTER field is set below, use it for voice and style notes (accent, personality, speech patterns) but still take the ' +
     'ROLE from the card itself. If the card has no clear role heading, fall back to the CHARACTER field for which role to play; ' +
     'if neither is set, play the professional/authority role.\n\n' +
+    'NEVER describe, summarise, narrate, or read the card back. Do not say what is on the screen, what the page is, ' +
+    'whether frames match, or what the scenario is about. You are not an observer — you ARE the character, speaking. ' +
+    'Every word of your reply (after the title line) is a word the character says out loud.\n\n' +
     'Format every reply the same way: the first line is "ANSWER: " followed by a short title of the scenario (at most eight words). ' +
     'Then a blank line, then the character\'s dialogue as flowing speech — no stage directions, no action lines, no parenthetical ' +
     'notes, no speaker labels, just the words the character would say, written to be spoken aloud in one take. ' +
@@ -782,9 +785,11 @@
     'and the explanation is one short line, so what was on screen before can stay. ' +
     'The author is recording and reads the text as it streams in, so start the dialogue immediately — no preamble.';
   const SCENE_PROMPT =
-    'Look at this photo. It shows one page of a roleplay scenario. Identify whose task card this is and generate that character\'s ' +
-    'dialogue — natural, speakable lines for a cold read on the mic, covering every talking point on the card. ' +
-    'If no scenario is visible, describe what is in the frame briefly.';
+    'This photo is one role card from a role-play (for example an OET speaking card). Work out which role this card is for, ' +
+    'then BECOME that person and speak their lines — a continuous monologue to read aloud on the mic: greet, ask, explain, and ' +
+    'respond to the other side as if they were replying between your lines, covering every task on the card. ' +
+    'Do NOT describe, summarise, or read the card back, and do not mention the screen or the photo — give only the words the ' +
+    'character says. Only if the frame holds no card at all, say in one short line what is in it.';
 
   const DIGEST_RULES =
     'You read automatic speech-to-text transcripts of a fiction author\'s spoken brainstorming and world-building sessions. ' +
@@ -798,7 +803,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-03 15:35';
+  const BUILD = '2026-10-03 17:35';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -1442,7 +1447,9 @@
     // The frames of the last minutes go in before the current one, in order and cache-marked, so a document
     // shown page by page is read as one; the session's open tail follows them (it changes every request and
     // would otherwise keep the frames from being cached), then the current frame and the question.
-    const earlier = docFramesFor(frame);
+    // Scene mode reads one card at a time: no earlier frames merged in (they would blend the patient card with the
+    // doctor card and tip the model into describing the "document" instead of speaking one role).
+    const earlier = S.sceneMode ? [] : docFramesFor(frame);
     const content = [];
     if (earlier.length) {
       content.push({ type: 'text', text: `EARLIER FRAMES — ${earlier.length} picture${earlier.length === 1 ? '' : 's'} the camera took in the last minutes, oldest first, each labelled. If the current frame continues what (some of) these show — the next page of the same document or instructions, the same sketch or board — read them together as one and answer about the whole; a document that runs over several frames is one document, in this order.` });
@@ -2196,8 +2203,12 @@
     return (txt.match(/\d+/g) || []).map((n) => list[parseInt(n, 10) - 1]).filter(Boolean).map((st) => st.id);
   }
   function buildSystem(prefer) {
-    const sceneRules = S.sceneMode ? SCENE_SYSTEM_RULES + (S.sceneCharacter ? '\n\nCHARACTER:\n' + S.sceneCharacter : '') : '';
-    const blocks = [{ type: 'text', text: sceneRules || SYSTEM_RULES }];
+    // Scene mode is a focused tool: card in, one role's lines out. It takes none of the storyline/live-session
+    // context or its "STORYLINE:" second-line format — that is describe-the-session scaffolding and only muddies it.
+    if (S.sceneMode) {
+      return { blocks: [{ type: 'text', text: SCENE_SYSTEM_RULES + (S.sceneCharacter ? '\n\nCHARACTER / VOICE NOTES:\n' + S.sceneCharacter : '') }], tail: '' };
+    }
+    const blocks = [{ type: 'text', text: SYSTEM_RULES }];
     const sb = storylineBlock(prefer);
     if (sb) blocks.push({ type: 'text', text: sb, cache_control: { type: 'ephemeral' } });
     const lb = S.useStories ? liveBlocks() : null;
