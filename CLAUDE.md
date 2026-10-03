@@ -89,7 +89,9 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
 ## Tests (run before every push)
 
 - `node --check` on the script body, then `node test/live-prompt.test.js` (prompt assembly, no browser).
-- `node test/session.e2e.js`, `node test/drive-renewal.e2e.js`, `node test/fresh-build.e2e.js` and
-  `node test/memory-voice.e2e.js` (headless Chromium via Playwright,
+- `node test/session.e2e.js`, `node test/drive-renewal.e2e.js`, `node test/fresh-build.e2e.js`,
+  `node test/memory-voice.e2e.js` and `node test/hour-session.e2e.js` (an hour of dictation compressed into half a
+  minute through the real ElevenLabs engine path with the socket mocked: draft, prompt, audio parts, saved
+  storyline, questions before and after a reload) (headless Chromium via Playwright,
   `npm i -D playwright` if missing): a real session with a fake camera, fake dictation and a fake Claude
   endpoint; checks request bodies, cache marks, retries and the Drive renewal frame.
