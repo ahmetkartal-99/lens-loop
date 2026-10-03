@@ -90,7 +90,13 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
    set (the web-app URL of `drive-helper.gs`, a Google Apps Script holding the client secret), the sign-in is the
    authorization-code flow with offline access: the helper redeems the code (`driveHelper`, a plain text/plain
    POST so no preflight) and renews the access token from the refresh token five minutes before expiry
-   (`driveRenewWithHelper`, also on a 401) — permanent, hands-free, any browser. Without the helper: implicit
+   (`driveRenewWithHelper`, also on a 401) — permanent, hands-free, any browser. It also renews on every open after
+   the hour has lapsed (`silentRefresh`, then `driveCheck` every 30 s, on returning to the foreground and on `online`);
+   a passing failure keeps the refresh token and retries on a backoff (`driveRetryDue`, 15 s doubling to 10 min, a
+   30 s timeout per request) and stays off the screen the first time; only `invalid_grant` — read from the error's
+   `code`, since Google's description never names it — asks for a fresh Connect. The startup "sign-in has expired"
+   banner appears only when nothing will renew by itself, and a fresh token clears any Drive banner (`storeDriveToken`).
+   Without the helper: implicit
    flow, silent `prompt=none` refresh on open, hidden-frame renewal (`driveRenewSilently`; the framed copy of
    the page posts the fragment to the parent and stops — see the top of the script). Two-way sync of
    storylines, the live transcript pushed every 8 s, audio in 2-minute parts, catch-up of everything pending
@@ -110,7 +116,9 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
 
 - `node --check` on the script body, then `node test/live-prompt.test.js` (prompt assembly, no browser).
 - `node test/session.e2e.js`, `node test/drive-renewal.e2e.js`, `node test/fresh-build.e2e.js`,
-  `node test/memory-voice.e2e.js`, `node test/drive-helper.e2e.js`, `node test/latency.e2e.js` (audio cadence and
+  `node test/memory-voice.e2e.js`, `node test/drive-helper.e2e.js`, `node test/drive-expired-open.e2e.js` (the app
+  opened hours later: a silent renewal, retries on a backoff, a dead token in Google's real shape, and the banner only
+  when a tap is truly needed), `node test/latency.e2e.js` (audio cadence and
   highlight reaction time), `node test/document.e2e.js` (a document page by page, the desk, a new subject) and
   `node test/hour-session.e2e.js` (an hour of dictation compressed into half a
   minute through the real ElevenLabs engine path with the socket mocked: draft, prompt, audio parts, saved
