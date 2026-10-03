@@ -48,7 +48,7 @@ const sse = (text) => { const ev = (e, d) => `event: ${e}\ndata: ${JSON.stringif
   await page.click('#startBtn');
   await page.waitForTimeout(2500);
   assert(requests === 1, 'the first frame went to Claude (' + requests + ' request)');
-  assert((await page.textContent('#readerSrc')) === '[Claude API]', 'panel says [Claude API]');
+  assert((await page.textContent('#readerSrc')) === '[Claude API · this session]', 'panel says [Claude API · this session] (the answer named the current session) — got "' + (await page.textContent('#readerSrc')) + '"');
   assert(/auto-scrolling/.test(await page.textContent('#readerState')), 'timer runs by default');
   // speak words from the middle of the text: the highlight jumps there and the timer pauses
   await page.evaluate(() => window.__say('chosen by the keeper and'));
@@ -69,7 +69,7 @@ const sse = (text) => { const ev = (e, d) => `event: ${e}\ndata: ${JSON.stringif
   await page.click('#startBtn');
   await page.waitForTimeout(3000);
   assert(requests === reqBefore, 'no Claude request for a picture seen before (' + (requests - reqBefore) + ' new)');
-  assert(/from memory · this phone/.test(await page.textContent('#readerSrc')), 'panel says [from memory · this phone] ("' + (await page.textContent('#readerSrc')) + '")');
+  assert(/memory · this phone/.test(await page.textContent('#readerSrc')), 'panel says [memory · this phone] ("' + (await page.textContent('#readerSrc')) + '")');
   assert(/Every crossing costs one remembered day/.test(await page.textContent('#readerBody')), 'the stored text is the one shown');
   assert(errors.length === 0, 'no page errors' + (errors.length ? ': ' + errors.join(' | ') : ''));
   await browser.close(); server.close();

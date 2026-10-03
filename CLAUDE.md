@@ -32,7 +32,11 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
 2. **Snap cache.** The last 20 frames' signatures keep their answers (`snapCache`, with `readPos`): a picture that
    already has an answer shows it again without a request, opens the reader and resumes where reading stopped.
 3. **Metered feed.** Every camera answer opens the reader by itself (`openReader(..., { force: true })`) and
-   auto-scrolls word by word at 0.5 words/s (speed 0.3×–5×, Auto/Pause); `closeReader` saves the position.
+   plays word by word at `wordSecs` = 1.5 s per word (−/+ 0.25–4 s, Auto/Pause); `closeReader` saves the position.
+   Lyrics layout (`phrasesOf`, `layoutReader`, `paintReader`): phrases as `.ph` divs, the live one `.on` biggest
+   and bright in the upper part of the box, earlier ones `.done`, the live word `.w.cur`. The reply streams into
+   the panel as soon as its first sentence is in (`streamToPanel` → `growReader`, `reader.streamId`), and the
+   text on screen is never replaced while the camera stays on its scene (`shownSig`, diff < 12).
    The feed is **not full-screen**: with the `feed` class it takes the answer panel's place over the lower part
    of the camera (dark, translucent, `.reader.feed`, the reader element lives inside `.stage`), so the status
    bar, the camera strip and the Snap/Stop buttons stay visible and tappable. Only the manual Read view fills
@@ -45,8 +49,10 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
    passed; your own spoken questions show at once.
    **Memory first** (`recall` → `memoryHit`/`cacheHit`): every visual note keeps the picture's fingerprint
    (`sig`, base64 of the 32×24 grey signature) and the whole `text`; a matching picture or question is answered
-   from memory with no request, labelled `[from memory · Google Drive]` / `[from memory · this phone]`; fresh
-   answers are labelled `[Claude API]` (`sourceLabel`, `#readerSrc`, the answer meta line).
+   from memory with no request, labelled `[memory · Google Drive]` / `[memory · this phone]`; fresh answers are
+   labelled by what they drew on, `[Claude API · your storylines | this session | general knowledge]`
+   (`sourceLabel`, `apiSource`, `#readerSrc`, the answer meta line). Every fresh answer comes from the model and
+   effort named at the top of the script (Fable 5.1 at max), which is told the reader is waiting hands-free.
 4. **Read-along.** The reader shows the text large with the Apple-Music-style highlight (`.w`, `.w.read`,
    `.w.cur`): when opened by hand with no session running it follows the reader's own voice (`feedReader`, phone
    or cloud engine); when forced open during a session it auto-scrolls instead. A+/A− sizing.

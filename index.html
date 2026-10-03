@@ -377,23 +377,36 @@
     color: var(--text);
   }
   .stage.feeding .answer { visibility: hidden; }   /* the feed stands in for the answer panel; no second layer showing through */
-  .reader.feed .reader-head { padding: 8px 10px; gap: 6px; flex-wrap: wrap; }
-  .reader.feed .reader-head .r-title { flex: 1 1 60px; min-width: 0; }
-  .reader.feed .reader-body { padding: 18vh 18px 18vh; }
-  .reader.feed .reader-body .w { font-size: var(--feed-size, 28px); }
+  .reader.feed .reader-head { padding: 6px 10px; gap: 6px; flex-wrap: wrap; }
+  .reader.feed .reader-head .r-title { flex: 1 1 40px; min-width: 0; }
+  .reader.feed .reader-head .r-src { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .reader.feed .reader-head .btn { padding: 7px 10px; font-size: 11px; }
+  .reader.feed .reader-size button { width: 30px; height: 30px; font-size: 15px; }
+  .reader.feed .reader-speed .spd-label { min-width: 0; }
+  .reader.feed .reader-body { padding: 8% 18px 65vh; }
+  .reader.feed .reader-body .ph { font-size: calc(var(--feed-size, 32px) * .7); }
+  .reader.feed .reader-body .ph.on { font-size: var(--feed-size, 32px); }
   .reader-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
   .reader-head .r-title { font-family: var(--mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .reader-head .r-state { font-family: var(--mono); font-size: 11px; color: var(--accent); }
   .reader-head .r-src { font-family: var(--mono); font-size: 10px; color: var(--muted); white-space: nowrap; }
-  .reader-body { flex: 1; overflow-y: auto; padding: 40vh 24px 40vh; -webkit-overflow-scrolling: touch; }
-  .reader-body .w { font-size: var(--read-size, 34px); line-height: 1.5; font-weight: 700; color: var(--muted); transition: color .15s, background .15s; }
-  .reader-body .w.read { color: var(--text); }
+  /* The text is laid out in phrases, lyrics-style: the phrase being read is the biggest and bright and sits in the
+     upper part of the box, the ones already read fade above it, the ones to come wait below, dimmer and smaller;
+     inside the live phrase the word being read carries the accent. */
+  .reader-body { position: relative; flex: 1; overflow-y: auto; padding: 12% 24px 65vh; -webkit-overflow-scrolling: touch; }
+  .reader-body .ph { margin: 0 0 .5em; font-weight: 800; line-height: 1.2; letter-spacing: -.01em; overflow-wrap: anywhere; text-wrap: balance;
+    font-size: calc(var(--read-size, 34px) * .7); color: var(--muted); opacity: .55; transition: opacity .3s, font-size .3s, color .3s; }
+  .reader-body .ph.on { font-size: var(--read-size, 34px); color: var(--text); opacity: 1; }
+  .reader-body .ph.done { opacity: .3; }
+  .reader-body .w { font: inherit; color: inherit; transition: color .15s, background .15s, opacity .15s; }
+  .reader-body .ph.on .w { opacity: .72; }
+  .reader-body .ph.on .w.read, .reader-body .ph.on .w.cur { opacity: 1; }
   .reader-body .w.cur { color: var(--accent-ink); background: var(--accent); border-radius: 6px; box-shadow: 0 0 0 4px var(--accent); }
   .reader-size { display: flex; gap: 6px; }
   .reader-size button { width: 34px; height: 34px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); border-radius: 8px; font-size: 18px; }
   .reader-speed { display: flex; gap: 4px; align-items: center; }
   .reader-speed button { width: 30px; height: 30px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); border-radius: 8px; font-size: 14px; }
-  .reader-speed .spd-label { font-family: var(--mono); font-size: 10px; color: var(--muted); min-width: 28px; text-align: center; }
+  .reader-speed .spd-label { font-family: var(--mono); font-size: 10px; color: var(--muted); min-width: 28px; text-align: center; white-space: nowrap; }
   #autoBtn { min-width: 40px; }
   #autoBtn.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
   .story-tag {
@@ -486,7 +499,7 @@
         <span class="r-state" id="readerState"></span>
         <div class="reader-speed">
           <button type="button" id="spdDown" aria-label="Slower">-</button>
-          <span class="spd-label" id="spdLabel">1.0×</span>
+          <span class="spd-label" id="spdLabel">1.5 s/word</span>
           <button type="button" id="spdUp" aria-label="Faster">+</button>
         </div>
         <button class="btn" type="button" id="autoBtn">Auto</button>
@@ -722,7 +735,8 @@
     'For a multiple-choice question that is the letter or number of the correct option plus its text, for example "ANSWER: C) $2000". ' +
     'For a calculation it is the final value with units. For a yes/no question it is Yes or No plus a few words. ' +
     'If the photo contains no question, that line is a short title of what is in the frame (at most six words). ' +
-    'Then a blank line, then a brief explanation. Never put anything before the ANSWER line.';
+    'Then a blank line, then a brief explanation. Never put anything before the ANSWER line. ' +
+    'The user is waiting hands-free and reads the reply as it arrives, so reason no longer than the question needs: a plain photo or a simple question gets a quick, direct reply; keep the deepest deliberation for problems that call for it.';
   const DIGEST_RULES =
     'You read automatic speech-to-text transcripts of a fiction author\'s spoken brainstorming and world-building sessions. ' +
     'Names and invented words may be mis-transcribed; keep the spelling the transcript uses most often. Reply only in the exact line format requested.';
@@ -735,7 +749,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-02 20:40';
+  const BUILD = '2026-10-02 21:05';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -1175,14 +1189,13 @@
     if (source !== 'button' && holdingForSpeech()) { heldSnap = true; if (!active.length) setStatus('armed', 'Holding the text while you speak'); return; }
     let frame;
     try { frame = captureFrame(); } catch (e) { showBanner(e.message); return; }
+    const sig = frame.sig;
+    // the scene the text on screen is about (a hand-held phone drifts a little; that is not a new picture): it stays
+    if (source !== 'button' && sig && shownSig && reader.open && sigDiff(sig, shownSig) < 12) { skippedSince = frameNo; return; }
     if (source === 'timer' && S.skipStill !== false && !retryFrame) {
-      const sig = frameSignature();
       if (sigDiff(sig, lastSig) < 7) { skippedSince = frameNo; return; }   // same picture as the last frame sent
-      lastSig = sig;
-    } else {
-      try { lastSig = frameSignature(); } catch (e) {}
     }
-    frame.sig = lastSig;
+    if (sig) lastSig = sig;
     // memory first: a picture seen before gets the text it got then, with no request
     const hit = recall(lastSig, '');
     if (hit) { showRecalled(frame, hit); return; }
@@ -1203,14 +1216,16 @@
   }
 
   // ----- where a text came from -----
-  const sourceLabel = (from) => from === 'drive' ? '[from memory · Google Drive]' : from === 'phone' ? '[from memory · this phone]' : '[Claude API]';
+  const sourceLabel = (from) => from === 'drive' ? '[memory · Google Drive]' : from === 'phone' ? '[memory · this phone]'
+    : from === 'api-story' ? '[Claude API · your storylines]' : from === 'api-live' ? '[Claude API · this session]' : '[Claude API · general knowledge]';
+  const apiSource = (text) => { const st = splitAnswer(text || '').story; return !st ? 'api' : /^current session/i.test(st) ? 'api-live' : 'api-story'; };
   // A text found in memory is shown exactly like a fresh one, with its source in the bracket.
   function showRecalled(frame, hit) {
     if (reader.open && readerEl.classList.contains('feed') && lastGoodText === hit.text) return;   // already on screen
     if (!frame.tag) { frameNo += 1; frame.no = frameNo; frame.at = new Date(); frame.tag = fmtF(frameNo); frameCounter.textContent = frame.tag; }
     lastShot.src = frame.thumb; lastShot.hidden = false;
     flash.classList.remove('on'); void flash.offsetWidth; flash.classList.add('on');
-    lastGoodText = hit.text; showingTranscript = false; renderLiveStrip();
+    lastGoodText = hit.text; showingTranscript = false; renderLiveStrip(); shownSig = frame.sig || null;
     const { head, body } = splitAnswer(hit.text);
     answerBody.innerHTML = renderAnswer(hit.text, false); answerBody.classList.remove('stale');
     answerMeta.textContent = frame.tag + ' · ' + fmtTime(frame.at) + ' · ' + sourceLabel(hit.from);
@@ -1226,7 +1241,7 @@
   // Speech coming back from the engine marks the moment; for S.quietSec after the last word nothing new is
   // generated for the camera and nothing new is shown — a text that was already on its way waits. In the
   // word-by-word panel the highlight follows the voice meanwhile (see voiceFollow).
-  let lastSpokenAt = 0, heldSnap = false, heldReq = null, lastShownId = 0;
+  let lastSpokenAt = 0, heldSnap = false, heldReq = null, lastShownId = 0, shownSig = null;   // shownSig: the picture the text on screen is about
   const holdingForSpeech = () => !!lastSpokenAt && Date.now() - lastSpokenAt < (S.quietSec || 25) * 1000;
   function heardSpeech(text) {
     if (!(text || '').trim()) return;
@@ -1348,6 +1363,7 @@
     } catch (e) {
       if (e.name === 'AbortError') { req.error = new Error('Stopped'); }
       else req.error = e;
+      if (reader.streamId === req.id) reader.streamId = 0;
     } finally {
       req.endedAt = Date.now();
       active = active.filter((r) => r !== req);
@@ -1371,7 +1387,7 @@
         if (data.delta && data.delta.type === 'text_delta') {
           if (!req.firstTextAt) req.firstTextAt = Date.now();
           req.text += data.delta.text;
-          if (req === current) { setStatus('streaming', `Answering ${req.frame.tag}`); renderCurrent(); }
+          if (req === current) { setStatus('streaming', `Answering ${req.frame.tag}`); renderCurrent(); streamToPanel(req); }
         }
         break;
       case 'message_delta':
@@ -1447,8 +1463,10 @@
     if (req.text) lastGoodText = req.text;
     showingTranscript = false;
     renderLiveStrip();
+    const from = apiSource(req.text);
+    shownSig = req.frame.sig || null;
     const inAll = req.inTok + (req.cacheW || 0) + (req.cacheR || 0);
-    const bits = [req.frame.tag, fmtTime(req.frame.at), `${secs(took)}`, `${inAll}${req.cacheR ? ' (' + req.cacheR + ' cached)' : ''}→${req.outTok} tok`, `$${req.cost.toFixed(3)}`, sourceLabel('api')];
+    const bits = [req.frame.tag, fmtTime(req.frame.at), `${secs(took)}`, `${inAll}${req.cacheR ? ' (' + req.cacheR + ' cached)' : ''}→${req.outTok} tok`, `$${req.cost.toFixed(3)}`, sourceLabel(from)];
     answerMeta.textContent = bits.join(' · ');
     answerBody.innerHTML = renderAnswer(req.text || '(no text in the reply)', false);
     answerBody.classList.remove('stale');
@@ -1457,12 +1475,32 @@
     if (req.stop === 'max_tokens') showBanner('The reply hit the max output tokens limit and was cut off. Raise the limit in settings if this keeps happening.', 'note');
     else if (req.stop === 'refusal') showBanner('Claude declined to answer this frame.', 'note');
     setStatus(running ? 'done' : 'idle', running ? `Answered ${req.frame.tag} · next in ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s` : 'Idle');
-    // the text plays word by word in the panel
+    // the text plays word by word in the panel; if it streamed in while the reply was still coming, keep the place
     if (req.text && req.frame.b64) {
       const { head, body } = splitAnswer(req.text);
-      openReader(body || req.text, head || req.frame.tag, { force: true, from: 'api' });
-      startAuto();
+      if (reader.open && reader.streamId === req.id) { growReader(body || req.text); reader.streamId = 0; readerTitle.textContent = head || req.frame.tag; readerSrc.textContent = sourceLabel(from); if (!autoTimer && !voiceHold) startAuto(); }
+      else { openReader(body || req.text, head || req.frame.tag, { force: true, from }); startAuto(); }
     }
+  }
+  // The reply streams: as soon as its first sentence is in, it starts playing in the panel while the rest
+  // arrives (the words come far faster than they are read), so the wait is the thinking, not the writing.
+  let streamTimer = null;
+  function streamToPanel(req) {
+    if (req !== current || req.endedAt || !req.frame.b64) return;
+    if (!reader.streamId && !req.frame.question && holdingForSpeech()) return;   // held until the quiet spell
+    if (streamTimer) return;
+    streamTimer = setTimeout(() => {
+      streamTimer = null;
+      if (req !== current || req.endedAt) return;
+      const { head, body } = splitAnswer(req.text);
+      if (!body || countWords(body) < 4) return;
+      if (reader.open && reader.streamId === req.id) { growReader(body); return; }
+      if (reader.streamId && reader.streamId !== req.id) return;   // another reply is on its way in
+      openReader(body, head || req.frame.tag, { force: true, from: apiSource(req.text) });
+      reader.streamId = req.id;
+      shownSig = req.frame.sig || null;
+      startAuto();
+    }, 300);
   }
 
   function renderCurrent() {
@@ -3060,30 +3098,61 @@
   // The highlight tracks what you read aloud and matches it against the displayed words, so you can read
   // your chapter out loud hands-free without losing your place. It only ever highlights this text; it
   // generates nothing and records nothing.
-  const reader = { words: [], norm: [], pos: 0, engine: null, open: false };
+  const reader = { words: [], norm: [], pos: 0, engine: null, open: false, phrases: [], phraseOf: [], lastPhrase: -1, streamId: 0 };
   const readerEl = $('reader'), readerBody = $('readerBody'), readerState = $('readerState'), readerTitle = $('readerTitle'), readerSrc = $('readerSrc');
   const normWord = (w) => w.toLowerCase().replace(/[^\p{L}\p{N}']/gu, '');
+  // The text as phrases: a sentence, or a clause of a long sentence (split at commas, semicolons, colons and
+  // dashes once it runs past seven words), never more than twelve words; a paragraph break always ends one.
+  function phrasesOf(text) {
+    const out = []; let cur = [];
+    const close = () => { if (cur.length) out.push(cur); cur = []; };
+    for (const para of String(text || '').split(/\n+/)) {
+      for (const tok of para.split(/\s+/)) {
+        if (!tok) continue;
+        cur.push(tok);
+        const w = tok.replace(/[»"”’)\]]+$/, '');
+        if (/[.!?…]$/.test(w) || (cur.length >= 7 && /[,;:—–-]$/.test(w)) || cur.length >= 12) close();
+      }
+      close();
+    }
+    return out;
+  }
+  function layoutReader(text) {
+    reader.words = []; reader.norm = []; reader.phrases = []; reader.phraseOf = [];
+    readerBody.innerHTML = '';
+    phrasesOf(text).forEach((ph, j) => {
+      const div = document.createElement('div'); div.className = 'ph';
+      ph.forEach((tok, k) => {
+        if (k) div.appendChild(document.createTextNode(' '));
+        const span = document.createElement('span'); span.className = 'w'; span.textContent = tok;
+        div.appendChild(span);
+        reader.words.push(span); reader.norm.push(normWord(tok)); reader.phraseOf.push(j);
+      });
+      readerBody.appendChild(div); reader.phrases.push(div);
+    });
+  }
   function buildReader(text, title) {
     readerTitle.textContent = title || 'Reading';
-    const raw = (text || '').split(/(\s+)/);
-    reader.words = []; reader.norm = [];
-    readerBody.innerHTML = '';
-    
-    raw.forEach((tok) => {
-      if (/^\s+$/.test(tok)) { readerBody.appendChild(document.createTextNode(tok.includes('\n') ? '\n' : ' ')); return; }
-      if (!tok) return;
-      const n = normWord(tok);
-      const span = document.createElement('span'); span.className = 'w'; span.textContent = tok;
-      readerBody.appendChild(span);
-      reader.words.push(span); reader.norm.push(n);
-    });
-    reader.pos = 0; paintReader();
+    layoutReader(text);
+    reader.pos = 0; reader.lastPhrase = -1; reader.streamId = 0; paintReader();
     if (voiceHold) { clearTimeout(voiceHold.timer); voiceHold = null; }
   }
+  // More of the same text arrived (the reply is still streaming): lay it out again, keep the place.
+  function growReader(text) {
+    const pos = reader.pos;
+    layoutReader(text);
+    reader.pos = Math.min(pos, reader.words.length); paintReader();
+  }
   function paintReader() {
+    const n = reader.words.length;
+    const pi = n ? reader.phraseOf[Math.min(reader.pos, n - 1)] : 0;
     reader.words.forEach((el, i) => { el.className = 'w' + (i < reader.pos ? ' read' : i === reader.pos ? ' cur' : ''); });
-    const cur = reader.words[reader.pos];
-    if (cur) cur.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    reader.phrases.forEach((ph, j) => { ph.className = 'ph' + (j < pi ? ' done' : j === pi ? ' on' : ''); });
+    if (pi !== reader.lastPhrase) {
+      reader.lastPhrase = pi;
+      const ph = reader.phrases[pi];
+      if (ph) readerBody.scrollTo({ top: Math.max(0, ph.offsetTop - readerBody.clientHeight * 0.2), behavior: 'smooth' });
+    }
   }
   // Align what was heard against the text: walk the spoken words, advancing a local pointer by searching a
   // small window ahead, so skips, repeats and mis-hearings still move the highlight forward (never back).
@@ -3175,24 +3244,25 @@
     if (!running && !listening) releaseWake();
   }
   $('readerClose').addEventListener('click', closeReader);
-  let readSize = 34, feedSize = 28;   // the full-screen Read view and the hands-free feed are sized separately
+  let readSize = 34, feedSize = 32;   // the full-screen Read view and the hands-free feed are sized separately
   const applyReadSize = () => { document.documentElement.style.setProperty('--read-size', readSize + 'px'); document.documentElement.style.setProperty('--feed-size', feedSize + 'px'); };
   const inFeed = () => readerEl.classList.contains('feed');
   $('readBigger').addEventListener('click', () => { if (inFeed()) feedSize = Math.min(56, feedSize + 4); else readSize = Math.min(72, readSize + 4); applyReadSize(); });
   $('readSmaller').addEventListener('click', () => { if (inFeed()) feedSize = Math.max(16, feedSize - 4); else readSize = Math.max(20, readSize - 4); applyReadSize(); });
   applyReadSize();
 
-  // --- auto-scroll: advance one word at a time on an interval ---
-  let autoTimer = null, autoSpeed = 0.5;  // words per second (0.5 = ~30s per 15 words)
+  // --- the pace: one word every wordSecs seconds (1.5 s → a fifteen-word sentence takes about 22 s) ---
+  let autoTimer = null, wordSecs = 1.5;
   const autoBtn = $('autoBtn'), spdLabel = $('spdLabel');
   function autoTick() {
-    if (!reader.open || reader.pos >= reader.words.length - 1) { stopAuto(); return; }
+    if (!reader.open) { stopAuto(); return; }
+    if (reader.pos >= reader.words.length - 1) { if (!reader.streamId) stopAuto(); return; }   // streaming: more words may still come
     reader.pos++; paintReader();
   }
   function startAuto() {
     if (voiceHold) { clearTimeout(voiceHold.timer); voiceHold = null; }
     if (autoTimer) clearInterval(autoTimer);
-    autoTimer = setInterval(autoTick, 1000 / autoSpeed);
+    autoTimer = setInterval(autoTick, wordSecs * 1000);
     autoBtn.classList.add('on'); autoBtn.textContent = 'Pause';
     readerState.textContent = 'auto-scrolling';
     // stop voice engine if running — auto replaces it
@@ -3206,11 +3276,12 @@
   }
   autoBtn.addEventListener('click', () => { autoTimer ? stopAuto() : startAuto(); });
   function updateSpeed() {
-    spdLabel.textContent = autoSpeed.toFixed(1) + '×';
-    if (autoTimer) { clearInterval(autoTimer); autoTimer = setInterval(autoTick, 1000 / autoSpeed); }
+    spdLabel.textContent = (wordSecs % 1 ? wordSecs.toFixed(2).replace(/0$/, '') : wordSecs.toFixed(1)) + ' s/word';
+    if (autoTimer) { clearInterval(autoTimer); autoTimer = setInterval(autoTick, wordSecs * 1000); }
   }
-  $('spdUp').addEventListener('click', () => { autoSpeed = Math.min(5.0, +(autoSpeed + 0.1).toFixed(1)); updateSpeed(); });
-  $('spdDown').addEventListener('click', () => { autoSpeed = Math.max(0.3, +(autoSpeed - 0.1).toFixed(1)); updateSpeed(); });
+  $('spdUp').addEventListener('click', () => { wordSecs = Math.max(0.25, +(wordSecs - 0.25).toFixed(2)); updateSpeed(); });    // faster: fewer seconds per word
+  $('spdDown').addEventListener('click', () => { wordSecs = Math.min(4, +(wordSecs + 0.25).toFixed(2)); updateSpeed(); });     // slower
+  updateSpeed();
   $('readBtn').addEventListener('click', () => {
     const t = current && current.text ? splitAnswer(current.text).body || current.text : lastGoodText;
     openReader(t, 'Reading the answer');
