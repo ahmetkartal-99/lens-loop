@@ -100,6 +100,11 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
    doGet greeting (`{ ok, helper: "lens-loop" }` — measured on the real one: 11 s, nothing redeemed), so `driveHelper`
    asks again at once (up to three tries) and otherwise fails as a passing error. With a permanent sign-in the Drive
    row says "Connected for good" while the hourly key is fetched and hides Connect; Sync fetches the key first.
+   Files can vanish from Drive while the phone still holds their addresses: `drive()` errors carry `status` and
+   `notFound`; `syncDrive` looks directly at any remembered address the listing lacks and, when the file is really
+   gone, forgets it and copies the storyline afresh; `pushStory` turns an update that meets "not found" into a new
+   file on the spot (the live transcript too); one storyline's failure never stops the others, and renames stop
+   asking about a file that is gone.
    Without the helper: implicit
    flow, silent `prompt=none` refresh on open, hidden-frame renewal (`driveRenewSilently`; the framed copy of
    the page posts the fragment to the parent and stops — see the top of the script). Two-way sync of
@@ -122,7 +127,8 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
 - `node test/session.e2e.js`, `node test/drive-renewal.e2e.js`, `node test/fresh-build.e2e.js`,
   `node test/memory-voice.e2e.js`, `node test/drive-helper.e2e.js`, `node test/drive-expired-open.e2e.js` (the app
   opened hours later: a silent renewal, retries on a backoff, a dead token in Google's real shape, and the banner only
-  when a tap is truly needed), `node test/latency.e2e.js` (audio cadence and
+  when a tap is truly needed), `node test/drive-vanished.e2e.js` (files deleted from Drive behind the app's back,
+  against an in-memory Drive), `node test/latency.e2e.js` (audio cadence and
   highlight reaction time), `node test/document.e2e.js` (a document page by page, the desk, a new subject) and
   `node test/hour-session.e2e.js` (an hour of dictation compressed into half a
   minute through the real ElevenLabs engine path with the socket mocked: draft, prompt, audio parts, saved

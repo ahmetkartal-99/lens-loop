@@ -798,7 +798,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-03 14:55';
+  const BUILD = '2026-10-03 15:35';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -2656,7 +2656,8 @@
     for (const p of parts) {
       const name = safeName(st.title) + ' · part ' + String(p.part).padStart(2, '0') + '.' + audioExt(p.mime);
       if (p.name === name) continue;
-      try { await drive('files/' + p.driveId, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) }); p.name = name; await dbRun('readwrite', (store) => store.put(p), 'audio'); } catch (e) { if (e.auth) return; }
+      try { await drive('files/' + p.driveId, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) }); p.name = name; await dbRun('readwrite', (store) => store.put(p), 'audio'); }
+      catch (e) { if (e.auth) return; if (e.notFound) { p.name = name; try { await dbRun('readwrite', (store) => store.put(p), 'audio'); } catch (err) {} } }   // gone from Drive: nothing left to rename, stop asking
     }
   }
   async function deleteAudioParts(storyId) {
@@ -2735,7 +2736,8 @@
     for (const f of frames) {
       const want = safeName(st.title) + ' · ' + f.tag + ' ' + new Date(f.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }).replace(/:/g, '.') + '.jpg';
       if (f.name === want) continue;
-      try { await drive('files/' + f.driveId, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: want }) }); f.name = want; await dbRun('readwrite', (store) => store.put(f), 'frames'); } catch (e) { if (e.auth) return; }
+      try { await drive('files/' + f.driveId, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: want }) }); f.name = want; await dbRun('readwrite', (store) => store.put(f), 'frames'); }
+      catch (e) { if (e.auth) return; if (e.notFound) { f.name = want; try { await dbRun('readwrite', (store) => store.put(f), 'frames'); } catch (err) {} } }   // gone from Drive: nothing left to rename, stop asking
     }
   }
   async function deleteFrames(storyId) {
@@ -3164,7 +3166,12 @@
       try { localStorage.removeItem(DRIVE_TOKEN_KEY); } catch (e) {}
       throw Object.assign(new Error('Google Drive needs reconnecting.'), { auth: true });
     }
-    if (!res.ok) { let d = ''; try { d = (await res.text()).slice(0, 160); } catch (e) {} throw new Error('Drive error ' + res.status + (d ? ': ' + d : '')); }
+    if (!res.ok) {
+      let d = ''; try { d = await res.text(); } catch (e) {}
+      let msg = ''; try { msg = JSON.parse(d).error.message || ''; } catch (e) { msg = d.slice(0, 160); }
+      // notFound: the file is gone (deleted or trashed by hand, or made under another account) — callers copy afresh
+      throw Object.assign(new Error('Google Drive answered ' + res.status + (msg ? ': ' + msg : '')), { status: res.status, notFound: res.status === 404 });
+    }
     if (res.status === 204) return null;
     const ct = res.headers.get('content-type') || '';
     return ct.includes('json') ? res.json() : res.text();
@@ -3201,10 +3208,13 @@
   async function pushStory(st, folderId) {
     const meta = { name: safeName(st.title) + '.json', appProperties: { lensloop: '1', storyId: st.id, updatedAt: String(st.updatedAt || 0) } };
     const rec = JSON.stringify(storyRecord(st));
+    // An update that meets "not found" means the file is gone from Drive: forget its address and make a new one.
     if (st.driveId) {
       const m = multipart(meta, rec, 'application/json');
-      await drive('https://www.googleapis.com/upload/drive/v3/files/' + st.driveId + '?uploadType=multipart&fields=id', Object.assign({ method: 'PATCH' }, m));
-    } else {
+      try { await drive('https://www.googleapis.com/upload/drive/v3/files/' + st.driveId + '?uploadType=multipart&fields=id', Object.assign({ method: 'PATCH' }, m)); }
+      catch (e) { if (!e.notFound) throw e; st.driveId = null; }
+    }
+    if (!st.driveId) {
       const m = multipart(Object.assign({ parents: [folderId] }, meta), rec, 'application/json');
       const made = await drive('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', Object.assign({ method: 'POST' }, m));
       st.driveId = made.id;
@@ -3212,8 +3222,10 @@
     const tmeta = { name: safeName(st.title) + '.txt', appProperties: { lensloop: 'txt', storyId: st.id } };
     if (st.driveTxtId) {
       const m = multipart(tmeta, storyText(st), 'text/plain; charset=UTF-8');
-      await drive('https://www.googleapis.com/upload/drive/v3/files/' + st.driveTxtId + '?uploadType=multipart&fields=id', Object.assign({ method: 'PATCH' }, m));
-    } else {
+      try { await drive('https://www.googleapis.com/upload/drive/v3/files/' + st.driveTxtId + '?uploadType=multipart&fields=id', Object.assign({ method: 'PATCH' }, m)); }
+      catch (e) { if (!e.notFound) throw e; st.driveTxtId = null; }
+    }
+    if (!st.driveTxtId) {
       const m = multipart(Object.assign({ parents: [folderId] }, tmeta), storyText(st), 'text/plain; charset=UTF-8');
       const made = await drive('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', Object.assign({ method: 'POST' }, m));
       st.driveTxtId = made.id;
@@ -3246,7 +3258,19 @@
         for (const f of r.files || []) { const sid = f.appProperties && f.appProperties.storyId; if (sid) txtByStory.set(sid, f.id); }
         pageToken = r.nextPageToken || '';
       } while (pageToken);
-      let pulled = 0, pushed = 0;
+      // A file the app made can vanish from Drive (deleted or trashed by hand, made under another account). A
+      // remembered address the listing lacks is looked at directly — a listing can lag a moment behind, a direct look
+      // cannot — and when the file is really gone the address is forgotten and the storyline copied afresh below.
+      const listed = new Set([...remote.values()].map((f) => f.id).concat([...txtByStory.values()]));
+      const gone = async (id) => { try { const f = await drive('files/' + id + '?fields=id,trashed'); return !f || !!f.trashed; } catch (e) { if (e.auth) throw e; return !!e.notFound; } };
+      let healed = false;
+      for (const st of stories) {
+        if (story && st.id === story.id) continue;   // the recording in progress mends its own (pushStory)
+        if (st.driveId && !listed.has(st.driveId) && await gone(st.driveId)) { st.driveId = (remote.get(st.id) || {}).id || null; st.syncedAt = 0; healed = true; }
+        if (st.driveTxtId && !listed.has(st.driveTxtId) && await gone(st.driveTxtId)) { st.driveTxtId = txtByStory.get(st.id) || null; st.syncedAt = 0; healed = true; }
+      }
+      if (healed) await saveStories();
+      let pulled = 0, pushed = 0, pushErr = null;
       // pull what is newer or missing here
       for (const [sid, f] of remote) {
         if (story && sid === story.id) continue;   // the recording in progress on this device
@@ -3254,8 +3278,9 @@
         const remoteAt = parseInt((f.appProperties && f.appProperties.updatedAt) || '0', 10);
         if (local) { local.driveId = local.driveId || f.id; local.driveTxtId = local.driveTxtId || txtByStory.get(sid) || null; }
         if (local && (local.updatedAt || 0) >= remoteAt) continue;
-        const rec = await drive('files/' + f.id + '?alt=media');
-        const data = typeof rec === 'string' ? JSON.parse(rec) : rec;
+        let data;
+        try { const rec = await drive('files/' + f.id + '?alt=media'); data = typeof rec === 'string' ? JSON.parse(rec) : rec; }
+        catch (e) { if (e.auth) throw e; continue; }   // gone since the listing, or unreadable: skip it, the rest still sync
         if (!data || !data.text) continue;
         data.driveId = f.id; data.driveTxtId = txtByStory.get(sid) || (local && local.driveTxtId) || null; data.syncedAt = data.updatedAt || remoteAt;
         if (local) Object.assign(local, data); else stories.push(data);
@@ -3264,8 +3289,8 @@
       // push what changed here
       for (const st of stories) {
         if (st.driveId && (st.syncedAt || 0) >= (st.updatedAt || 0)) continue;
-        await pushStory(st, folderId);
-        pushed++;
+        try { await pushStory(st, folderId); pushed++; }
+        catch (e) { if (e.auth) throw e; pushErr = pushErr || e; }   // one storyline's trouble does not hold back the others
       }
       stories.sort((a, b) => a.createdAt - b.createdAt);
       await saveStories();
@@ -3275,7 +3300,7 @@
       S.driveSyncedAt = Date.now(); saveSettings();
       refreshReadouts();
       if (!storySheet.hidden) renderStoryList();
-      renderDriveRow();
+      renderDriveRow(pushErr ? 'Synced, but one storyline could not be copied (' + pushErr.message + '); it is tried again at the next sync.' : undefined);
       if (pulled) showBanner(pulled + ' storyline' + (pulled === 1 ? '' : 's') + ' picked up from Google Drive.', 'note');
     } catch (e) {
       // a 401 with a refresh token at hand is already being renewed: the row says so rather than asking for a tap
