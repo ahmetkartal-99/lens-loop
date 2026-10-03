@@ -1,7 +1,7 @@
-// Lens Loop microphone capture: mono float samples → automatic gain → 16 kHz PCM16, 250 ms chunks, level reports.
+// Lens Loop microphone capture: mono float samples → automatic gain → 16 kHz PCM16, 100 ms chunks, level reports.
 class PcmCapture extends AudioWorkletProcessor {
-  constructor() { super(); this.ratio = sampleRate / 16000; this.pos = 0; this.prev = 0; this.out = new Int16Array(4000); this.n = 0; this.box = Math.max(1, Math.round(this.ratio)); this.hist = new Float32Array(this.box); this.hi = 0; this.sum = 0; this.env = 0; this.gain = 1; this.blocks = 0; this.peak = 0; }
-  push(v) { const x = Math.max(-1, Math.min(1, v)); this.out[this.n++] = x < 0 ? x * 32768 : x * 32767; if (this.n === this.out.length) { this.port.postMessage(this.out.buffer, [this.out.buffer]); this.out = new Int16Array(4000); this.n = 0; } }
+  constructor() { super(); this.ratio = sampleRate / 16000; this.pos = 0; this.prev = 0; this.out = new Int16Array(1600); this.n = 0; this.box = Math.max(1, Math.round(this.ratio)); this.hist = new Float32Array(this.box); this.hi = 0; this.sum = 0; this.env = 0; this.gain = 1; this.blocks = 0; this.peak = 0; }
+  push(v) { const x = Math.max(-1, Math.min(1, v)); this.out[this.n++] = x < 0 ? x * 32768 : x * 32767; if (this.n === this.out.length) { this.port.postMessage(this.out.buffer, [this.out.buffer]); this.out = new Int16Array(1600); this.n = 0; } }
   smooth(v) { if (this.box === 1) return v; this.sum += v - this.hist[this.hi]; this.hist[this.hi] = v; this.hi = (this.hi + 1) % this.box; return this.sum / this.box; }
   process(inputs) {
     const x = inputs[0] && inputs[0][0]; if (!x) return true;

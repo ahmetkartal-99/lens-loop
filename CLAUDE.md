@@ -42,8 +42,11 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
    bar, the camera strip and the Snap/Stop buttons stay visible and tappable. Only the manual Read view fills
    the screen. Both turn with the phone's tilt exactly like the answer panel (`applyPanelRotation`, `turnedCss`);
    sideways, the panel grows up to the top bar's top edge (over the camera strip and the header).
-   **Your voice leads** (`heardSpeech` → `voiceFollow`, `feedReader(…, wide)`): while you speak the highlight
-   follows the words you say anywhere in the text and the timer pauses, resuming 5 s after you stop.
+   **Your voice leads** (`heardSpeech` → `voiceFollow`, `feedReader(…, wide, from)` returns the match): while you
+   speak the highlight follows the words you say anywhere in the text (longest run of the last 2–5 words, nearest
+   occurrence; a lone word only nudges forward) and the timer pauses, resuming 5 s after you stop. Real time:
+   `voiceDisplay` advances between partials at the measured reading pace with a `VOICE_LAT` lead, capped at
+   three words past the last match; the worklet streams 100 ms chunks (`Int16Array(1600)`, both copies).
    **Nothing changes while you talk** (`holdingForSpeech`, `S.quietSec` = 25): no camera text is generated
    (`snap` holds, `heldSnap`) or shown (`finish` parks the answer in `heldReq`) until the quiet spell has
    passed; your own spoken questions show at once.

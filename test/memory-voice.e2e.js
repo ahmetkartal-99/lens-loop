@@ -50,28 +50,34 @@ const sse = (text) => { const ev = (e, d) => `event: ${e}\ndata: ${JSON.stringif
   assert(requests === 1, 'the first frame went to Claude (' + requests + ' request)');
   assert((await page.textContent('#readerSrc')) === '[Claude API · this session]', 'panel says [Claude API · this session] (the answer named the current session) — got "' + (await page.textContent('#readerSrc')) + '"');
   assert(/auto-scrolling/.test(await page.textContent('#readerState')), 'timer runs by default');
-  // speak as ElevenLabs delivers it: partials growing one word at a time, then a commit
-  const partials = async (words) => { for (let i = 1; i <= words.length; i++) { await page.evaluate((t) => window.__say(t), words.slice(0, i).join(' ')); await page.waitForTimeout(120); } await page.evaluate((t) => window.__say(t, true), words.join(' ')); };
-  // 1. reading from the middle while the timer is near the top: the highlight jumps to the voice
+  // speak as ElevenLabs delivers it: partials growing one word at a time at a reading pace, then a commit
+  const partials = async (words) => { for (let i = 1; i <= words.length; i++) { await page.evaluate((t) => window.__say(t), words.slice(0, i).join(' ')); await page.waitForTimeout(380); } await page.evaluate((t) => window.__say(t, true), words.join(' ')); };
+  const WORDS = await page.evaluate(() => [...document.querySelectorAll('#readerBody .w')].map((w) => w.textContent));
+  const curIndex = () => page.evaluate(() => [...document.querySelectorAll('#readerBody .w')].findIndex((w) => w.classList.contains('cur')));
+  const near = (i, word, m) => { const want = WORDS.indexOf(word); assert(i >= want && i <= want + 2, m + ' — highlight on "' + WORDS[i] + '" (' + i + '), expected "' + word + '" (' + want + ') or up to two words past it, the live lead'); };
+  // 1. reading from the middle while the timer is near the top: the highlight goes to the voice, with the live lead
   await partials(['chosen', 'by', 'the', 'keeper', 'and']);
-  await page.waitForTimeout(200);
-  assert((await page.textContent('.w.cur')) === 'never', 'highlight followed the voice to the next word ("' + (await page.textContent('.w.cur')) + '")');
+  await page.waitForTimeout(150);
+  near(await curIndex(), 'never', 'followed the voice into the middle of the text');
   assert(/following your voice/.test(await page.textContent('#readerState')), 'panel says it follows the voice (' + (await page.textContent('#readerState')) + ')');
   await page.waitForTimeout(5800);
   assert(/auto-scrolling/.test(await page.textContent('#readerState')), 'timer resumed a few seconds after the voice stopped');
   // 2. the timer has run ahead; the reader starts again from the top — common words near the timer must not capture it
   await page.evaluate(() => { for (let i = 0; i < 20; i++) document.getElementById('spdUp').click(); });   // fast timer
   await page.waitForTimeout(2500);
-  const ahead = await page.evaluate(() => [...document.querySelectorAll('.w')].findIndex((w) => w.classList.contains('cur')));
+  const ahead = await curIndex();
   assert(ahead >= 12, 'timer ran ahead to word ' + ahead);
   await partials(['Every', 'crossing', 'costs']);
-  await page.waitForTimeout(200);
-  assert((await page.textContent('.w.cur')) === 'one', 'voice from the top pulled the highlight back to "one" (got "' + (await page.textContent('.w.cur')) + '")');
+  await page.waitForTimeout(150);
+  near(await curIndex(), 'one', 'voice from the top pulled the highlight back');
+  // 3. between partials the highlight keeps moving at the reading pace (real time), never more than three words past the last heard
+  const before = await curIndex();
+  await page.waitForTimeout(900);
+  const drift = await curIndex();
+  assert(drift >= before && drift - WORDS.indexOf('one') <= 3, 'highlight advanced on its own between partials (' + before + ' → ' + drift + '), within three words of the last heard');
   await partials(['one', 'remembered', 'day,', 'chosen', 'by', 'the']);
-  await page.waitForTimeout(200);
-  assert((await page.textContent('.w.cur')) === 'keeper', 'kept following word by word to "keeper" (got "' + (await page.textContent('.w.cur')) + '")');
-  // 3. a repeated partial (a keepalive) is not new speech
-  const spokeAt = await page.evaluate(() => Date.now());
+  await page.waitForTimeout(150);
+  near(await curIndex(), 'keeper', 'kept following word by word');
   await page.waitForTimeout(6000);
   assert(/auto-scrolling/.test(await page.textContent('#readerState')), 'timer resumed after the second reading');
   assert(requests === 1, 'nothing new was generated while speaking / in the quiet spell (' + requests + ')');
