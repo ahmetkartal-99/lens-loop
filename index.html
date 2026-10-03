@@ -647,6 +647,11 @@
         <label class="check" style="margin:4px 0 0"><input type="checkbox" id="boostNames"> Boost names from saved storylines (ElevenLabs, +20% on listening cost)</label>
       </div>
     </div>
+    <div class="field">
+      <label for="sttTerms">Words to listen for (ElevenLabs)</label>
+      <textarea id="sttTerms" rows="2" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Invented names, places, terms it keeps mishearing — comma-separated"></textarea>
+      <div class="hint">Your own glossary, sent ahead of the storyline names on every connection: the engine favours these spellings when it hears something close, which is what helps with invented words and with an accent. Up to fifty terms in all count.</div>
+    </div>
     <div class="row">
       <div class="field">
         <label for="sttLang">Listening language</label>
@@ -755,7 +760,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-02 22:45';
+  const BUILD = '2026-10-02 23:00';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -790,6 +795,7 @@
     rotateText: true,
     uprightPhoto: true,
     sttLang: '',
+    sttTerms: '',   // the personal glossary, comma-separated
     useStories: true,
     askWithFrame: true,
     sttKey: '',
@@ -1705,6 +1711,7 @@
     $('uprightPhoto').checked = !!S.uprightPhoto;
     $('driveHelper').value = S.driveHelper || '';
     $('sttLang').value = S.sttLang || '';
+    $('sttTerms').value = S.sttTerms || '';
     $('sttKey').value = S.sttKey || '';
     $('sttEngine').value = S.sttEngine || 'auto';
     $('boostNames').checked = S.boostNames !== false;
@@ -1756,6 +1763,7 @@
     S.uprightPhoto = $('uprightPhoto').checked;
     S.driveHelper = $('driveHelper').value.trim().replace(/\/+$/, '');
     S.sttLang = $('sttLang').value;
+    S.sttTerms = $('sttTerms').value.trim();
     S.sttKey = $('sttKey').value.trim();
     S.sttEngine = $('sttEngine').value;
     S.boostNames = $('boostNames').checked;
@@ -2111,8 +2119,14 @@
     registerProcessor('pcm-capture', PcmCapture);`;
   function b64Bytes(buf) { const u = new Uint8Array(buf); let str = ''; for (let i = 0; i < u.length; i += 0x4000) str += String.fromCharCode.apply(null, u.subarray(i, i + 0x4000)); return btoa(str); }
   function cloudKeyterms() {
-    if (S.boostNames === false) return [];
     const seen = new Set(), out = [];
+    for (const raw of (S.sttTerms || '').split(/[,;\n]/)) {   // the personal glossary first: it always makes the cut
+      const t = raw.trim().replace(/\.$/, '');
+      if (!t || t.length > 30 || seen.has(t.toLowerCase())) continue;
+      seen.add(t.toLowerCase()); out.push(t);
+      if (out.length >= 50) return out;
+    }
+    if (S.boostNames === false) return out;
     for (const st of [...stories].sort((a, b) => b.createdAt - a.createdAt)) {
       for (const raw of (st.keys || '').split(/[,;\n]/)) {
         const t = raw.trim().replace(/\.$/, '');
@@ -2143,7 +2157,9 @@
       // vad_threshold low so quiet speech still commits; keepalive makes the server talk during silence, which
       // lets the watchdog tell a quiet room from a dead connection.
       const q = new URLSearchParams({ model_id: 'scribe_v2_realtime', audio_format: 'pcm_16000', commit_strategy: 'vad', vad_threshold: '0.3', vad_silence_threshold_secs: '0.8', keepalive_interval_ms: '3000', token });
-      const lang = (S.sttLang || '').split('-')[0];
+      // a fixed language keeps an accent from being taken for another language mid-session; "Phone default" means
+      // the phone's own language, and only a phone with no language at all leaves the engine to guess
+      const lang = (S.sttLang || navigator.language || '').split('-')[0];
       if (lang) q.set('language_code', lang);
       for (const k of o.keyterms || []) q.append('keyterms', k);
       await new Promise((resolve, reject) => {
@@ -3225,7 +3241,16 @@
   }
   // Align what was heard against the text: walk the spoken words, advancing a local pointer by searching a
   // small window ahead, so skips, repeats and mis-hearings still move the highlight forward (never back).
-  const wordEq = (a, b) => a === b || (a.length > 3 && b.length > 3 && (a.startsWith(b) || b.startsWith(a)));
+  // Equal, or one a prefix of the other (inflections), or — for words of five letters or more — one letter off
+  // (an accent, a soft microphone), so the highlight does not lose the reader over "traveler" / "traveller".
+  const oneOff = (a, b) => {
+    if (Math.abs(a.length - b.length) > 1) return false;
+    let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++;
+    if (i === Math.min(a.length, b.length)) return true;                  // one is the other plus a letter at the end
+    if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1);  // one letter changed
+    return a.length > b.length ? a.slice(i + 1) === b.slice(i) : b.slice(i + 1) === a.slice(i);   // one letter inserted
+  };
+  const wordEq = (a, b) => a === b || (a.length > 3 && b.length > 3 && (a.startsWith(b) || b.startsWith(a))) || (a.length >= 5 && b.length >= 5 && oneOff(a, b));
   function feedReader(spoken, wide, from) {
     const sp = spoken.split(/\s+/).map(normWord).filter(Boolean);
     if (!sp.length) return -1;

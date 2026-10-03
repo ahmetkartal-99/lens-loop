@@ -60,7 +60,8 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
    `.w.cur`): when opened by hand with no session running it follows the reader's own voice (`feedReader`, phone
    or cloud engine); when forced open during a session it auto-scrolls instead. A+/A− sizing.
 5. **Recording.** ElevenLabs Scribe v2 Realtime through an AudioWorklet (AGC, 16 kHz PCM, single-use token per
-   connection, key terms from saved storylines), with keepalives, a watchdog that replaces a dead or silent
+   connection, key terms: the personal glossary `S.sttTerms` first, then saved-storyline names; `language_code`
+   the phone's language unless chosen), with keepalives, a watchdog that replaces a dead or silent
    connection and never gives up (forced reconnects back off 30 s → 5 min), microphone reacquire, audio-engine
    resume; phone dictation as fallback. "Lens, …" voice commands (question, look at this, new chapter, stop).
    Draft saved every utterance; a cut-off recording is restored on the next open and digested.
