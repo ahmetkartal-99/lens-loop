@@ -50,13 +50,30 @@ const sse = (text) => { const ev = (e, d) => `event: ${e}\ndata: ${JSON.stringif
   assert(requests === 1, 'the first frame went to Claude (' + requests + ' request)');
   assert((await page.textContent('#readerSrc')) === '[Claude API · this session]', 'panel says [Claude API · this session] (the answer named the current session) — got "' + (await page.textContent('#readerSrc')) + '"');
   assert(/auto-scrolling/.test(await page.textContent('#readerState')), 'timer runs by default');
-  // speak words from the middle of the text: the highlight jumps there and the timer pauses
-  await page.evaluate(() => window.__say('chosen by the keeper and'));
-  await page.waitForTimeout(300);
+  // speak as ElevenLabs delivers it: partials growing one word at a time, then a commit
+  const partials = async (words) => { for (let i = 1; i <= words.length; i++) { await page.evaluate((t) => window.__say(t), words.slice(0, i).join(' ')); await page.waitForTimeout(120); } await page.evaluate((t) => window.__say(t, true), words.join(' ')); };
+  // 1. reading from the middle while the timer is near the top: the highlight jumps to the voice
+  await partials(['chosen', 'by', 'the', 'keeper', 'and']);
+  await page.waitForTimeout(200);
   assert((await page.textContent('.w.cur')) === 'never', 'highlight followed the voice to the next word ("' + (await page.textContent('.w.cur')) + '")');
-  assert(/following your voice/.test(await page.textContent('#readerState')), 'panel says it follows the voice');
+  assert(/following your voice/.test(await page.textContent('#readerState')), 'panel says it follows the voice (' + (await page.textContent('#readerState')) + ')');
   await page.waitForTimeout(5800);
   assert(/auto-scrolling/.test(await page.textContent('#readerState')), 'timer resumed a few seconds after the voice stopped');
+  // 2. the timer has run ahead; the reader starts again from the top — common words near the timer must not capture it
+  await page.evaluate(() => { for (let i = 0; i < 20; i++) document.getElementById('spdUp').click(); });   // fast timer
+  await page.waitForTimeout(2500);
+  const ahead = await page.evaluate(() => [...document.querySelectorAll('.w')].findIndex((w) => w.classList.contains('cur')));
+  assert(ahead >= 12, 'timer ran ahead to word ' + ahead);
+  await partials(['Every', 'crossing', 'costs']);
+  await page.waitForTimeout(200);
+  assert((await page.textContent('.w.cur')) === 'one', 'voice from the top pulled the highlight back to "one" (got "' + (await page.textContent('.w.cur')) + '")');
+  await partials(['one', 'remembered', 'day,', 'chosen', 'by', 'the']);
+  await page.waitForTimeout(200);
+  assert((await page.textContent('.w.cur')) === 'keeper', 'kept following word by word to "keeper" (got "' + (await page.textContent('.w.cur')) + '")');
+  // 3. a repeated partial (a keepalive) is not new speech
+  const spokeAt = await page.evaluate(() => Date.now());
+  await page.waitForTimeout(6000);
+  assert(/auto-scrolling/.test(await page.textContent('#readerState')), 'timer resumed after the second reading');
   assert(requests === 1, 'nothing new was generated while speaking / in the quiet spell (' + requests + ')');
   // a few recorded sentences, so the session is worth saving; then end it: the storyline (with its memory) is saved on the phone
   await page.evaluate(() => { window.__say('We talked about the ferry and the toll today.', true); window.__say('The keeper stays on the far bank.', true); });
