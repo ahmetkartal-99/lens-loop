@@ -587,8 +587,8 @@
         <span style="font-size:15px;font-weight:600">Scene mode — cold-read dialogue</span>
       </label>
       <div class="hint" style="margin-bottom:8px">When on, the camera reads scenario prompts and generates character dialogue for you to sight-read on the mic. The prompt above is ignored; the text below shapes the character.</div>
-      <label for="sceneCharacter" style="font-size:13px">Character voice (who are they, how do they talk?)</label>
-      <textarea id="sceneCharacter" placeholder="e.g. A calm, experienced GP in her 40s. Warm but direct. Uses plain language, avoids jargon with patients. Australian accent — occasional 'look' and 'right' as filler." style="min-height:72px"></textarea>
+      <label for="sceneCharacter" style="font-size:13px">Character / role (which side of the roleplay?)</label>
+      <textarea id="sceneCharacter" placeholder="e.g. the doctor — calm, experienced GP in her 40s. Warm but direct, plain language.&#10;Or just: the patient&#10;Or: the interviewer — senior, probing, slightly impatient" style="min-height:72px"></textarea>
     </div>
 
     <div class="row">
@@ -762,19 +762,28 @@
   // ----- Scene mode: the camera captures a scenario prompt, Claude generates character dialogue -----
   const SCENE_SYSTEM_RULES =
     'You are a dialogue generator for a fiction author who is sight-reading character lines on the mic. ' +
-    'The user\'s camera is pointed at a scenario card, prompt or situation description. Your job is to generate natural, ' +
-    'speakable dialogue for the character described below — lines the author will cold-read aloud for recording. ' +
+    'The user\'s camera is pointed at a scenario card, role-play prompt or situation description — these often have TWO sides ' +
+    '(e.g. a doctor card and a patient card, an interviewer and a candidate, a caller and a responder). ' +
+    'Read the ENTIRE card to understand the full scenario and both sides, then generate natural, speakable dialogue ONLY for the ' +
+    'role named in the CHARACTER field below. The CHARACTER field may be just a role name ("the patient", "the doctor") or a full ' +
+    'description with voice notes — either way, find that role on the card, adopt its talking points and situation, and speak as ' +
+    'that person. Use the OTHER side\'s cues, concerns and bullet points as the situation your character is responding to — ' +
+    'weave responses to those points naturally into the dialogue as if the other person just said them. ' +
+    'If no CHARACTER is set and the card has two roles, pick the professional/authority role by default (doctor over patient, ' +
+    'interviewer over candidate, examiner over examinee). ' +
     'Format every reply the same way: the first line is "ANSWER: " followed by a short title of the scenario (at most eight words). ' +
     'Then a blank line, then the character\'s dialogue as flowing speech — no stage directions, no action lines, no parenthetical ' +
     'notes, no speaker labels, just the words the character would say, written to be spoken aloud in one take. ' +
     'Write in the character\'s natural voice: contractions, hesitations ("well," "look,"), sentence fragments — whatever makes it ' +
     'sound like a real person talking, not a textbook. Vary the rhythm. ' +
+    'When the card gives bullet points or talking points for your character, cover all of them but fold them into natural speech — ' +
+    'never read them as a list. When it gives the other side\'s lines or concerns, have your character address them conversationally. ' +
     'When the photo shows nothing worth generating from — an empty desk, a wall, a blur — the first line is "ANSWER: nothing to read" ' +
     'and the explanation is one short line, so what was on screen before can stay. ' +
     'The author is recording and reads the text as it streams in, so start the dialogue immediately — no preamble.';
   const SCENE_PROMPT =
-    'Look at this photo. It shows a scenario, prompt or situation card. Generate the character\'s dialogue ' +
-    'in response to this scenario — natural, speakable lines for a cold read on the mic. ' +
+    'Look at this photo. It shows a scenario card with one or two roles. Generate dialogue for the character described in the system ' +
+    'prompt — natural, speakable lines for a cold read on the mic, addressing the other side\'s concerns and cues. ' +
     'If no scenario is visible, describe what is in the frame briefly.';
 
   const DIGEST_RULES =
@@ -789,7 +798,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-03 12:40';
+  const BUILD = '2026-10-03 13:15';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
