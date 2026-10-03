@@ -63,6 +63,7 @@ const sse = (text) => {
   let fail = 0, started = 0;
   await page.route('https://api.anthropic.com/v1/messages', async (route) => {
     const body = JSON.parse(route.request().postData());
+    if (/haiku/.test(body.model)) { await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ content: [{ type: 'text', text: 'DIFFERENT' }], usage: {} }) }); return; }   // the quick look
     bodies.push(body); at.push(Date.now() - started);
     if (fail > 0) { fail--; await route.fulfill({ status: 529, contentType: 'application/json', body: JSON.stringify({ error: { message: 'Overloaded' } }) }); return; }
     await route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse('ANSWER: The toll keeper takes a memory\nSTORYLINE: Current session\n\nThat is what the session says so far, in request ' + bodies.length + '.') });
@@ -97,18 +98,19 @@ const sse = (text) => {
   assert(Array.isArray(sys) && sys.length >= 3, 'system is an array of blocks (' + sys.length + ')');
   const intro = sys.findIndex((b) => /^CURRENT SESSION — still being recorded/.test(b.text));
   assert(intro > 0, 'live intro block present at ' + intro);
-  const tail = sys[sys.length - 1].text;
-  assert(/\[\d+:\d\d into the session at this request, \d+ words so far\]/.test(tail), 'tail carries the time/word line');
-  assert(!sys[sys.length - 1].cache_control, 'tail is not cache-marked');
+  const tailBlock = last.messages[0].content.find((b) => b.type === 'text' && /\[\d+:\d\d into the session at this request, \d+ words so far\]/.test(b.text));
+  assert(!!tailBlock, 'the open tail rides in the message, after the frames, with the time/word line');
+  assert(tailBlock && !tailBlock.cache_control, 'tail is not cache-marked');
+  const tail = tailBlock ? tailBlock.text : '';
   const marked = sys.map((b, i) => b.cache_control ? i : -1).filter((i) => i >= 0);
-  assert(marked.length === 1 && marked[0] === sys.length - 2, 'exactly one live cache mark, on the last frozen block (marks at ' + marked.join(',') + ')');
-  const frozenTexts = sys.slice(intro + 1, sys.length - 1).map((b) => b.text);
+  assert(marked.length === 1 && marked[0] === sys.length - 1, 'exactly one live cache mark, on the last frozen block (marks at ' + marked.join(',') + ')');
+  const frozenTexts = sys.slice(intro + 1).map((b) => b.text);
   assert(frozenTexts.length >= 1 && frozenTexts.filter((t) => /^Sentence \d+ of the session/.test(t)).every((t) => t.length >= 4000), 'frozen transcript chunks are >= 4000 chars (' + frozenTexts.map((t) => t.length).join(',') + ')');
   const visuals = sys.filter((b) => /VISUAL NOTES/.test(b.text)).length;
   assert(visuals >= 1 || /VISUAL NOTES/.test(tail), 'visual notes from earlier answers are in the prompt');
   // stability of frozen chunks across requests
   const prev = bodies[nReq - 2].system;
-  const prevFrozen = prev.slice(prev.findIndex((b) => /^CURRENT SESSION/.test(b.text)) + 1, prev.length - 1).map((b) => b.text).filter((t) => /^Sentence/.test(t));
+  const prevFrozen = prev.slice(prev.findIndex((b) => /^CURRENT SESSION/.test(b.text)) + 1).map((b) => b.text).filter((t) => /^Sentence/.test(t));
   const nowFrozen = frozenTexts.filter((t) => /^Sentence/.test(t));
   assert(prevFrozen.every((t, i) => nowFrozen[i] === t), 'frozen chunks of the previous request are a byte-identical prefix of this one');
   // retry: after two 529s there must have been more requests than the failures

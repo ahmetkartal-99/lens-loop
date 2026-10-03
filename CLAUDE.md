@@ -52,6 +52,14 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
    passed; your own spoken questions show at once. By voice: "Lens, hold" (`heldByVoice`) keeps the text until
    "Lens, next" (which also skips the quiet spell); "Lens, again / slower / faster / pause / play" drive the panel.
    Every answer, photo or not, becomes a note in its storyline; the Drive `.txt` lists them in full.
+   **Documents page by page** (`docFrames`, `docFramesFor`, `rememberFrame`/`forgetFrame`): the frames of the last
+   ten minutes (≤11) go into every request before the current one, oldest first, the last one cache-marked; the
+   session's open tail now rides in the message after them (`buildSystem` returns `{ blocks, tail }`) so the
+   frames stay cached. The reply's third line `FRAMES: continues|new` (`splitAnswer(...).frames`): `new` waits
+   for `readingUnderWay()` to end before display; `nothing to read` (head) keeps the text, is never cached or
+   recorded, and sets `nothingFrame`. Scene comparison: `sameScene`/`nearScene` (mean + share of cells off by
+   >20, 48×36 cells) against the shown frame, the empty scene and the last sent frame; when alike but not
+   identical (mean < 40) `looksSame` asks `PAGE_CHECK_MODEL` (Haiku) SAME/DIFFERENT (`pageCheckBusy`).
    **Memory first** (`recall` → `memoryHit`/`cacheHit`): every visual note keeps the picture's fingerprint
    (`sig`, base64 of the 32×24 grey signature) and the whole `text`; a matching picture or question is answered
    from memory with no request, labelled `[memory · Google Drive]` / `[memory · this phone]`; fresh answers are
@@ -103,7 +111,8 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
 - `node --check` on the script body, then `node test/live-prompt.test.js` (prompt assembly, no browser).
 - `node test/session.e2e.js`, `node test/drive-renewal.e2e.js`, `node test/fresh-build.e2e.js`,
   `node test/memory-voice.e2e.js`, `node test/drive-helper.e2e.js`, `node test/latency.e2e.js` (audio cadence and
-  highlight reaction time) and `node test/hour-session.e2e.js` (an hour of dictation compressed into half a
+  highlight reaction time), `node test/document.e2e.js` (a document page by page, the desk, a new subject) and
+  `node test/hour-session.e2e.js` (an hour of dictation compressed into half a
   minute through the real ElevenLabs engine path with the socket mocked: draft, prompt, audio parts, saved
   storyline, questions before and after a reload) (headless Chromium via Playwright,
   `npm i -D playwright` if missing): a real session with a fake camera, fake dictation and a fake Claude

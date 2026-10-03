@@ -43,7 +43,9 @@ const sentence = (i) => `Minute ${Math.floor(i / 6)} note ${i}: the toll keeper 
   const keep = setInterval(() => { try { sock && sock.send(JSON.stringify({ message_type: 'keepalive' })); } catch (e) {} }, 2500);
   const bodies = [];
   await page.route('https://api.anthropic.com/v1/messages', (route) => {
-    const b = JSON.parse(route.request().postData()); bodies.push(b);
+    const b = JSON.parse(route.request().postData());
+    if (/haiku/.test(b.model)) return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ content: [{ type: 'text', text: 'DIFFERENT' }], usage: {} }) });
+    bodies.push(b);
     const isDigest = /Transcript of one recorded session/.test(JSON.stringify(b.messages));
     return route.fulfill({ status: 200, contentType: isDigest ? 'application/json' : 'text/event-stream',
       body: isDigest ? JSON.stringify({ content: [{ type: 'text', text: 'TITLE: The eel skin ledger\nSUMMARY: The keeper takes a day from every traveller.\nKEYS: toll keeper, eel skin ledger, river crossing' }], usage: {} })
@@ -72,7 +74,7 @@ const sentence = (i) => `Minute ${Math.floor(i / 6)} note ${i}: the toll keeper 
   const q = bodies.slice(before).find((b) => /Spoken question/.test(JSON.stringify(b.messages)));
   assert(!!q, 'the spoken question went out as a request');
   if (q) {
-    const sys = q.system.map((b) => b.text).join('\n');
+    const sys = q.system.map((b) => b.text).join('\n') + '\n' + q.messages[0].content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
     const live = sys.indexOf('CURRENT SESSION');
     assert(live > 0, 'its prompt carries the live session');
     assert(sys.includes(sentence(0)) && sys.includes(sentence(SENTENCES - 1)), 'first and last sentences of the hour are in the prompt');
@@ -101,7 +103,7 @@ const sentence = (i) => `Minute ${Math.floor(i / 6)} note ${i}: the toll keeper 
   const q2 = bodies.slice(before2).find((b) => /Spoken question/.test(JSON.stringify(b.messages)));
   assert(!!q2, 'a question after the session went out');
   if (q2) {
-    const sys = q2.system.map((b) => b.text).join('\n');
+    const sys = q2.system.map((b) => b.text).join('\n') + '\n' + q2.messages[0].content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
     assert(/INDEX OF SAVED STORYLINES \(1; full text included for 1\)/.test(sys), 'the saved storyline is in the prompt in full');
     assert(sys.includes(sentence(5)) && sys.includes(sentence(SENTENCES - 2)), 'its text is complete in the prompt');
   }

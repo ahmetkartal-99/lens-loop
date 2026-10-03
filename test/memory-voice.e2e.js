@@ -39,7 +39,7 @@ const sse = (text) => { const ev = (e, d) => `event: ${e}\ndata: ${JSON.stringif
     window.webkitSpeechRecognition = FakeSR; window.SpeechRecognition = FakeSR;
   });
   let requests = 0;
-  const apiBody = (route) => { requests++; const b = JSON.parse(route.request().postData()); const isDigest = /Transcript of one recorded session/.test(JSON.stringify(b.messages)); return route.fulfill({ status: 200, contentType: isDigest ? 'application/json' : 'text/event-stream', body: isDigest ? JSON.stringify({ content: [{ type: 'text', text: 'TITLE: The toll keeper\nSUMMARY: A ferry.\nKEYS: keeper' }], usage: {} }) : sse(ANSWER) }); };
+  const apiBody = (route) => { const b = JSON.parse(route.request().postData()); if (/haiku/.test(b.model)) return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ content: [{ type: 'text', text: 'SAME' }], usage: {} }) }); requests++; const isDigest = /Transcript of one recorded session/.test(JSON.stringify(b.messages)); return route.fulfill({ status: 200, contentType: isDigest ? 'application/json' : 'text/event-stream', body: isDigest ? JSON.stringify({ content: [{ type: 'text', text: 'TITLE: The toll keeper\nSUMMARY: A ferry.\nKEYS: keeper' }], usage: {} }) : sse(ANSWER) }); };
   await page.route('https://api.anthropic.com/v1/messages', apiBody);
   const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode = 1; } else console.log('ok:', m); };
 

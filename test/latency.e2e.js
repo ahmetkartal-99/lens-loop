@@ -33,7 +33,7 @@ const sse = (text) => { const ev = (e, d) => `event: ${e}\ndata: ${JSON.stringif
   let sock = null; const chunkTimes = [];
   await page.routeWebSocket(/api\.elevenlabs\.io/, (ws) => { sock = ws; ws.onMessage((m) => { try { if (JSON.parse(m).message_type === 'input_audio_chunk') chunkTimes.push(Date.now()); } catch (e) {} }); ws.onClose(() => { if (sock === ws) sock = null; }); });
   const keep = setInterval(() => { try { sock && sock.send(JSON.stringify({ message_type: 'keepalive' })); } catch (e) {} }, 2500);
-  await page.route('https://api.anthropic.com/v1/messages', (route) => route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse(ANSWER) }));
+  await page.route('https://api.anthropic.com/v1/messages', (route) => { const b = JSON.parse(route.request().postData()); if (/haiku/.test(b.model)) return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ content: [{ type: 'text', text: 'SAME' }], usage: {} }) }); return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse(ANSWER) }); });
   const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode = 1; } else console.log('ok:', m); };
   await page.goto(url); await page.waitForTimeout(700);
   await page.click('#startBtn');

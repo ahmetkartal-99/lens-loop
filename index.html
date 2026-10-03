@@ -747,6 +747,7 @@
     'For a calculation it is the final value with units. For a yes/no question it is Yes or No plus a few words. ' +
     'If the photo contains no question, that line is a short title of what is in the frame (at most six words). ' +
     'Then a blank line, then a brief explanation. Never put anything before the ANSWER line. ' +
+    'When the photo shows nothing worth answering — an empty desk or floor, a wall, a blur, the camera on the move, nothing to read and no question — the first line is exactly "ANSWER: nothing to read" and the explanation is one short line, so what was on screen before can stay. ' +
     'The user is waiting hands-free and reads the reply as it arrives, so reason no longer than the question needs: a plain photo or a simple question gets a quick, direct reply; keep the deepest deliberation for problems that call for it.';
   const DIGEST_RULES =
     'You read automatic speech-to-text transcripts of a fiction author\'s spoken brainstorming and world-building sessions. ' +
@@ -760,7 +761,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-02 23:30';
+  const BUILD = '2026-10-02 23:50';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -849,7 +850,7 @@
   // Prices in $ per million tokens (input, output), by model-id fragment.
   const PRICES = [
     ['fable-5', 10, 50], ['mythos', 10, 50], ['opus-5-5', 4, 20], ['opus-5', 4, 20],
-    ['opus-4', 5, 25], ['sonnet-5', 2, 10], ['sonnet-4', 3, 15], ['haiku-4', 1, 5],
+    ['opus-4', 5, 25], ['sonnet-5', 2, 10], ['sonnet-4', 3, 15], ['haiku-4-5', 1, 5], ['haiku-4', 1, 5],
   ];
   function priceFor(model) {
     const m = (model || '').toLowerCase();
@@ -1165,8 +1166,8 @@
     if (!running || S.skipStill === false) return;
     let sig; try { sig = frameSignature(); } catch (e) { return; }
     if (!sig) return;
-    const changed = sigDiff(sig, lastSig) >= 7;
-    const settled = prevSig && sigDiff(sig, prevSig) < 4;
+    const changed = !sameScene(sig, lastSig);
+    const settled = prevSig && sigDiff(sig, prevSig) < 4 && sigFrac(sig, prevSig) < 0.08;
     prevSig = sig;
     if (!changed || !settled) return;
     if (Date.now() - lastChangeAt < 3000) return;
@@ -1189,8 +1190,9 @@
   }
   let lastSig = null;
   // A coarse grey signature of the thumbnail; the timer only sends a frame when it differs from the last one sent.
+  // 48×36 grey cells: fine enough that two pages of text differ, coarse enough to be compared in no time
   function frameSignature() {
-    const w = 32, h = 24;
+    const w = 48, h = 36;
     if (!video.videoWidth) return null;
     sigCanvas.width = w; sigCanvas.height = h;
     sctx.drawImage(video, 0, 0, w, h);
@@ -1199,9 +1201,14 @@
     return out;
   }
   function sigDiff(a, b) { if (!a || !b || a.length !== b.length) return 255; let s = 0; for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]); return s / a.length; }
+  // Two pages of text are nearly the same grey on average, so the mean is joined by the share of cells that
+  // changed a lot: a page turn moves lines of text, which flips many cells, while a hand's drift barely flips any.
+  function sigFrac(a, b) { if (!a || !b || a.length !== b.length) return 1; let n = 0; for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > 20) n++; return n / a.length; }
+  const sameScene = (a, b) => sigDiff(a, b) < 7 && sigFrac(a, b) < 0.12;     // the same picture: nothing new, a memory match
+  const nearScene = (a, b) => sigDiff(a, b) < 12 && sigFrac(a, b) < 0.18;    // the picture the text on screen is about, drifting
   // --- snap cache: a picture that already has an answer gets it back from memory instead of a new request ---
   const snapCache = [];  // { sig, text, readPos } — last 20
-  function cacheHit(sig) { if (!sig) return null; for (const c of snapCache) { if (sigDiff(sig, c.sig) < 7) return c; } return null; }
+  function cacheHit(sig) { if (!sig) return null; for (const c of snapCache) { if (sameScene(sig, c.sig)) return c; } return null; }
   function cacheStore(sig, text) { if (!sig || !text) return; const existing = cacheHit(sig); if (existing) { existing.text = text; return; } snapCache.push({ sig: new Uint8Array(sig), text, readPos: 0 }); if (snapCache.length > 20) snapCache.shift(); }
 
   function snap(source) {
@@ -1210,11 +1217,32 @@
     let frame;
     try { frame = captureFrame(); } catch (e) { showBanner(e.message); return; }
     const sig = frame.sig;
-    // the scene the text on screen is about (a hand-held phone drifts a little; that is not a new picture): it stays
-    if (source !== 'button' && sig && shownSig && reader.open && sigDiff(sig, shownSig) < 12) { skippedSince = frameNo; return; }
-    if (source === 'timer' && S.skipStill !== false && !retryFrame) {
-      if (sigDiff(sig, lastSig) < 7) { skippedSince = frameNo; return; }   // same picture as the last frame sent
+    // Is this a new picture? The reference is the picture the text on screen is about while the panel is open,
+    // else the last frame sent. Identical by the numbers: nothing new. A hand-held drift of the shown picture:
+    // it stays. Alike but not identical — which is what the next page of a document looks like, and also what
+    // the same page moved in the hand looks like — a quick look by a small fast model decides (SAME or
+    // DIFFERENT), so a page turn is never missed and a steady page never costs another full answer.
+    // known pictures: the one the text on screen is about, the empty scene last seen, the last frame sent
+    const known = [reader.open ? shownFrame : null, nothingFrame, lastSentFrame].filter((f) => f && f.sig);
+    let ref = null;
+    if (source !== 'button' && S.skipStill !== false && !retryFrame && sig && known.length) {
+      for (const f of known) { if (sameScene(sig, f.sig) || ((f === shownFrame || f === nothingFrame) && nearScene(sig, f.sig))) { skippedSince = frameNo; return; } }
+      ref = known.reduce((a, f) => (!a || sigDiff(sig, f.sig) < sigDiff(sig, a.sig)) ? f : a, null);
+      if (sigDiff(sig, ref.sig) < 40 && S.key) {
+        if (pageCheckBusy) return;   // one look at a time; the next tick asks again
+        pageCheckBusy = true;
+        looksSame(ref, frame).then((same) => {
+          if (same) { ref.sig = sig; skippedSince = frameNo; }   // the same picture, moved: absorb the drift, keep the text
+          else snapGo(frame, source);
+        }).catch(() => snapGo(frame, source)).finally(() => { pageCheckBusy = false; });
+        return;
+      }
     }
+    snapGo(frame, source);
+  }
+  function snapGo(frame, source) {
+    if (!running && source !== 'button') return;
+    const sig = frame.sig;
     if (sig) lastSig = sig;
     // memory first: a picture seen before gets the text it got then, with no request
     const hit = recall(lastSig, '');
@@ -1235,6 +1263,24 @@
     send(frame);
   }
 
+  // ----- the quick look: same picture or a different one -----
+  const PAGE_CHECK_MODEL = 'claude-haiku-4-5';
+  let pageCheckBusy = false, lastSentFrame = null, shownFrame = null, nothingFrame = null;   // nothingFrame: the empty scene last seen
+  async function looksSame(a, b) {
+    const body = { model: PAGE_CHECK_MODEL, max_tokens: 5, messages: [{ role: 'user', content: [
+      { type: 'text', text: 'Two photos from a phone camera, a few seconds apart. First:' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: a.b64 } },
+      { type: 'text', text: 'Second:' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b.b64 } },
+      { type: 'text', text: 'Is the second photo of the same thing as the first — the same page, note, screen or scene, merely moved, tilted, cropped or lit differently — or of something else, such as the next page of a document, a different note or a different object? Answer with one word: SAME or DIFFERENT.' } ] }] };
+    const res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': S.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify(body) });
+    const j = await res.json();
+    if (!res.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + res.status));
+    if (j.usage) { const [pIn, pOut] = priceFor(PAGE_CHECK_MODEL); sessionCost += ((j.usage.input_tokens || 0) * pIn + (j.usage.output_tokens || 0) * pOut) / 1e6; refreshReadouts(); }
+    const t = (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join(' ');
+    return /\bsame\b/i.test(t) && !/\bdifferent\b/i.test(t);
+  }
+
   // ----- where a text came from -----
   const sourceLabel = (from) => from === 'drive' ? '[memory · Google Drive]' : from === 'phone' ? '[memory · this phone]'
     : from === 'api-story' ? '[Claude API · your storylines]' : from === 'api-live' ? '[Claude API · this session]' : '[Claude API · general knowledge]';
@@ -1245,7 +1291,7 @@
     if (!frame.tag) { frameNo += 1; frame.no = frameNo; frame.at = new Date(); frame.tag = fmtF(frameNo); frameCounter.textContent = frame.tag; }
     lastShot.src = frame.thumb; lastShot.hidden = false;
     flash.classList.remove('on'); void flash.offsetWidth; flash.classList.add('on');
-    lastGoodText = hit.text; showingTranscript = false; renderLiveStrip(); shownSig = frame.sig || null;
+    lastGoodText = hit.text; showingTranscript = false; renderLiveStrip(); shownSig = frame.sig || null; shownFrame = frame.b64 ? frame : null;
     const { head, body } = splitAnswer(hit.text);
     answerBody.innerHTML = renderAnswer(hit.text, false); answerBody.classList.remove('stale');
     answerMeta.textContent = frame.tag + ' · ' + fmtTime(frame.at) + ' · ' + sourceLabel(hit.from);
@@ -1261,7 +1307,7 @@
   // Speech coming back from the engine marks the moment; for S.quietSec after the last word nothing new is
   // generated for the camera and nothing new is shown — a text that was already on its way waits. In the
   // word-by-word panel the highlight follows the voice meanwhile (see voiceFollow).
-  let lastSpokenAt = 0, heldSnap = false, heldReq = null, lastShownId = 0, shownSig = null;   // shownSig: the picture the text on screen is about
+  let lastSpokenAt = 0, heldSnap = false, heldReq = null, lastShownId = 0, shownSig = null;   // shownSig: the signature of the picture the text on screen is about
   // "Lens, hold" keeps the text on screen until "Lens, next" (or Done, or the session ends)
   let heldByVoice = false;
   const holdingForSpeech = () => heldByVoice || (!!lastSpokenAt && Date.now() - lastSpokenAt < (S.quietSec || 25) * 1000);
@@ -1277,7 +1323,7 @@
   const engineName = () => (listening && story) ? (story.engine === 'cloud' ? 'ElevenLabs' : 'phone dictation') : '';
   setInterval(() => {
     if (holdingForSpeech()) return;
-    if (heldReq) { const r = heldReq; heldReq = null; if (r.id > lastShownId && (running || listening)) displayAnswer(r); }
+    if (heldReq && !(splitAnswer(heldReq.text || '').frames === 'new' && readingUnderWay())) { const r = heldReq; heldReq = null; if (r.id > lastShownId && (running || listening)) displayAnswer(r); }
     if (heldSnap && running && !active.length) { heldSnap = false; snap('timer'); }
   }, 1000);
 
@@ -1303,16 +1349,17 @@
       for (const v of st.visuals || []) {
         if (!v.text || q !== normQ(v.question)) continue;
         const vs = noteSig(v);
-        if (sig && vs) { if (sigDiff(sig, vs) >= 7) continue; }
+        if (sig && vs) { if (!sameScene(sig, vs)) continue; }
         else if (sig || vs) continue;   // a picture on one side only
         if (!best || v.at > best.v.at) best = { v, st };
       }
     }
     return best ? { text: best.v.text, from: best.st.driveId ? 'drive' : 'phone' } : null;
   }
+  const nothingToRead = (text) => /^nothing to read\b/i.test(splitAnswer(text || '').head);
   function recall(sig, question) {
-    const m = memoryHit(sig, question);
-    const c = !question ? cacheHit(sig) : null;
+    let m = memoryHit(sig, question); if (m && nothingToRead(m.text)) m = null;
+    let c = !question ? cacheHit(sig) : null; if (c && nothingToRead(c.text)) c = null;
     if (m) return { text: m.text, from: m.from, readPos: (c && c.text === m.text) ? c.readPos : 0 };
     return c ? { text: c.text, from: 'phone', readPos: c.readPos } : null;
   }
@@ -1335,6 +1382,8 @@
   // ---------- API ----------
   async function send(frame) {
     retryFrame = false;
+    rememberFrame(frame);
+    if (frame.b64) lastSentFrame = frame;
     const req = {
       id: ++reqSeq, frame, ctrl: new AbortController(),
       startedAt: Date.now(), firstTextAt: 0, endedAt: 0,
@@ -1351,19 +1400,33 @@
       setStatus('thinking', `Choosing storylines for ${frame.tag}`);
       try { prefer = await routeStorylines(frame, req); } catch (e) { if (e.name === 'AbortError') { req.error = new Error('Stopped'); req.endedAt = Date.now(); active = active.filter((r) => r !== req); finish(req); return; } }
     }
+    // The frames of the last minutes go in before the current one, in order and cache-marked, so a document
+    // shown page by page is read as one; the session's open tail follows them (it changes every request and
+    // would otherwise keep the frames from being cached), then the current frame and the question.
+    const earlier = docFramesFor(frame);
     const content = [];
-    if (frame.b64) content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: frame.b64 } });
+    if (earlier.length) {
+      content.push({ type: 'text', text: `EARLIER FRAMES — ${earlier.length} picture${earlier.length === 1 ? '' : 's'} the camera took in the last minutes, oldest first, each labelled. If the current frame continues what (some of) these show — the next page of the same document or instructions, the same sketch or board — read them together as one and answer about the whole; a document that runs over several frames is one document, in this order.` });
+      earlier.forEach((f, i) => {
+        content.push({ type: 'text', text: `Earlier frame ${i + 1} of ${earlier.length} (${f.tag}, ${mmss(Date.now() - f.at.getTime())} ago)` });
+        content.push(i === earlier.length - 1 ? { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: f.b64 }, cache_control: { type: 'ephemeral' } } : { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: f.b64 } });
+      });
+    }
+    const sys = buildSystem(prefer);
+    if (sys.tail) content.push({ type: 'text', text: sys.tail });
+    if (frame.b64) { content.push({ type: 'text', text: earlier.length ? `CURRENT FRAME (${frame.tag}), the one to answer:` : `The frame (${frame.tag}):` }); content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: frame.b64 } }); }
     if (frame.question) {
       content.push({ type: 'text', text: 'Spoken question from the user: ' + frame.question + (frame.b64 ? '\n\nA frame from the camera is attached in case the question refers to it.' : '') });
     } else {
       content.push({ type: 'text', text: S.prompt || DEFAULT_PROMPT });
     }
+    if (earlier.length) content.push({ type: 'text', text: 'Third line of the reply, after the STORYLINE line: "FRAMES: continues" when the current frame continues the earlier ones (then answer about the whole document so far, and say what it still lacks if it is plainly incomplete), or "FRAMES: new" when it is something else (then answer about the current frame alone).' });
     const body = {
       model: S.model,
       max_tokens: S.maxTokens,
       stream: true,
       output_config: { effort: S.effort },
-      system: buildSystem(prefer),
+      system: sys.blocks,
       messages: [{ role: 'user', content }],
     };
 
@@ -1475,15 +1538,25 @@
       return;
     }
     failStreak = 0;
-    if (req.text) { try { cacheStore(req.frame.sig || lastSig, req.text); } catch (e) {} }
-    if (req.text && S.useStories) recordVisual(req);   // every answer is kept with its storyline, photo or not
+    const a = splitAnswer(req.text || '');
+    const nothing = !req.frame.question && /^nothing to read\b/i.test(a.head);   // never remembered: it is not an answer
+    if (req.text && !nothing) { try { cacheStore(req.frame.sig || lastSig, req.text); } catch (e) {} }
+    if (req.text && !nothing && S.useStories) recordVisual(req);   // every answer is kept with its storyline, photo or not
     if (req === current) {
-      // a camera text that arrives while you speak waits for the quiet spell; your own question shows at once
-      if (!req.frame.question && holdingForSpeech()) { heldReq = req; setStatus('armed', `Text for ${req.frame.tag} ready · shown when you pause`); }
-      else displayAnswer(req);
+      if (!req.frame.question && /^nothing to read\b/i.test(a.head) && lastGoodText) {
+        // the camera sees nothing worth answering: what is on screen stays, this frame is not part of any document,
+        // and the empty scene is remembered so it is not sent again while it stays in view
+        forgetFrame(req.frame); nothingFrame = req.frame;
+        setStatus(running ? 'done' : 'idle', `${req.frame.tag}: nothing to read · keeping the text`);
+      } else if (!req.frame.question && (holdingForSpeech() || (a.frames === 'new' && readingUnderWay()))) {
+        // a camera text that arrives while you speak, or a new subject while the current text is still being read, waits
+        heldReq = req; setStatus('armed', `Text for ${req.frame.tag} ready · shown ${a.frames === 'new' && readingUnderWay() ? 'when the current text has played through' : 'when you pause'}`);
+      } else displayAnswer(req);
     }
     pushHistory(req);
   }
+  // the text on screen has not yet been played (or read along) to its end
+  const readingUnderWay = () => reader.open && readerEl.classList.contains('feed') && reader.words.length > 0 && reader.pos < reader.words.length - 1;
   function displayAnswer(req) {
     const took = req.endedAt - req.startedAt;
     lastShownId = req.id;
@@ -1491,7 +1564,7 @@
     showingTranscript = false;
     renderLiveStrip();
     const from = apiSource(req.text);
-    shownSig = req.frame.sig || null;
+    shownSig = req.frame.sig || null; shownFrame = req.frame.b64 ? req.frame : null;
     const inAll = req.inTok + (req.cacheW || 0) + (req.cacheR || 0);
     const bits = [req.frame.tag, fmtTime(req.frame.at), `${secs(took)}`, `${inAll}${req.cacheR ? ' (' + req.cacheR + ' cached)' : ''}→${req.outTok} tok`, `$${req.cost.toFixed(3)}`, sourceLabel(from)];
     answerMeta.textContent = bits.join(' · ');
@@ -1519,13 +1592,14 @@
     streamTimer = setTimeout(() => {
       streamTimer = null;
       if (req !== current || req.endedAt) return;
-      const { head, body } = splitAnswer(req.text);
+      const { head, body, frames } = splitAnswer(req.text);
       if (!body || countWords(body) < 4) return;
+      if (!req.frame.question && (/^nothing to read\b/i.test(head) || (frames === 'new' && readingUnderWay() && reader.streamId !== req.id))) return;   // keeps what is on screen
       if (reader.open && reader.streamId === req.id) { growReader(body); return; }
       if (reader.streamId && reader.streamId !== req.id) return;   // another reply is on its way in
       openReader(body, head || req.frame.tag, { force: true, from: apiSource(req.text) });
       reader.streamId = req.id;
-      shownSig = req.frame.sig || null;
+      shownSig = req.frame.sig || null; shownFrame = req.frame.b64 ? req.frame : null;
       startAuto();
     }, 300);
   }
@@ -1617,14 +1691,16 @@
     if (!m) return { head: '', body: t };
     const head = m[1].replace(/[*_]+$/g, '').trim();
     let body = nl < 0 ? '' : t.slice(nl + 1).replace(/^\s*\n/, '');
-    let story = '';
+    let story = '', frames = '';
     const sm = /^\s*(?:[*_]+)?storyline(?:[*_]+)?\s*:\s*(.*)$/i.exec(body.split('\n')[0] || '');
     if (sm) {
       const v = sm[1].replace(/[*_]+$/g, '').trim();
       if (v && !/^none\.?$/i.test(v)) story = v;
       body = body.split('\n').slice(1).join('\n').replace(/^\s*\n/, '');
     }
-    return { head, body, story };
+    const fm = /^\s*(?:[*_]+)?frames(?:[*_]+)?\s*:\s*(continues|new)\b/i.exec(body.split('\n')[0] || '');
+    if (fm) { frames = fm[1].toLowerCase(); body = body.split('\n').slice(1).join('\n').replace(/^\s*\n/, ''); }
+    return { head, body, story, frames };
   }
   function headlineSize(str) {
     const n = str.length;
@@ -2081,14 +2157,25 @@
     const sb = storylineBlock(prefer);
     if (sb) blocks.push({ type: 'text', text: sb, cache_control: { type: 'ephemeral' } });
     const lb = S.useStories ? liveBlocks() : null;
+    let tail = '';
     if (lb) {
       if (!sb) blocks.push({ type: 'text', text: 'The user is a fiction author recording a spoken brainstorming session right now. When a question (spoken, or written or drawn in the photo) concerns it, answer from it and put "STORYLINE: Current session" on the second line; otherwise write "STORYLINE: none" and answer normally.' });
-      // frozen blocks, the last one carrying the cache mark; the open tail after it is the only part re-read at full price
+      // frozen blocks, the last one carrying the cache mark; the open tail is handed back to go into the message
+      // after the earlier frames, so it is the only part re-read at full price and the frames stay cached
       lb.blocks.forEach((text, i) => blocks.push(i === lb.frozenCount - 1 ? { type: 'text', text, cache_control: { type: 'ephemeral' } } : { type: 'text', text }));
-      blocks.push({ type: 'text', text: lb.tail });
+      tail = 'CURRENT SESSION, the newest part (continues the frozen part above):\n' + lb.tail;
     }
-    return blocks;
+    return { blocks, tail };
   }
+  // The frames of the last ten minutes (at most eleven), oldest first: what a document shown page by page is made of.
+  const docFrames = [];
+  function docFramesFor(frame) {
+    const cut = Date.now() - 10 * 60 * 1000;
+    while (docFrames.length && docFrames[0].at.getTime() < cut) docFrames.shift();
+    return docFrames.filter((f) => f !== frame && f.b64).slice(-11);
+  }
+  function rememberFrame(frame) { if (frame.b64) { docFrames.push(frame); if (docFrames.length > 24) docFrames.shift(); } }
+  function forgetFrame(frame) { const i = docFrames.indexOf(frame); if (i >= 0) docFrames.splice(i, 1); }
 
   // ----- cloud speech recognition: ElevenLabs Scribe v2 Realtime -----
   // Microphone → AudioWorklet (mono, resampled to 16 kHz PCM16, 100 ms chunks so the words come back fast) → base64 over a WebSocket.
