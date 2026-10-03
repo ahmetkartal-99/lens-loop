@@ -587,8 +587,8 @@
         <span style="font-size:15px;font-weight:600">Scene mode — cold-read dialogue</span>
       </label>
       <div class="hint" style="margin-bottom:8px">When on, the camera reads scenario prompts and generates character dialogue for you to sight-read on the mic. The prompt above is ignored; the text below shapes the character.</div>
-      <label for="sceneCharacter" style="font-size:13px">Character / role (which side of the roleplay?)</label>
-      <textarea id="sceneCharacter" placeholder="e.g. the doctor — calm, experienced GP in her 40s. Warm but direct, plain language.&#10;Or just: the patient&#10;Or: the interviewer — senior, probing, slightly impatient" style="min-height:72px"></textarea>
+      <label for="sceneCharacter" style="font-size:13px">Voice notes (optional — the role comes from the card)</label>
+      <textarea id="sceneCharacter" placeholder="e.g. Calm GP in her 40s. Warm but direct, plain language, Australian accent.&#10;Leave blank and the card's own heading picks the role automatically." style="min-height:72px"></textarea>
     </div>
 
     <div class="row">
@@ -762,28 +762,28 @@
   // ----- Scene mode: the camera captures a scenario prompt, Claude generates character dialogue -----
   const SCENE_SYSTEM_RULES =
     'You are a dialogue generator for a fiction author who is sight-reading character lines on the mic. ' +
-    'The user\'s camera is pointed at a scenario card, role-play prompt or situation description — these often have TWO sides ' +
-    '(e.g. a doctor card and a patient card, an interviewer and a candidate, a caller and a responder). ' +
-    'Read the ENTIRE card to understand the full scenario and both sides, then generate natural, speakable dialogue ONLY for the ' +
-    'role named in the CHARACTER field below. The CHARACTER field may be just a role name ("the patient", "the doctor") or a full ' +
-    'description with voice notes — either way, find that role on the card, adopt its talking points and situation, and speak as ' +
-    'that person. Use the OTHER side\'s cues, concerns and bullet points as the situation your character is responding to — ' +
-    'weave responses to those points naturally into the dialogue as if the other person just said them. ' +
-    'If no CHARACTER is set and the card has two roles, pick the professional/authority role by default (doctor over patient, ' +
-    'interviewer over candidate, examiner over examinee). ' +
+    'The user\'s camera is pointed at a page from a roleplay scenario — often a multi-page PDF where each page is one role\'s task card ' +
+    '(e.g. page 1 is the doctor\'s card, page 2 is the patient\'s card). The card the camera is showing you right now IS the role ' +
+    'to play. Read it, identify whose task card this is from the heading and instructions (e.g. "DOCTOR\'S TASK", "CANDIDATE CARD", ' +
+    '"PATIENT", "INTERLOCUTOR"), and generate natural, speakable dialogue AS that person.\n\n' +
+    'USE THE CARD\'S OWN CONTENT to build the dialogue: its bullet points, talking points, clinical tasks, situation notes — fold ' +
+    'all of them into flowing speech. If the card references the other side\'s concerns or likely responses, have your character ' +
+    'address those conversationally as if the other person just spoke.\n\n' +
+    'If a CHARACTER field is set below, use it for voice and style notes (accent, personality, speech patterns) but still take the ' +
+    'ROLE from the card itself. If the card has no clear role heading, fall back to the CHARACTER field for which role to play; ' +
+    'if neither is set, play the professional/authority role.\n\n' +
     'Format every reply the same way: the first line is "ANSWER: " followed by a short title of the scenario (at most eight words). ' +
     'Then a blank line, then the character\'s dialogue as flowing speech — no stage directions, no action lines, no parenthetical ' +
     'notes, no speaker labels, just the words the character would say, written to be spoken aloud in one take. ' +
     'Write in the character\'s natural voice: contractions, hesitations ("well," "look,"), sentence fragments — whatever makes it ' +
     'sound like a real person talking, not a textbook. Vary the rhythm. ' +
-    'When the card gives bullet points or talking points for your character, cover all of them but fold them into natural speech — ' +
-    'never read them as a list. When it gives the other side\'s lines or concerns, have your character address them conversationally. ' +
+    'Cover all the talking points on the card but fold them into natural speech — never read them as a list. ' +
     'When the photo shows nothing worth generating from — an empty desk, a wall, a blur — the first line is "ANSWER: nothing to read" ' +
     'and the explanation is one short line, so what was on screen before can stay. ' +
     'The author is recording and reads the text as it streams in, so start the dialogue immediately — no preamble.';
   const SCENE_PROMPT =
-    'Look at this photo. It shows a scenario card with one or two roles. Generate dialogue for the character described in the system ' +
-    'prompt — natural, speakable lines for a cold read on the mic, addressing the other side\'s concerns and cues. ' +
+    'Look at this photo. It shows one page of a roleplay scenario. Identify whose task card this is and generate that character\'s ' +
+    'dialogue — natural, speakable lines for a cold read on the mic, covering every talking point on the card. ' +
     'If no scenario is visible, describe what is in the frame briefly.';
 
   const DIGEST_RULES =
@@ -798,7 +798,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-03 13:15';
+  const BUILD = '2026-10-03 13:25';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
