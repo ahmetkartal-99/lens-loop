@@ -384,6 +384,7 @@
   .reader-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
   .reader-head .r-title { font-family: var(--mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .reader-head .r-state { font-family: var(--mono); font-size: 11px; color: var(--accent); }
+  .reader-head .r-src { font-family: var(--mono); font-size: 10px; color: var(--muted); white-space: nowrap; }
   .reader-body { flex: 1; overflow-y: auto; padding: 40vh 24px 40vh; -webkit-overflow-scrolling: touch; }
   .reader-body .w { font-size: var(--read-size, 34px); line-height: 1.5; font-weight: 700; color: var(--muted); transition: color .15s, background .15s; }
   .reader-body .w.read { color: var(--text); }
@@ -481,6 +482,7 @@
     <section class="reader" id="reader" aria-hidden="true">
       <div class="reader-head">
         <span class="r-title" id="readerTitle">Reading</span>
+        <span class="r-src" id="readerSrc"></span>
         <span class="r-state" id="readerState"></span>
         <div class="reader-speed">
           <button type="button" id="spdDown" aria-label="Slower">-</button>
@@ -733,7 +735,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-02 19:52';
+  const BUILD = '2026-10-02 20:40';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -771,6 +773,7 @@
     sessionListen: true,
     skipStill: true,
     saveAudio: true,
+    quietSec: 25,   // seconds without speech before new camera text may be generated or shown
   };
   const STORE = 'lensloop.settings';
   let S = loadSettings();
@@ -1021,7 +1024,8 @@
     thumbCanvas.width = tw; thumbCanvas.height = th;
     tctx.drawImage(canvas, 0, 0, tw, th);
     const thumb = thumbCanvas.toDataURL('image/jpeg', 0.6);
-    return { b64: dataUrl.slice(dataUrl.indexOf(',') + 1), thumb, w: cw, h: ch };
+    let sig = null; try { sig = frameSignature(); } catch (e) {}
+    return { b64: dataUrl.slice(dataUrl.indexOf(',') + 1), thumb, w: cw, h: ch, sig };
   }
 
   // ---------- wake lock ----------
@@ -1167,6 +1171,8 @@
   function cacheStore(sig, text) { if (!sig || !text) return; const existing = cacheHit(sig); if (existing) { existing.text = text; return; } snapCache.push({ sig: new Uint8Array(sig), text, readPos: 0 }); if (snapCache.length > 20) snapCache.shift(); }
 
   function snap(source) {
+    // while you speak, and for a quiet spell after, the text on screen stays: nothing new is generated or shown
+    if (source !== 'button' && holdingForSpeech()) { heldSnap = true; if (!active.length) setStatus('armed', 'Holding the text while you speak'); return; }
     let frame;
     try { frame = captureFrame(); } catch (e) { showBanner(e.message); return; }
     if (source === 'timer' && S.skipStill !== false && !retryFrame) {
@@ -1176,25 +1182,10 @@
     } else {
       try { lastSig = frameSignature(); } catch (e) {}
     }
-    // the same picture as an earlier answer: show that answer again in the panel, no new request
-    if (source === 'change' || source === 'button') {
-      const hit = cacheHit(lastSig);
-      if (hit) {
-        frameNo += 1; frame.no = frameNo; frame.at = new Date(); frame.tag = fmtF(frameNo);
-        frameCounter.textContent = frame.tag; lastShot.src = frame.thumb; lastShot.hidden = false;
-        flash.classList.remove('on'); void flash.offsetWidth; flash.classList.add('on');
-        lastGoodText = hit.text;
-        const { head, body } = splitAnswer(hit.text);
-        answerBody.innerHTML = renderAnswer(hit.text, false); answerBody.classList.remove('stale');
-        answerMeta.textContent = frame.tag + ' · ' + fmtTime(frame.at) + ' · cached';
-        copyBtn.hidden = false; $('readBtn').hidden = false;
-        setStatus(running ? 'done' : 'idle', 'Cached answer for ' + frame.tag);
-        openReader(body || hit.text, head || 'Cached answer', { force: true });
-        if (hit.readPos > 0 && hit.readPos < reader.words.length) { reader.pos = hit.readPos; paintReader(); }
-        startAuto();
-        return;
-      }
-    }
+    frame.sig = lastSig;
+    // memory first: a picture seen before gets the text it got then, with no request
+    const hit = recall(lastSig, '');
+    if (hit) { showRecalled(frame, hit); return; }
     skippedSince = -1;
     frameNo += 1;
     frame.no = frameNo;
@@ -1209,6 +1200,79 @@
       if (S.busy === 'latest') { pending = frame; setStatus('thinking', `Busy · ${fmtF(frameNo)} queued`); return; }
     }
     send(frame);
+  }
+
+  // ----- where a text came from -----
+  const sourceLabel = (from) => from === 'drive' ? '[from memory · Google Drive]' : from === 'phone' ? '[from memory · this phone]' : '[Claude API]';
+  // A text found in memory is shown exactly like a fresh one, with its source in the bracket.
+  function showRecalled(frame, hit) {
+    if (reader.open && readerEl.classList.contains('feed') && lastGoodText === hit.text) return;   // already on screen
+    if (!frame.tag) { frameNo += 1; frame.no = frameNo; frame.at = new Date(); frame.tag = fmtF(frameNo); frameCounter.textContent = frame.tag; }
+    lastShot.src = frame.thumb; lastShot.hidden = false;
+    flash.classList.remove('on'); void flash.offsetWidth; flash.classList.add('on');
+    lastGoodText = hit.text; showingTranscript = false; renderLiveStrip();
+    const { head, body } = splitAnswer(hit.text);
+    answerBody.innerHTML = renderAnswer(hit.text, false); answerBody.classList.remove('stale');
+    answerMeta.textContent = frame.tag + ' · ' + fmtTime(frame.at) + ' · ' + sourceLabel(hit.from);
+    copyBtn.hidden = false; $('readBtn').hidden = false;
+    setStatus(running ? 'done' : 'idle', 'From memory for ' + frame.tag);
+    openReader(body || hit.text, head || 'From memory', { force: true, from: hit.from });
+    if (hit.readPos > 0 && hit.readPos < reader.words.length) { reader.pos = hit.readPos; paintReader(); }
+    startAuto();
+    lastShownId = ++reqSeq;
+  }
+
+  // ----- while you speak -----
+  // Speech coming back from the engine marks the moment; for S.quietSec after the last word nothing new is
+  // generated for the camera and nothing new is shown — a text that was already on its way waits. In the
+  // word-by-word panel the highlight follows the voice meanwhile (see voiceFollow).
+  let lastSpokenAt = 0, heldSnap = false, heldReq = null, lastShownId = 0;
+  const holdingForSpeech = () => !!lastSpokenAt && Date.now() - lastSpokenAt < (S.quietSec || 25) * 1000;
+  function heardSpeech(text) {
+    if (!(text || '').trim()) return;
+    lastSpokenAt = Date.now();
+    if (reader.open && readerEl.classList.contains('feed')) voiceFollow(text);
+  }
+  setInterval(() => {
+    if (holdingForSpeech()) return;
+    if (heldReq) { const r = heldReq; heldReq = null; if (r.id > lastShownId && (running || listening)) displayAnswer(r); }
+    if (heldSnap && running && !active.length) { heldSnap = false; snap('timer'); }
+  }, 1000);
+
+  // ----- memory: every text stays with its storyline, and so on Drive, with the picture's fingerprint -----
+  // A picture seen before, or a question asked before about the same picture, gets the text it got then
+  // without a request, on this phone or on any device that picked the storyline up from Drive. The snap cache
+  // covers texts that belong to no storyline for the length of the session.
+  const sigToB64 = (sig) => { let t = ''; for (let i = 0; i < sig.length; i++) t += String.fromCharCode(sig[i]); return btoa(t); };
+  const sigCache = new Map();   // note id → fingerprint bytes
+  function noteSig(v) {
+    if (!v.sig) return null;
+    let u = sigCache.get(v.id);
+    if (!u) { try { const b = atob(v.sig); u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); } catch (e) { return null; } sigCache.set(v.id, u); }
+    return u;
+  }
+  const normQ = (q) => (q || '').toLowerCase().replace(/[^\p{L}\p{N} ]/gu, '').replace(/\s+/g, ' ').trim();
+  function memoryHit(sig, question) {
+    const q = normQ(question);
+    let best = null;
+    const pool = listening && story ? stories.concat([story]) : stories;
+    for (const st of pool) {
+      if (st.use === false) continue;
+      for (const v of st.visuals || []) {
+        if (!v.text || q !== normQ(v.question)) continue;
+        const vs = noteSig(v);
+        if (sig && vs) { if (sigDiff(sig, vs) >= 7) continue; }
+        else if (sig || vs) continue;   // a picture on one side only
+        if (!best || v.at > best.v.at) best = { v, st };
+      }
+    }
+    return best ? { text: best.v.text, from: best.st.driveId ? 'drive' : 'phone' } : null;
+  }
+  function recall(sig, question) {
+    const m = memoryHit(sig, question);
+    const c = !question ? cacheHit(sig) : null;
+    if (m) return { text: m.text, from: m.from, readPos: (c && c.text === m.text) ? c.readPos : 0 };
+    return c ? { text: c.text, from: 'phone', readPos: c.readPos } : null;
   }
 
   // A frame whose request failed is not left behind: the still-picture check is skipped once, so the next
@@ -1368,29 +1432,37 @@
       return;
     }
     failStreak = 0;
-    if (req.text) { lastGoodText = req.text; try { cacheStore(lastSig, req.text); } catch (e) {} }
+    if (req.text) { try { cacheStore(req.frame.sig || lastSig, req.text); } catch (e) {} }
     if (req.frame.b64 && req.text && S.useStories) recordVisual(req);
     if (req === current) {
-      showingTranscript = false;
-      renderLiveStrip();
-      const inAll = req.inTok + (req.cacheW || 0) + (req.cacheR || 0);
-      const bits = [req.frame.tag, fmtTime(req.frame.at), `${secs(took)}`, `${inAll}${req.cacheR ? ' (' + req.cacheR + ' cached)' : ''}→${req.outTok} tok`, `$${req.cost.toFixed(3)}`];
-      answerMeta.textContent = bits.join(' · ');
-      answerBody.innerHTML = renderAnswer(req.text || '(no text in the reply)', false);
-      answerBody.classList.remove('stale');
-      copyBtn.hidden = !req.text;
-      $('readBtn').hidden = !req.text;
-      if (req.stop === 'max_tokens') showBanner('The reply hit the max output tokens limit and was cut off. Raise the limit in settings if this keeps happening.', 'note');
-      else if (req.stop === 'refusal') showBanner('Claude declined to answer this frame.', 'note');
-      setStatus(running ? 'done' : 'idle', running ? `Answered ${req.frame.tag} · next in ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s` : 'Idle');
-      // auto-open reader with metered feed
-      if (req.text && req.frame.b64) {
-        const { head, body } = splitAnswer(req.text);
-        openReader(body || req.text, head || req.frame.tag, { force: true });
-        startAuto();
-      }
+      // a camera text that arrives while you speak waits for the quiet spell; your own question shows at once
+      if (!req.frame.question && holdingForSpeech()) { heldReq = req; setStatus('armed', `Text for ${req.frame.tag} ready · shown when you pause`); }
+      else displayAnswer(req);
     }
     pushHistory(req);
+  }
+  function displayAnswer(req) {
+    const took = req.endedAt - req.startedAt;
+    lastShownId = req.id;
+    if (req.text) lastGoodText = req.text;
+    showingTranscript = false;
+    renderLiveStrip();
+    const inAll = req.inTok + (req.cacheW || 0) + (req.cacheR || 0);
+    const bits = [req.frame.tag, fmtTime(req.frame.at), `${secs(took)}`, `${inAll}${req.cacheR ? ' (' + req.cacheR + ' cached)' : ''}→${req.outTok} tok`, `$${req.cost.toFixed(3)}`, sourceLabel('api')];
+    answerMeta.textContent = bits.join(' · ');
+    answerBody.innerHTML = renderAnswer(req.text || '(no text in the reply)', false);
+    answerBody.classList.remove('stale');
+    copyBtn.hidden = !req.text;
+    $('readBtn').hidden = !req.text;
+    if (req.stop === 'max_tokens') showBanner('The reply hit the max output tokens limit and was cut off. Raise the limit in settings if this keeps happening.', 'note');
+    else if (req.stop === 'refusal') showBanner('Claude declined to answer this frame.', 'note');
+    setStatus(running ? 'done' : 'idle', running ? `Answered ${req.frame.tag} · next in ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s` : 'Idle');
+    // the text plays word by word in the panel
+    if (req.text && req.frame.b64) {
+      const { head, body } = splitAnswer(req.text);
+      openReader(body || req.text, head || req.frame.tag, { force: true, from: 'api' });
+      startAuto();
+    }
   }
 
   function renderCurrent() {
@@ -1692,14 +1764,19 @@
     return `left:${cx - h / 2}px;top:${cy - w / 2}px;width:${h}px;height:${w}px;right:auto;bottom:auto;transform:rotate(${rot}deg)`;
   }
   // The answer panel, the hands-free feed in its place and the full-screen Read view all follow the tilt.
+  const topBar = document.querySelector('.bar.top');
   function applyPanelRotation() {
     const rot = contentRotation();
     const sw = stageEl.clientWidth, sh = stageEl.clientHeight;
+    // sideways, the panel's width for the viewer runs along the screen's height, so it grows upward over the
+    // camera strip and the top bar, to just under the clock; upright it leaves the camera strip in view
+    const up = Math.abs(rot) === 90 ? topBar.offsetHeight : 0;
+    const y = up ? -up : 116, h = up ? sh + up - 8 : sh - 124;
     const p = $('answer');
-    p.style.cssText = turnedCss(p.classList.contains('collapsed') ? 0 : rot, 8, 116, sw - 16, sh - 124);
+    p.style.cssText = turnedCss(p.classList.contains('collapsed') ? 0 : rot, 8, y, sw - 16, h);
     const r = $('reader');
     if (!r.classList.contains('open')) r.style.cssText = '';
-    else if (r.classList.contains('feed')) r.style.cssText = turnedCss(rot, 8, 116, sw - 16, sh - 124);
+    else if (r.classList.contains('feed')) r.style.cssText = turnedCss(rot, 8, y, sw - 16, h);
     else r.style.cssText = turnedCss(rot, 0, 0, window.innerWidth, window.innerHeight);
   }
   window.addEventListener('resize', applyPanelRotation);
@@ -2251,8 +2328,8 @@
       continuous: true,
       micStream: opts.micStream || null,
       keyterms: useCloud ? cloudKeyterms() : [],
-      onFinal: (text) => { if (!story || !text) return; story.interim = ''; handleUtterance(text); renderTranscript(); renderLiveStrip(); },
-      onInterim: (t) => { if (story) { story.interim = t; renderTranscript(); renderLiveStrip(); } },
+      onFinal: (text) => { if (!story || !text) return; story.interim = ''; heardSpeech(text); handleUtterance(text); renderTranscript(); renderLiveStrip(); },
+      onInterim: (t) => { if (story) { story.interim = t; heardSpeech(t); renderTranscript(); renderLiveStrip(); } },
       onNote: (t) => { if (story) { story.note = t; renderLiveStrip(); } },
       onMic: (ms) => { micStream = ms; stopAudioCapture(); startAudioCapture(ms); },   // the engine got a fresh microphone; record from it too
       onFatal: (msg) => {
@@ -2400,7 +2477,8 @@
     const target = (!isLive && findStoryByTitle(tag)) || (listening && story ? story : null) || findStoryByTitle(tag);
     if (!target) return;
     const note = { id: 'vf_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), at: req.frame.at.getTime(), tag: req.frame.tag, question: req.frame.question || '',
-      caption: (head || '').slice(0, 200) + (body ? ' — ' + body.replace(/\s+/g, ' ').slice(0, 300) : '') };
+      caption: (head || '').slice(0, 200) + (body ? ' — ' + body.replace(/\s+/g, ' ').slice(0, 300) : ''),
+      sig: req.frame.sig ? sigToB64(req.frame.sig) : '', text: (req.text || '').slice(0, 6000) };   // the memory: picture fingerprint + the whole text
     target.visuals = (target.visuals || []).concat([note]);
     if (target === story) saveDraft(); else { target.updatedAt = Date.now(); saveStories(); scheduleSync(); }
     fetch('data:image/jpeg;base64,' + req.frame.b64).then((r) => r.blob()).then((blob) =>
@@ -2641,10 +2719,12 @@
     askNo += 1;
     const frame = { no: askNo, tag: 'Q-' + String(askNo).padStart(3, '0'), at: new Date(), thumb: MIC_THUMB, question: q, b64: null };
     if ((withFrame || S.askWithFrame) && stream && video.videoWidth) {
-      try { const f = captureFrame(); frame.b64 = f.b64; frame.thumb = f.thumb; if (S.skipStill !== false) { try { lastSig = frameSignature(); } catch (e) {} } } catch (e) { /* no frame, text only */ }
+      try { const f = captureFrame(); frame.b64 = f.b64; frame.thumb = f.thumb; frame.sig = f.sig; if (S.skipStill !== false && f.sig) lastSig = f.sig; } catch (e) { /* no frame, text only */ }
     }
     showingTranscript = false;
     setPanel(true);
+    const hit = recall(frame.sig || null, q);   // the same question about the same picture (or none) was answered before
+    if (hit) { showRecalled(frame, hit); return; }
     send(frame);
   }
 
@@ -2981,7 +3061,7 @@
   // your chapter out loud hands-free without losing your place. It only ever highlights this text; it
   // generates nothing and records nothing.
   const reader = { words: [], norm: [], pos: 0, engine: null, open: false };
-  const readerEl = $('reader'), readerBody = $('readerBody'), readerState = $('readerState'), readerTitle = $('readerTitle');
+  const readerEl = $('reader'), readerBody = $('readerBody'), readerState = $('readerState'), readerTitle = $('readerTitle'), readerSrc = $('readerSrc');
   const normWord = (w) => w.toLowerCase().replace(/[^\p{L}\p{N}']/gu, '');
   function buildReader(text, title) {
     readerTitle.textContent = title || 'Reading';
@@ -2998,6 +3078,7 @@
       reader.words.push(span); reader.norm.push(n);
     });
     reader.pos = 0; paintReader();
+    if (voiceHold) { clearTimeout(voiceHold.timer); voiceHold = null; }
   }
   function paintReader() {
     reader.words.forEach((el, i) => { el.className = 'w' + (i < reader.pos ? ' read' : i === reader.pos ? ' cur' : ''); });
@@ -3007,7 +3088,7 @@
   // Align what was heard against the text: walk the spoken words, advancing a local pointer by searching a
   // small window ahead, so skips, repeats and mis-hearings still move the highlight forward (never back).
   const wordEq = (a, b) => a === b || (a.length > 3 && b.length > 3 && (a.startsWith(b) || b.startsWith(a)));
-  function feedReader(spoken) {
+  function feedReader(spoken, wide) {
     const sp = spoken.split(/\s+/).map(normWord).filter(Boolean);
     if (!sp.length) return;
     // Match the most recent run of spoken words (longest wins) to the text just ahead of where we are, so
@@ -3022,13 +3103,45 @@
         if (ok && (L > 1 || k >= reader.pos)) { best = k + L; break; }   // single-word matches only move forward
       }
     }
+    if (best < 0 && wide) {
+      // the voice may start anywhere — after the timer ran ahead, or when a text is read again: take the longest
+      // recent run of spoken words found anywhere, two words at least so a lone "the" never jumps the highlight
+      for (let L = Math.min(5, sp.length); L >= 2 && best < 0; L--) {
+        const tail = sp.slice(sp.length - L);
+        for (let k = 0; k + L <= N.length; k++) {
+          let ok = true;
+          for (let j = 0; j < L; j++) { if (!wordEq(N[k + j], tail[j])) { ok = false; break; } }
+          if (ok) { best = k + L; break; }
+        }
+      }
+      if (best >= 0 && best !== reader.pos) { reader.pos = Math.min(best, reader.words.length); paintReader(); }
+      return;
+    }
     if (best > reader.pos) { reader.pos = Math.min(best, reader.words.length); paintReader(); }
+  }
+  // While you speak, the word-by-word panel follows your voice instead of the clock: the timer pauses, the
+  // highlight goes to the words you say (wherever they are in the text), and a few seconds after you stop the
+  // timer picks up from there.
+  let voiceHold = null;
+  function voiceFollow(text) {
+    const before = reader.pos;
+    feedReader(text, true);
+    if (reader.pos === before && !voiceHold) return;   // nothing in the text matched: you are talking about something else
+    if (!voiceHold) { voiceHold = { auto: !!autoTimer, timer: null }; stopAuto(); }
+    readerState.textContent = 'following your voice';
+    clearTimeout(voiceHold.timer);
+    voiceHold.timer = setTimeout(() => {
+      const h = voiceHold; voiceHold = null;
+      if (!reader.open || !readerEl.classList.contains('feed')) return;
+      if (h.auto && reader.pos < reader.words.length - 1) startAuto(); else stopAuto();
+    }, 5000);
   }
   async function openReader(text, title, opts) {
     if (!text || !text.trim()) { showBanner('Nothing to read here yet.', 'note'); return; }
     const force = opts && opts.force;
     if (!force && (running || listening)) { showBanner('Stop the session first, then open Read.', 'note'); return; }
     buildReader(text, title);
+    readerSrc.textContent = opts && opts.from ? sourceLabel(opts.from) : '';
     // the hands-free feed takes the answer panel's place over the lower part of the camera (see .reader.feed);
     // the manual Read view is the full-screen page
     readerEl.classList.toggle('feed', !!force); stageEl.classList.toggle('feeding', !!force);
@@ -3056,6 +3169,7 @@
     if (cachedText) { const hit = snapCache.find((c) => c.text === cachedText); if (hit) hit.readPos = reader.pos; }
     reader.open = false; readerEl.classList.remove('open', 'feed'); stageEl.classList.remove('feeding'); readerEl.setAttribute('aria-hidden', 'true');
     applyPanelRotation();
+    if (voiceHold) { clearTimeout(voiceHold.timer); voiceHold = null; }
     stopAuto();
     try { reader.engine && reader.engine.stop(); } catch (e) {} reader.engine = null;
     if (!running && !listening) releaseWake();
@@ -3076,6 +3190,7 @@
     reader.pos++; paintReader();
   }
   function startAuto() {
+    if (voiceHold) { clearTimeout(voiceHold.timer); voiceHold = null; }
     if (autoTimer) clearInterval(autoTimer);
     autoTimer = setInterval(autoTick, 1000 / autoSpeed);
     autoBtn.classList.add('on'); autoBtn.textContent = 'Pause';

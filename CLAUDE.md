@@ -36,7 +36,17 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
    The feed is **not full-screen**: with the `feed` class it takes the answer panel's place over the lower part
    of the camera (dark, translucent, `.reader.feed`, the reader element lives inside `.stage`), so the status
    bar, the camera strip and the Snap/Stop buttons stay visible and tappable. Only the manual Read view fills
-   the screen. Both turn with the phone's tilt exactly like the answer panel (`applyPanelRotation`, `turnedCss`).
+   the screen. Both turn with the phone's tilt exactly like the answer panel (`applyPanelRotation`, `turnedCss`);
+   sideways, the panel grows up to the top bar's top edge (over the camera strip and the header).
+   **Your voice leads** (`heardSpeech` → `voiceFollow`, `feedReader(…, wide)`): while you speak the highlight
+   follows the words you say anywhere in the text and the timer pauses, resuming 5 s after you stop.
+   **Nothing changes while you talk** (`holdingForSpeech`, `S.quietSec` = 25): no camera text is generated
+   (`snap` holds, `heldSnap`) or shown (`finish` parks the answer in `heldReq`) until the quiet spell has
+   passed; your own spoken questions show at once.
+   **Memory first** (`recall` → `memoryHit`/`cacheHit`): every visual note keeps the picture's fingerprint
+   (`sig`, base64 of the 32×24 grey signature) and the whole `text`; a matching picture or question is answered
+   from memory with no request, labelled `[from memory · Google Drive]` / `[from memory · this phone]`; fresh
+   answers are labelled `[Claude API]` (`sourceLabel`, `#readerSrc`, the answer meta line).
 4. **Read-along.** The reader shows the text large with the Apple-Music-style highlight (`.w`, `.w.read`,
    `.w.cur`): when opened by hand with no session running it follows the reader's own voice (`feedReader`, phone
    or cloud engine); when forced open during a session it auto-scrolls instead. A+/A− sizing.
@@ -73,6 +83,7 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
 ## Tests (run before every push)
 
 - `node --check` on the script body, then `node test/live-prompt.test.js` (prompt assembly, no browser).
-- `node test/session.e2e.js`, `node test/drive-renewal.e2e.js` and `node test/fresh-build.e2e.js` (headless Chromium via Playwright,
+- `node test/session.e2e.js`, `node test/drive-renewal.e2e.js`, `node test/fresh-build.e2e.js` and
+  `node test/memory-voice.e2e.js` (headless Chromium via Playwright,
   `npm i -D playwright` if missing): a real session with a fake camera, fake dictation and a fake Claude
   endpoint; checks request bodies, cache marks, retries and the Drive renewal frame.

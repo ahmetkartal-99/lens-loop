@@ -38,38 +38,41 @@ const sse = (text) => {
   page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') logs.push(m.type() + ': ' + m.text()); });
   await ctx.addInitScript(() => {
     // settings: short interval, keep the key, no audio file saving (MediaRecorder on a fake device is beside the point)
-    localStorage.setItem('lensloop.settings', JSON.stringify({ v: 3, interval: 5, saveKey: true, saveAudio: false, key: 'sk-ant-test-0000' }));
-    // a dictation engine that "hears" a sentence every 200 ms
-    let n = 0;
+    localStorage.setItem('lensloop.settings', JSON.stringify({ v: 3, interval: 5, saveKey: true, saveAudio: false, key: 'sk-ant-test-0000', quietSec: 4 }));
+    // a dictation engine that "hears" a long sentence every 100 ms for the first five seconds, then goes quiet
+    let n = 0, t0 = 0;
     class FakeSR {
       constructor() { this.continuous = false; this.interimResults = true; this._t = null; }
       start() {
         const self = this;
+        if (!t0) t0 = Date.now();
         this._t = setInterval(() => {
+          if (Date.now() - t0 > 5000) return;
           n++;
-          const text = `Sentence ${n} of the session: the toll keeper takes a memory at the river crossing and the ferry waits for nobody.`;
+          const text = `Sentence ${n} of the session: the toll keeper takes a memory at the river crossing and the ferry waits for nobody, the gulls hold the far bank and the lamps go out one by one.`;
           const results = []; results.push([{ transcript: text }]); results[0].isFinal = true;
           self.onresult && self.onresult({ resultIndex: 0, results });
-        }, 200);
+        }, 100);
       }
       stop() { clearInterval(this._t); this.onend && this.onend(); }
       abort() { this.stop(); }
     }
     window.webkitSpeechRecognition = FakeSR; window.SpeechRecognition = FakeSR;
   });
-  const bodies = [];
-  let fail = 0;
+  const bodies = [], at = [];
+  let fail = 0, started = 0;
   await page.route('https://api.anthropic.com/v1/messages', async (route) => {
     const body = JSON.parse(route.request().postData());
-    bodies.push(body);
+    bodies.push(body); at.push(Date.now() - started);
     if (fail > 0) { fail--; await route.fulfill({ status: 529, contentType: 'application/json', body: JSON.stringify({ error: { message: 'Overloaded' } }) }); return; }
     await route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse('ANSWER: The toll keeper takes a memory\nSTORYLINE: Current session\n\nThat is what the session says so far, in request ' + bodies.length + '.') });
   });
   await page.goto(`http://127.0.0.1:${port}/index.html#key=sk-ant-test-0000`);
   await page.waitForTimeout(800);
+  started = Date.now();
   await page.click('#startBtn');
   // let the loop run: frames every 5 s (the fake camera's pattern moves, so frames are "new"), dictation streaming
-  await page.waitForTimeout(23000);
+  await page.waitForTimeout(30000);
   const nReq = bodies.length;
   console.log('requests so far:', nReq);
   // now make the API fail twice (transient) and watch the retry
@@ -110,5 +113,9 @@ const sse = (text) => {
   assert(prevFrozen.every((t, i) => nowFrozen[i] === t), 'frozen chunks of the previous request are a byte-identical prefix of this one');
   // retry: after two 529s there must have been more requests than the failures
   assert(bodies.length > nReq + 2, 'frames were sent again after the failures (' + (bodies.length - nReq) + ' more requests)');
+  // while the dictation ran (first 5 s) and for quietSec after, no camera text was generated
+  const during = at.filter((t) => t > 800 && t < 8500).length;
+  assert(during === 0, 'no camera request while speaking or in the quiet spell after (' + during + ' in that window; requests at ' + at.map((t) => Math.round(t / 100) / 10).join(', ') + ' s)');
+  assert(at.filter((t) => t >= 8500).length >= 2, 'camera requests resumed after the quiet spell');
   console.log(process.exitCode ? 'E2E FAILED' : 'E2E PASSED');
 })().catch((e) => { console.error(e); process.exit(1); });
