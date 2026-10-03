@@ -80,7 +80,9 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
    flow, silent `prompt=none` refresh on open, hidden-frame renewal (`driveRenewSilently`; the framed copy of
    the page posts the fragment to the parent and stops — see the top of the script). Two-way sync of
    storylines, the live transcript pushed every 8 s, audio in 2-minute parts, catch-up of everything pending
-   after a reconnect, uploaded blobs pruned from the phone. The client secret never goes in the page or the repo.
+   after a reconnect, uploaded blobs pruned from the phone. The helper's web-app address is the built-in default
+   (`DRIVE_HELPER_URL`, public by design; Settings → Drive helper overrides it). The client secret never goes in
+   the page or the repo.
 10. **Recovery.** A frame whose request failed is sent again on the next tick even if the picture did not move
     (`retryFrame`, sooner with backoff after a passing failure); a failed spoken question is asked again once;
     a camera the phone took away is reopened (`cameraCheck`); wake lock and engines resume on `visibilitychange`.

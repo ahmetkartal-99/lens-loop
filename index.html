@@ -623,7 +623,7 @@
     <div class="field">
       <label for="driveHelper">Drive helper (keeps the Drive sign-in alive for as long as a session runs)</label>
       <input type="url" id="driveHelper" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://script.google.com/macros/s/…/exec">
-      <div class="hint">Google's sign-in lasts an hour on its own. With the one-file helper from <code>drive-helper.gs</code> deployed in your own Google account (it holds the OAuth client secret, which never goes in this page), the sign-in renews itself for ever, hands-free, on any browser. Paste the helper's web-app URL here, save, then tap Connect Google Drive once more.</div>
+      <div class="hint">Google's sign-in lasts an hour on its own. With the one-file helper from <code>drive-helper.gs</code> deployed in your own Google account (it holds the OAuth client secret, which never goes in this page), the sign-in renews itself for ever, hands-free, on any browser. The page's own helper address is filled in already; paste a different one only after a new deployment, then tap Connect Google Drive once more.</div>
     </div>
 
     <div class="field">
@@ -755,7 +755,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-02 21:30';
+  const BUILD = '2026-10-02 21:45';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -763,6 +763,11 @@
   // nothing by itself); the user still signs in and approves access to a "Lens Loop" folder on their own Drive.
   const GOOGLE_CLIENT_ID = '315454575795-hkrhb3ggevkjjufb4p5bh0ikv7smf5f8.apps.googleusercontent.com';
   const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+  // The Drive helper (drive-helper.gs deployed in the author's Google account) keeps the Drive sign-in alive for
+  // ever. Its address is not a secret — it only redeems sign-in codes issued for this page, and a renewal needs
+  // the refresh token that lives on the phone — so it lives here like the client ID, on every device at once.
+  // A different address typed into Settings → Drive helper takes precedence (after a redeploy, for instance).
+  const DRIVE_HELPER_URL = 'https://script.google.com/macros/s/AKfycbz7MkBLwbx58FmraB9lmqt00mCQDaLO3MJg-m8Z6Dn20M6joo53R4lY_3h5jmvusrZ9/exec';
   const DRIVE_FOLDER_NAME = 'Lens Loop';
   // ====================================================================
 
@@ -793,7 +798,7 @@
     sessionListen: true,
     skipStill: true,
     saveAudio: true,
-    driveHelper: '',   // web-app URL of drive-helper.gs; empty = plain one-hour sign-in
+    driveHelper: '',   // web-app URL of drive-helper.gs typed in settings; empty = the DRIVE_HELPER_URL above
     quietSec: 25,   // seconds without speech before new camera text may be generated or shown
   };
   const STORE = 'lensloop.settings';
@@ -819,6 +824,7 @@
       s.model = MODEL;   // model and effort always start from the two lines at the top of the script;
       s.effort = EFFORT; // a change in the settings sheet lasts until the page is closed
     } catch (e) { /* storage unavailable */ }
+    if (!s.driveHelper) s.driveHelper = DRIVE_HELPER_URL;   // the page's own helper unless another was typed in
     s.interval = clamp(+s.interval || 15, 5, 600);
     s.maxTokens = clamp(+s.maxTokens || 32024, 1024, 128000);
     s.imgSize = +s.imgSize || 1568;
