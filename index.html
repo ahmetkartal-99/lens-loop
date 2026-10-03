@@ -803,7 +803,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-03 17:35';
+  const BUILD = '2026-10-03 17:55';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -1251,9 +1251,12 @@
   const sameScene = (a, b) => sigDiff(a, b) < 7 && sigFrac(a, b) < 0.12;     // the same picture: nothing new, a memory match
   const nearScene = (a, b) => sigDiff(a, b) < 12 && sigFrac(a, b) < 0.18;    // the picture the text on screen is about, drifting
   // --- snap cache: a picture that already has an answer gets it back from memory instead of a new request ---
-  const snapCache = [];  // { sig, text, readPos } — last 20
-  function cacheHit(sig) { if (!sig) return null; for (const c of snapCache) { if (sameScene(sig, c.sig)) return c; } return null; }
-  function cacheStore(sig, text) { if (!sig || !text) return; const existing = cacheHit(sig); if (existing) { existing.text = text; return; } snapCache.push({ sig: new Uint8Array(sig), text, readPos: 0 }); if (snapCache.length > 20) snapCache.shift(); }
+  // Entries remember the mode they were made in (Scene mode or not): a card described in the normal mode must not
+  // come back as its "answer" in Scene mode, nor a scene's lines in the normal mode.
+  const snapCache = [];  // { sig, text, readPos, scene } — last 20
+  function cacheFind(sig, scene) { if (!sig) return null; for (const c of snapCache) { if (!!c.scene === !!scene && sameScene(sig, c.sig)) return c; } return null; }
+  function cacheHit(sig) { return cacheFind(sig, S.sceneMode); }
+  function cacheStore(sig, text, scene) { if (!sig || !text) return; const existing = cacheFind(sig, scene); if (existing) { existing.text = text; return; } snapCache.push({ sig: new Uint8Array(sig), text, readPos: 0, scene: !!scene }); if (snapCache.length > 20) snapCache.shift(); }
 
   function snap(source) {
     // while you speak, and for a quiet spell after, the text on screen stays: nothing new is generated or shown
@@ -1392,6 +1395,7 @@
       if (st.use === false) continue;
       for (const v of st.visuals || []) {
         if (!v.text || q !== normQ(v.question)) continue;
+        if (!!v.scene !== !!S.sceneMode) continue;   // a Scene answer only in Scene mode, a normal one only outside it
         const vs = noteSig(v);
         if (sig && vs) { if (!sameScene(sig, vs)) continue; }
         else if (sig || vs) continue;   // a picture on one side only
@@ -1432,6 +1436,7 @@
       id: ++reqSeq, frame, ctrl: new AbortController(),
       startedAt: Date.now(), firstTextAt: 0, endedAt: 0,
       text: '', inTok: 0, outTok: 0, cost: 0, stop: '', error: null,
+      scene: !!S.sceneMode,   // the mode the answer was made in: memory only replays it in the same mode
     };
     active.push(req);
     current = req;
@@ -1586,7 +1591,7 @@
     failStreak = 0;
     const a = splitAnswer(req.text || '');
     const nothing = !req.frame.question && /^nothing to read\b/i.test(a.head);   // never remembered: it is not an answer
-    if (req.text && !nothing) { try { cacheStore(req.frame.sig || lastSig, req.text); } catch (e) {} }
+    if (req.text && !nothing) { try { cacheStore(req.frame.sig || lastSig, req.text, req.scene); } catch (e) {} }
     if (req.text && !nothing && S.useStories) recordVisual(req);   // every answer is kept with its storyline, photo or not
     if (req === current) {
       if (!req.frame.question && /^nothing to read\b/i.test(a.head) && lastGoodText) {
@@ -1872,7 +1877,7 @@
   });
   sheet.addEventListener('submit', (e) => {
     e.preventDefault();
-    const prevInterval = S.interval, prevFacing = S.facing, prevDevice = S.deviceId;
+    const prevInterval = S.interval, prevFacing = S.facing, prevDevice = S.deviceId, prevScene = !!S.sceneMode;
     S.key = $('apiKey').value.trim();
     S.model = $('model').value.trim() || DEFAULTS.model;
     S.effort = $('effort').value;
@@ -1905,6 +1910,9 @@
     saveSettings();
     refreshReadouts();
     closeSheet();
+    // Scene mode switched: the card in view gets a fresh answer in the new mode — not kept as "the same picture"
+    // because the camera did not move.
+    if (!!S.sceneMode !== prevScene) { lastSentFrame = null; shownFrame = null; nothingFrame = null; }
     if (running && S.interval !== prevInterval) reschedule();
     if (running && (S.facing !== prevFacing || S.deviceId !== prevDevice)) openCamera().catch((err) => showBanner(err.message));
     if (running) { if (S.keepAwake) keepAwake(); else releaseWake(); }
@@ -2714,6 +2722,7 @@
     const note = { id: 'vf_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), at: req.frame.at.getTime(), tag: req.frame.tag, question: req.frame.question || '',
       caption: (head || '').slice(0, 200) + (body ? ' — ' + body.replace(/\s+/g, ' ').slice(0, 300) : ''),
       sig: req.frame.sig ? sigToB64(req.frame.sig) : '', text: (req.text || '').slice(0, 6000) };   // the memory: picture fingerprint + the whole text
+    if (req.scene) note.scene = true;   // a Scene answer: replayed from memory only in Scene mode
     target.visuals = (target.visuals || []).concat([note]);
     if (target === story) saveDraft(); else { target.updatedAt = Date.now(); saveStories(); scheduleSync(); }
     if (!req.frame.b64) return;   // a question with no photo: the note is kept, there is no picture to upload

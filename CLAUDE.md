@@ -126,7 +126,10 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     `SCENE_SYSTEM_RULES` (+ voice notes), none of the storyline/live-session context or its "STORYLINE:" line; `send()`
     sends ONE card (no earlier frames, no "FRAMES:" line — merging frames blends the patient and doctor cards and tips
     the model into describing the "document"). The prompts forbid describing or reading the card back. Answers still
-    feed the reader, voice-follow and the storyline like any other.
+    feed the reader, voice-follow and the storyline like any other. Memory and the snap cache are mode-aware
+    (`req.scene` → `note.scene`, `cacheFind(sig, scene)`, `memoryHit` skips the other mode): a card's normal-mode
+    description is never replayed in Scene mode, nor scene lines outside it. Switching the mode in Settings forgets
+    the "known pictures" (`lastSentFrame`, `shownFrame`, `nothingFrame`) so the card in view is answered afresh.
 
 ## Tests (run before every push)
 
