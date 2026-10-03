@@ -2,9 +2,10 @@
 // The phone case the other Drive tests miss: the app is opened hours after it was last used, so the access token
 // died long ago while the refresh token is still good. Then the helper renews the sign-in without a word on screen —
 // no "sign-in has expired" banner racing ahead of it, nothing left standing once it succeeds; a renewal that fails
-// for a passing reason is retried by itself (on a backoff, and at once when the network comes back); a dead refresh
-// token, in the shape Google really sends it, asks for one fresh Connect; and with no automatic way back at all the
-// banner still asks for a tap.
+// for a passing reason is retried by itself (on a backoff, and at once when the network comes back); a script waking
+// from idle that answers with its greeting is asked again at once, and a reply without a key is never taken for a
+// success; a dead refresh token, in the shape Google really sends it, asks for one fresh Connect; and with no
+// automatic way back at all the banner still asks for a tap.
 const { chromium, devices } = require('playwright');
 const http = require('http'), fs = require('fs'), path = require('path');
 const ROOT = path.join(__dirname, '..');
@@ -42,7 +43,8 @@ async function open(browser, base, seed, onHelper) {
   return {
     ctx, page, errors, calls, authHits: () => authHits,
     banner: () => page.evaluate(() => { const b = document.getElementById('banner'); return b && !b.hidden ? b.textContent : ''; }),
-    row: () => page.evaluate(() => document.getElementById('driveStatus').textContent),
+    // the Drive row as the user sees it: on opening the Storylines sheet (which draws it afresh)
+    row: () => page.evaluate(() => { if (document.getElementById('storySheet').hidden) document.getElementById('storiesBtn').click(); return document.getElementById('driveStatus').textContent; }),
     stored: () => page.evaluate(() => JSON.parse(localStorage.getItem('lensloop.drive') || 'null')),
   };
 }
@@ -64,8 +66,10 @@ const noErrors = (tag, s) => assert(s.errors.length === 0, tag + ': no page erro
       return json(route, p.refresh_token === 'RT1' ? { access_token: 'AT2', expires_in: 3599 } : { error: 'invalid_grant' });
     });
     await s.page.waitForTimeout(400);
-    const during = await s.banner();
+    const during = await s.banner(), rowDuring = await s.row();
     assert(!DRIVE_TEXT.test(during), 'A: no "expired" banner while the helper renews (' + (during || 'no banner') + ')');
+    assert(/for good/.test(rowDuring) && !/renewing/i.test(rowDuring), 'A: while the hourly key is fetched the row still says connected for good (' + rowDuring + ')');
+    assert(await s.page.evaluate(() => document.getElementById('driveConnect').hidden), 'A: no Connect button meanwhile');
     await s.page.waitForTimeout(2600);
     const st = await s.stored(), after = await s.banner();
     assert(st && st.token === 'AT2' && st.refresh === 'RT1' && st.exp > Date.now() + 50 * 60 * 1000, 'A: renewed through the helper, refresh token kept (' + JSON.stringify(st) + ')');
@@ -113,6 +117,46 @@ const noErrors = (tag, s) => assert(s.errors.length === 0, tag + ': no page erro
     await s.page.waitForTimeout(17000);   // past the first retry window
     assert(s.calls.length === 1, 'C: the dead token is not retried (' + s.calls.length + ' call(s))');
     noErrors('C', s);
+    await s.ctx.close();
+  }
+
+  // E. The script wakes from idle (measured on the real one: the first request after a while took 11 s and came back
+  //    with the greeting a plain visit gets, nothing redeemed; asked again at once it answered properly in 1–3 s).
+  {
+    const greeting = { ok: true, helper: 'lens-loop', note: 'POST a code or a refresh_token' };
+    const s = await open(browser, base, signedInBefore({ token: 'OLD', exp: Date.now() - 3 * HOUR, refresh: 'RT1' }), async (route, p, n) => {
+      if (n === 1) { await sleep(1500); return json(route, greeting); }
+      return json(route, { access_token: 'AT_E', expires_in: 3599 });
+    });
+    await s.page.waitForTimeout(800);
+    const rowDuring = await s.row();
+    assert(/for good/.test(rowDuring) && !/renewing/i.test(rowDuring), 'E: while the script wakes the row says connected for good (' + rowDuring + ')');
+    await s.page.waitForTimeout(2200);
+    let row = await s.row();
+    for (let i = 0; i < 10 && /Syncing/.test(row); i++) { await s.page.waitForTimeout(300); row = await s.row(); }   // the sync that follows a renewal
+    const st = await s.stored(), b = await s.banner();
+    assert(s.calls.length === 2, 'E: the greeting was followed by one immediate retry (' + s.calls.length + ' call(s))');
+    if (s.calls.length >= 2) assert(s.calls[1].at - s.calls[0].at < 3000, 'E: the retry came at once, not after a backoff (' + ((s.calls[1].at - s.calls[0].at) / 1000).toFixed(1) + ' s apart)');
+    assert(st && st.token === 'AT_E' && st.refresh === 'RT1', 'E: renewed on the retry, refresh token kept (' + JSON.stringify(st) + ')');
+    assert(/for good/.test(row), 'E: the row says connected for good (' + row + ')');
+    assert(!DRIVE_TEXT.test(b), 'E: nothing on screen (' + (b || 'no banner') + ')');
+    noErrors('E', s);
+    await s.ctx.close();
+  }
+
+  // F. The script keeps answering with the greeting: a passing failure in plain words — never taken for a success
+  //    with no key (which used to leave the page "renewing" for ever, an empty token stored and nothing retried).
+  {
+    const s = await open(browser, base, signedInBefore({ token: 'OLD', exp: Date.now() - 3 * HOUR, refresh: 'RT1' }), (route) =>
+      json(route, { ok: true, helper: 'lens-loop', note: 'POST a code or a refresh_token' }));
+    await s.page.waitForTimeout(1500);
+    const row = await s.row(), st = await s.stored(), b = await s.banner();
+    assert(s.calls.length === 3, 'F: three tries in all, then it waits for the backoff (' + s.calls.length + ' call(s))');
+    assert(/still waking up/i.test(row) && /again by itself/i.test(row), 'F: the row says the helper is still waking up and it will try again (' + row + ')');
+    assert(st && st.token === 'OLD' && st.refresh === 'RT1', 'F: no empty token stored, refresh token kept (' + JSON.stringify(st) + ')');
+    assert(!DRIVE_TEXT.test(b), 'F: the first failure stays off the screen (' + (b || 'no banner') + ')');
+    assert(await s.page.evaluate(() => document.getElementById('driveConnect').hidden), 'F: no Connect button — a tap would not help');
+    noErrors('F', s);
     await s.ctx.close();
   }
 

@@ -96,6 +96,10 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
    30 s timeout per request) and stays off the screen the first time; only `invalid_grant` — read from the error's
    `code`, since Google's description never names it — asks for a fresh Connect. The startup "sign-in has expired"
    banner appears only when nothing will renew by itself, and a fresh token clears any Drive banner (`storeDriveToken`).
+   A helper reply without an access token is never a success: waking from idle, the script can answer a POST with its
+   doGet greeting (`{ ok, helper: "lens-loop" }` — measured on the real one: 11 s, nothing redeemed), so `driveHelper`
+   asks again at once (up to three tries) and otherwise fails as a passing error. With a permanent sign-in the Drive
+   row says "Connected for good" while the hourly key is fetched and hides Connect; Sync fetches the key first.
    Without the helper: implicit
    flow, silent `prompt=none` refresh on open, hidden-frame renewal (`driveRenewSilently`; the framed copy of
    the page posts the fragment to the parent and stops — see the top of the script). Two-way sync of
