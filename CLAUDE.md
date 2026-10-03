@@ -43,8 +43,8 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
    the screen. Both turn with the phone's tilt exactly like the answer panel (`applyPanelRotation`, `turnedCss`);
    sideways, the panel grows up to the top bar's top edge (over the camera strip and the header).
    **Your voice leads** (`heardSpeech` → `voiceFollow`, `feedReader(…, wide, from)` returns the match): while you
-   speak the highlight follows the words you say anywhere in the text (longest run of the last 2–5 words, nearest
-   occurrence; a lone word only nudges forward) and the timer pauses, resuming 5 s after you stop. Real time:
+   speak the highlight follows the words you say anywhere in the text (the last up-to-six words aligned over every
+   window, ≥60 % agreeing with a real word among them, nearest window on ties; a lone word only nudges forward) and the timer pauses, resuming 5 s after you stop. Real time:
    `voiceDisplay` advances between partials at the measured reading pace with a `VOICE_LAT` lead, capped at
    three words past the last match; the worklet streams 100 ms chunks (`Int16Array(1600)`, both copies).
    **Nothing changes while you talk** (`holdingForSpeech`, `S.quietSec` = 25): no camera text is generated

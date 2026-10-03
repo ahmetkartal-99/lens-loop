@@ -78,6 +78,13 @@ const sse = (text) => { const ev = (e, d) => `event: ${e}\ndata: ${JSON.stringif
   await partials(['one', 'remembered', 'day,', 'chosen', 'by', 'the']);
   await page.waitForTimeout(150);
   near(await curIndex(), 'keeper', 'kept following word by word');
+  // 4. a soft microphone and an accent: every third word misheard, the last one cut off — the place is still found
+  await partials(['keeper', 'end', 'never', 'buy', 'the', 'trav']);
+  await page.waitForTimeout(150);
+  near(await curIndex(), 'which', 'followed through misheard words ("end", "buy", "trav") to the right place');
+  await partials(['which', 'his', 'why', 'the', 'fairy', 'road', 'is']);
+  await page.waitForTimeout(150);
+  near(await curIndex(), 'lined', 'and again with "his" and "fairy" wrong');
   await page.waitForTimeout(6000);
   assert(/auto-scrolling/.test(await page.textContent('#readerState')), 'timer resumed after the second reading');
   assert(requests === 1, 'nothing new was generated while speaking / in the quiet spell (' + requests + ')');
