@@ -761,7 +761,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-02 23:50';
+  const BUILD = '2026-10-03 12:10';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -2921,6 +2921,7 @@
   function storeDriveToken(token, expiresIn, refresh) {
     driveToken = token; driveExp = Date.now() + Math.max(60, (parseInt(expiresIn, 10) || 3600) - 60) * 1000;
     if (refresh) driveRefresh = refresh;
+    driveRenewErr = ''; driveRenewErrShown = false;   // a token in hand clears any standing renewal complaint
     try { localStorage.setItem(DRIVE_TOKEN_KEY, JSON.stringify({ token: driveToken, exp: driveExp, refresh: driveRefresh })); } catch (e) {}
     S.driveOn = true; saveSettings();
   }
@@ -2944,12 +2945,16 @@
   }
   // Talks to the helper: a code to redeem, or a refresh token to renew. Answers like Google's token endpoint.
   async function driveHelper(payload) {
-    const res = await fetch(S.driveHelper, { method: 'POST', body: JSON.stringify(payload) });   // a plain request, so no preflight stands in the way
-    const j = await res.json();
+    if (!S.driveHelper) throw new Error('no Drive helper URL is set in settings');
+    let res; try { res = await fetch(S.driveHelper, { method: 'POST', body: JSON.stringify(payload) }); }   // a plain request, so no preflight stands in the way
+    catch (e) { throw new Error('could not reach the Drive helper (' + (e.message || e) + ') — check the helper URL in settings'); }
+    const text = await res.text();
+    let j; try { j = JSON.parse(text); }
+    catch (e) { throw new Error(/<(?:!doctype|html)/i.test(text) ? 'the Drive helper answered with a sign-in page, not data — in its deployment set "Who has access" to "Anyone", redeploy, and paste the new /exec URL in settings' : 'the Drive helper gave an unreadable answer (HTTP ' + res.status + ')'); }
     if (!res.ok || j.error) throw new Error((j.error_description || j.error || ('HTTP ' + res.status)) + '');
     return j;
   }
-  let renewing = null;
+  let renewing = null, driveRenewErr = '', driveRenewErrShown = false;
   function driveRenewWithHelper() {
     if (renewing || !S.driveHelper || !driveRefresh) return renewing;
     renewing = driveHelper({ refresh_token: driveRefresh }).then((j) => {
@@ -2957,7 +2962,14 @@
       renderDriveRow(); if (listening && story) renderLiveStrip();
       scheduleSync();
     }).catch((e) => {
-      if (/invalid_grant/i.test(e.message)) { driveRefresh = ''; try { localStorage.setItem(DRIVE_TOKEN_KEY, JSON.stringify({ token: driveToken, exp: driveExp, refresh: '' })); } catch (err) {} }   // revoked or expired: a tap on Connect is needed again
+      if (/invalid_grant/i.test(e.message)) {   // the refresh token itself is dead: only a fresh Connect cures it
+        driveRefresh = ''; try { localStorage.setItem(DRIVE_TOKEN_KEY, JSON.stringify({ token: driveToken, exp: driveExp, refresh: '' })); } catch (err) {}
+        driveRenewErr = 'Google retired the permanent sign-in — this happens if the app was still in "Testing" when you connected (those keys die after 7 days) or it was revoked. Tap Connect once more; now that it is Published the new one lasts for good.';
+      } else {   // the token is likely still good; the helper could not be reached — keep it and let the next cycle retry
+        driveRenewErr = 'Could not renew Drive through the helper: ' + (e.message || e) + '.';
+      }
+      if (!listening && !driveRenewErrShown) { driveRenewErrShown = true; showBanner(driveRenewErr, 'note'); banner.dataset.action = 'drive'; }
+      renderDriveRow();
     }).finally(() => { renewing = null; });
     return renewing;
   }
@@ -3190,7 +3202,7 @@
       st.textContent = note || ('Connected' + (permanent ? ' for good (renews itself through the helper)' : S.driveHelper ? ' for this hour — tap Make it permanent so it never runs out' : '') + ' · copies live in the "' + DRIVE_FOLDER_NAME + '" folder' + (S.driveSyncedAt ? ' · last sync ' + fmtTime(new Date(S.driveSyncedAt)) : ''));
       con.hidden = permanent || !S.driveHelper; con.textContent = 'Make it permanent'; syn.hidden = false; off.hidden = false;
     } else if (S.driveOn) {
-      st.textContent = note || (S.driveHelper && driveRefresh ? 'Renewing the sign-in through the helper…' : 'Sign-in expired (Google signs you out after about an hour; the Drive helper in settings makes it permanent). Tap Connect to keep syncing' + (S.driveSyncedAt ? ' · last sync ' + fmtTime(new Date(S.driveSyncedAt)) : '') + '.');
+      st.textContent = note || driveRenewErr || (S.driveHelper && driveRefresh ? 'Renewing the sign-in through the helper…' : 'Sign-in expired (Google signs you out after about an hour; the Drive helper in settings makes it permanent). Tap Connect to keep syncing' + (S.driveSyncedAt ? ' · last sync ' + fmtTime(new Date(S.driveSyncedAt)) : '') + '.');
       con.hidden = false; con.textContent = 'Connect'; syn.hidden = true; off.hidden = false;
     } else {
       st.textContent = note || 'Not connected. Connect to keep a copy of every storyline in a "' + DRIVE_FOLDER_NAME + '" folder on your Drive and to pick them up on another device.';
