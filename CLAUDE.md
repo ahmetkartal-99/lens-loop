@@ -72,11 +72,15 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
    (`VISUALS_LIVE_MAX/HIGH`, `VISUALS_SAVED_MAX`) and counted in the budget. Nothing stops a session by the clock.
 8. **Visual notes.** Every analysed photo is kept with its storyline (IndexedDB `frames`), uploaded to Drive as a
    JPEG with Claude's description, and listed in the storyline's record and prompt.
-9. **Google Drive mirror.** OAuth implicit flow by redirect (works in Safari and Home Screen apps), silent
-   `prompt=none` refresh on open, hidden-frame renewal five minutes before the token runs out
-   (`driveRenewSilently`; the framed copy of the page posts the fragment to the parent and stops — see the top
-   of the script), two-way sync of storylines, the live transcript pushed every 8 s, audio in 2-minute parts,
-   catch-up of everything pending after a reconnect, uploaded blobs pruned from the phone.
+9. **Google Drive mirror.** OAuth by redirect (works in Safari and Home Screen apps). With `S.driveHelper`
+   set (the web-app URL of `drive-helper.gs`, a Google Apps Script holding the client secret), the sign-in is the
+   authorization-code flow with offline access: the helper redeems the code (`driveHelper`, a plain text/plain
+   POST so no preflight) and renews the access token from the refresh token five minutes before expiry
+   (`driveRenewWithHelper`, also on a 401) — permanent, hands-free, any browser. Without the helper: implicit
+   flow, silent `prompt=none` refresh on open, hidden-frame renewal (`driveRenewSilently`; the framed copy of
+   the page posts the fragment to the parent and stops — see the top of the script). Two-way sync of
+   storylines, the live transcript pushed every 8 s, audio in 2-minute parts, catch-up of everything pending
+   after a reconnect, uploaded blobs pruned from the phone. The client secret never goes in the page or the repo.
 10. **Recovery.** A frame whose request failed is sent again on the next tick even if the picture did not move
     (`retryFrame`, sooner with backoff after a passing failure); a failed spoken question is asked again once;
     a camera the phone took away is reopened (`cameraCheck`); wake lock and engines resume on `visibilitychange`.
@@ -90,7 +94,7 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
 
 - `node --check` on the script body, then `node test/live-prompt.test.js` (prompt assembly, no browser).
 - `node test/session.e2e.js`, `node test/drive-renewal.e2e.js`, `node test/fresh-build.e2e.js`,
-  `node test/memory-voice.e2e.js` and `node test/hour-session.e2e.js` (an hour of dictation compressed into half a
+  `node test/memory-voice.e2e.js`, `node test/drive-helper.e2e.js` and `node test/hour-session.e2e.js` (an hour of dictation compressed into half a
   minute through the real ElevenLabs engine path with the socket mocked: draft, prompt, audio parts, saved
   storyline, questions before and after a reload) (headless Chromium via Playwright,
   `npm i -D playwright` if missing): a real session with a fake camera, fake dictation and a fake Claude
