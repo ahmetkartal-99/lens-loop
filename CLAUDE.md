@@ -53,7 +53,7 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
    "Lens, next" (which also skips the quiet spell); "Lens, again / slower / faster / pause / play" drive the panel.
    Every answer, photo or not, becomes a note in its storyline; the Drive `.txt` lists them in full.
    **Documents page by page** (`docFrames`, `docFramesFor`, `rememberFrame`/`forgetFrame`): the frames of the last
-   ten minutes (≤11) go into every request before the current one (except in Scene mode — see 13), oldest first, the last one cache-marked; the
+   ten minutes (≤11) go into every request before the current one (not for a role-play card — see 13), oldest first, the last one cache-marked; the
    session's open tail now rides in the message after them (`buildSystem` returns `{ blocks, tail }`) so the
    frames stay cached. The reply's third line `FRAMES: continues|new` (`splitAnswer(...).frames`): `new` waits
    for `readingUnderWay()` to end before display; `nothing to read` (head) keeps the text, is never cached or
@@ -120,26 +120,32 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     the foot of Settings. A declined motion permission shows a banner instead of silently leaving text unturned.
 12. **Answer panel.** "ANSWER:" headline, storyline tag, cost/latency readouts (cached tokens counted), history
     of 40, copy, Read button, settings sheet, intro text, privacy/terms pages, PWA icons.
-13. **Scene mode** (`S.sceneMode`, Settings toggle; `S.sceneCharacter` = optional voice notes). The camera reads a
-    role-play card (e.g. an OET speaking card) and the model speaks THAT card's role as a monologue to cold-read —
-    the role comes from the card's own heading, never a tap. It is a focused tool: `buildSystem` sends only
-    `SCENE_SYSTEM_RULES` (+ voice notes), none of the storyline/live-session context or its "STORYLINE:" line; `send()`
-    sends ONE card (no earlier frames, no "FRAMES:" line — merging frames blends the patient and doctor cards and tips
-    the model into describing the "document"). The prompts forbid describing or reading the card back. Answers still
-    feed the reader, voice-follow and the storyline like any other. Memory and the snap cache are mode-aware
-    (`req.scene` → `note.scene`, `cacheFind(sig, scene)`, `memoryHit` skips the other mode): a card's normal-mode
-    description is never replayed in Scene mode, nor scene lines outside it. Switching the mode in Settings forgets
-    the "known pictures" (`lastSentFrame`, `shownFrame`, `nothingFrame`) so the card in view is answered afresh.
+13. **Role-play cards** — automatic, nothing to switch on per card (`S.roleAuto`, default on; `S.sceneCharacter` =
+    optional voice notes). The author's spec: a card with a SETTING, a role (DOCTOR, PATIENT, CARER…) and a TASK list
+    is answered IN that role — the lines that carry out the tasks, for him to read aloud with voice-follow — and those
+    lines stay on screen EXACTLY AS THEY ARE until a DIFFERENT role card appears, whatever else the camera sees.
+    Every new picture first gets a quick look by `PAGE_CHECK_MODEL` (`roleCardCheck`: `CARD | role | setting | task`
+    or `NONE`; with lines locked it compares the new picture with the locked card: `SAME` / `NEW | …` / `NONE`), then
+    `decideRole`: a (new) card → a focused request (`frame.role` → `send` with `scene`: ONE card, no earlier frames, no
+    "FRAMES:" line, `buildSystem(prefer, true)` = only `SCENE_SYSTEM_RULES` + voice notes, the role named in the
+    prompt) and `roleLock` from the moment it is asked; `SAME`/`NONE` with a lock → nothing changes, no full request
+    (`roleKept` keeps a still desk from being looked at on every tick); `NONE` without a lock → the usual answer, and
+    `roleRelook` looks at that picture twice more, ≥4 s apart (a card first caught out of focus). The prompts forbid
+    describing or reading the card back. Memory and the snap cache are keyed by "role card or not" (`req.scene` →
+    `note.scene`, `cacheFind(sig, isRole)`, `recall(sig, q, isRole)`): a card's earlier description is never replayed
+    as its role lines. The lock lets go on Stop, "Lens, next", a spoken "Lens, …" question, or switching the setting.
 
 ## Tests (run before every push)
 
-- `node --check` on the script body, then `node test/live-prompt.test.js` (prompt assembly, no browser).
+- `node --check` on the script body, then `node test/live-prompt.test.js` (prompt assembly, no browser) and
+  `node test/role-parse.test.js` (the role-card verdict read however a model writes it).
 - `node test/session.e2e.js`, `node test/drive-renewal.e2e.js`, `node test/fresh-build.e2e.js`,
   `node test/memory-voice.e2e.js`, `node test/drive-helper.e2e.js`, `node test/drive-expired-open.e2e.js` (the app
   opened hours later: a silent renewal, retries on a backoff, a dead token in Google's real shape, and the banner only
   when a tap is truly needed), `node test/drive-vanished.e2e.js` (files deleted from Drive behind the app's back,
-  against an in-memory Drive), `node test/scene-mode.e2e.js` (Scene mode sends one card and the scene rules, not the
-  document scaffolding or session transcript), `node test/latency.e2e.js` (audio cadence and
+  against an in-memory Drive), `node test/role-cards.e2e.js` (desk → a role card caught blurred then legible → desk →
+  the same card → a different card → desk, against a controlled camera: the role's lines appear, stay locked, change
+  only for a different card), `node test/latency.e2e.js` (audio cadence and
   highlight reaction time), `node test/document.e2e.js` (a document page by page, the desk, a new subject) and
   `node test/hour-session.e2e.js` (an hour of dictation compressed into half a
   minute through the real ElevenLabs engine path with the socket mocked: draft, prompt, audio parts, saved
