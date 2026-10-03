@@ -755,7 +755,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-02 21:45';
+  const BUILD = '2026-10-02 21:50';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -3058,8 +3058,10 @@
     const st = $('driveStatus'), con = $('driveConnect'), syn = $('driveSync'), off = $('driveOff');
     if (!GOOGLE_CLIENT_ID) { st.textContent = 'Drive sync is not configured in this build.'; con.hidden = true; syn.hidden = true; off.hidden = true; return; }
     if (driveConnected()) {
-      st.textContent = note || ('Connected' + (S.driveHelper && driveRefresh ? ' for good (renews itself through the helper)' : '') + ' · copies live in the "' + DRIVE_FOLDER_NAME + '" folder' + (S.driveSyncedAt ? ' · last sync ' + fmtTime(new Date(S.driveSyncedAt)) : ''));
-      con.hidden = true; syn.hidden = false; off.hidden = false;
+      // signed in for the hour with a helper at hand but no permanent token yet: offer the sign-in that makes it so
+      const permanent = !!(S.driveHelper && driveRefresh);
+      st.textContent = note || ('Connected' + (permanent ? ' for good (renews itself through the helper)' : S.driveHelper ? ' for this hour — tap Make it permanent so it never runs out' : '') + ' · copies live in the "' + DRIVE_FOLDER_NAME + '" folder' + (S.driveSyncedAt ? ' · last sync ' + fmtTime(new Date(S.driveSyncedAt)) : ''));
+      con.hidden = permanent || !S.driveHelper; con.textContent = 'Make it permanent'; syn.hidden = false; off.hidden = false;
     } else if (S.driveOn) {
       st.textContent = note || (S.driveHelper && driveRefresh ? 'Renewing the sign-in through the helper…' : 'Sign-in expired (Google signs you out after about an hour; the Drive helper in settings makes it permanent). Tap Connect to keep syncing' + (S.driveSyncedAt ? ' · last sync ' + fmtTime(new Date(S.driveSyncedAt)) : '') + '.');
       con.hidden = false; con.textContent = 'Connect'; syn.hidden = true; off.hidden = false;
