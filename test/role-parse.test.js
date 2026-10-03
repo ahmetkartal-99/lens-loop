@@ -25,11 +25,15 @@ const cases = [
   ['Yes, this is a role-play card. Role: Patient. Setting: Medical ward in a hospital. Task: Explain that you are worried.', false, 'card Patient'],
   ['Yes — the role is the Carer, setting: Suburban Clinic', false, 'card Carer'],
   ['This photo shows a desk and a keyboard; it is not a card.', false, 'none'],                // prose with no verdict word
+  ['OTHER', true, 'other'],
+  ['**OTHER** — a multiple-choice question.', true, 'other'],
+  ['{"other": true}', true, 'other'],
+  ['OTHER', false, 'none'],                                                                  // OTHER only means something with a locked card
 ];
 let bad = 0;
 for (const [t, paired, want] of cases) {
   const r = parseRoleLook(t, paired);
-  const got = r.card ? 'card ' + r.card.role : r.same ? 'same' : 'none';
+  const got = r.card ? 'card ' + r.card.role : r.same ? 'same' : r.other ? 'other' : 'none';
   if (got !== want) { bad++; console.error('FAIL:', JSON.stringify(t), '->', got, '(wanted', want + ')'); } else console.log('ok:', JSON.stringify(t).slice(0, 70), '->', got);
 }
 const full = parseRoleLook('CARD | Patient | Medical ward in a hospital | Explain that you are very worried', false).card;

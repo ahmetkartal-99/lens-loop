@@ -807,7 +807,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-03 19:05';
+  const BUILD = '2026-10-03 19:35';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -1371,7 +1371,8 @@
       { type: 'text', text: 'Answer about the SECOND photo, on one line and nothing else:\n' +
         'SAME — if it shows the same role-play card as the first (same role, same tasks), merely moved, tilted, cropped, lit or photographed differently;\n' +
         'NEW | <the role, one or two words> | <the setting> | <the first ten words of the first task> — if it shows a DIFFERENT, legible ' + ask + ';\n' +
-        'NONE — if it shows anything else (no such card, or a card too blurred or cut off to read).' } ]
+        'OTHER — if it shows something else that asks for an answer: a question, a problem, a multiple-choice item, an exercise, a page of text to read;\n' +
+        'NONE — if it shows nothing to answer (a desk, a hand, a wall, a blur, the back of a page, or a card too blurred or cut off to read).' } ]
     : [
       { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: frame.b64 } },
       { type: 'text', text: 'Does this phone photo show ' + ask + '? If yes and its role and tasks can be read, answer on one line and nothing else:\n' +
@@ -1396,6 +1397,7 @@
         if (j && typeof j === 'object') {
           if (j.role && j.card !== false) return { card: { role: clean(j.role), setting: clean(j.setting), task: clean(j.task) } };
           if (paired && j.same === true) return { same: true };
+          if (paired && j.other === true) return { other: true };
           if (j.card === false || j.none === true) return { none: true };
         }
       } catch (e) {}
@@ -1413,13 +1415,14 @@
       }
     }
     if (paired && /^\W*SAME\b/i.test(t)) return { same: true };
+    if (paired && /^\W*OTHER\b/i.test(t)) return { other: true };
     return { none: true };
   }
   // The decision for a new picture once the quick look is back. Whatever it says, a locked card's lines stay unless
   // the picture is a DIFFERENT role card.
   function decideRole(frame, source, r) {
     if (!running && source !== 'button') return;
-    frame.roleLook = !r ? 'look failed' : r.card ? 'card:' + r.card.role : r.same ? 'same card' : 'no role card seen';   // shown in the meta line
+    frame.roleLook = !r ? 'look failed' : r.card ? 'card:' + r.card.role : r.same ? 'same card' : r.other ? 'a different task' : 'no role card seen';   // shown in the meta line
     // speech began while the look was out: nothing new while you talk — the held snap runs once the quiet spell is over
     if (source !== 'button' && holdingForSpeech()) { heldSnap = true; return; }
     if (r && r.card) { roleRelook = null; frame.role = r.card; snapProceed(frame, source, true); return; }   // a (new) role card: its lines
@@ -1427,7 +1430,9 @@
       if (!roleLock.text && roleLock.failed) { frame.role = roleLock.card; snapProceed(frame, source, true); return; }   // its lines never came: ask again
       roleKept = frame; skippedSince = frameNo; setStatus(active.length ? 'thinking' : 'armed', 'Keeping the ' + roleLock.card.role + ' lines'); return;
     }
-    if (roleLock) { roleKept = frame; skippedSince = frameNo; if (!active.length) setStatus('armed', 'Keeping the ' + roleLock.card.role + ' lines — show another role card to change them'); return; }
+    // a different task in view (a question, a problem, a multiple-choice item): the role lines have had their turn
+    if (r && r.other && roleLock) { roleLock = null; roleKept = null; snapProceed(frame, source, false); return; }
+    if (roleLock) { roleKept = frame; skippedSince = frameNo; if (!active.length) setStatus('armed', 'Keeping the ' + roleLock.card.role + ' lines — show another role card or a question to change them'); return; }
     if (r && r.none && frame.sig) roleRelook = { sig: frame.sig, at: Date.now(), n: 0 };
     snapProceed(frame, source, false);   // not a role card, nothing locked: the usual answer
   }

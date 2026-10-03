@@ -128,7 +128,8 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     or `NONE`; with lines locked it compares the new picture with the locked card: `SAME` / `NEW | …` / `NONE`), then
     `decideRole`: a (new) card → a focused request (`frame.role` → `send` with `scene`: ONE card, no earlier frames, no
     "FRAMES:" line, `buildSystem(prefer, true)` = only `SCENE_SYSTEM_RULES` + voice notes, the role named in the
-    prompt) and `roleLock` from the moment it is asked; `SAME`/`NONE` with a lock → nothing changes, no full request
+    prompt) and `roleLock` from the moment it is asked; `OTHER` with a lock (a question, a problem, a multiple-choice
+    item — a different task) → the lock lets go and the usual answer follows; `SAME`/`NONE` with a lock → nothing changes, no full request
     (`roleKept` keeps a still desk from being looked at on every tick); `NONE` without a lock → the usual answer, and
     `roleRelook` looks at that picture twice more, ≥4 s apart (a card first caught out of focus). The prompts forbid
     describing or reading the card back. **The full model is a detector too**: `SYSTEM_RULES` ends with the role-card

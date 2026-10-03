@@ -57,6 +57,7 @@ const DESCRIBE = { desk: 'ANSWER: An empty desk\n\nA grey surface, nothing to re
       g.fillStyle = '#787878'; g.fillRect(0, 0, 640, 480);
       if (s === 'card1') { for (let y = 0; y < 480; y += 32) for (let x = 0; x < 640; x += 32) { g.fillStyle = ((x + y) / 32) % 2 ? '#c8c8c8' : '#3c3c3c'; g.fillRect(x, y, 32, 32); } }
       if (s === 'card2') { for (let y = 0; y < 480; y += 40) { g.fillStyle = (y / 40) % 2 ? '#e0e0e0' : '#202020'; g.fillRect(0, y, 640, 40); } }
+      if (s === 'mcq') { for (let x = 0; x < 640; x += 40) { g.fillStyle = (x / 40) % 2 ? '#f0f0f0' : '#101010'; g.fillRect(x, 0, 40, 480); } }
     };
     draw(); setInterval(draw, 100);
     const vstream = cv.captureStream(10);
@@ -68,6 +69,7 @@ const DESCRIBE = { desk: 'ANSWER: An empty desk\n\nA grey surface, nothing to re
       return new MediaStream(tracks);
     };
   });
+  DESCRIBE.mcq = 'ANSWER: C) Pneumonia\n\nThe findings fit a lobar pneumonia.';
 
   let scene = 'desk', card1Looks = 0, lockedRole = '';
   const main = [], roleBodies = [], looks = [];
@@ -78,11 +80,11 @@ const DESCRIBE = { desk: 'ANSWER: An empty desk\n\nA grey surface, nothing to re
       let answer;
       if (/SAME or DIFFERENT/.test(ut)) answer = 'DIFFERENT';                                   // the page check (not expected with these distinct pictures)
       else if (/Answer about the SECOND photo/.test(ut)) {                                       // the pairwise look, lines locked
-        answer = scene === 'desk' ? 'NONE' : CARDS[scene].role === lockedRole ? 'SAME' : CARDS[scene].line.replace(/^CARD/, 'NEW');
+        answer = scene === 'desk' ? 'NONE' : scene === 'mcq' ? 'OTHER' : CARDS[scene].role === lockedRole ? 'SAME' : CARDS[scene].line.replace(/^CARD/, 'NEW');
         looks.push({ scene, kind: 'pair', answer });
       } else {                                                                                   // the single look, nothing locked
         if (scene === 'card1') card1Looks++;
-        answer = scene === 'desk' ? 'NONE' : (scene === 'card1' && card1Looks === 1) ? 'NONE' : CARDS[scene].line;   // card 1 first caught out of focus
+        answer = (scene === 'desk' || scene === 'mcq') ? 'NONE' : (scene === 'card1' && card1Looks === 1) ? 'NONE' : CARDS[scene].line;   // card 1 first caught out of focus
         looks.push({ scene, kind: 'single', answer });
       }
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ content: [{ type: 'text', text: answer }], usage: { input_tokens: 1500, output_tokens: 20 } }) });
@@ -137,6 +139,14 @@ const DESCRIBE = { desk: 'ANSWER: An empty desk\n\nA grey surface, nothing to re
   await go('desk');
   await page.waitForTimeout(9000);
   assert(main.length === 4 && /what to look out for/.test(await shown()), '6. desk again: the Doctor\'s lines stay, no new answer (' + main.join() + ')');
+
+  // 7. a multiple-choice question: a different task — the lock lets go and it is answered the usual way (full model)
+  await go('mcq');
+  await page.waitForTimeout(9000);
+  assert(main.join() === 'normal:desk,normal:card1,role:Patient,role:Doctor,normal:mcq', '7. a question while lines were locked: answered by the usual full request (' + main.join() + ')');
+  s = await shown();
+  assert(/Pneumonia/.test(s) && !/what to look out for/.test(s), '7. the answer is on screen, the Doctor\'s lines are gone');
+  assert(/a different task/.test(await page.evaluate(() => document.getElementById('answerMeta').textContent)), '7. the meta line says why');
 
   // the role requests themselves: one card, the role-play rules, the role named, no document scaffolding, no session transcript
   for (const b of roleBodies) {
