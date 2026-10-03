@@ -131,9 +131,17 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     prompt) and `roleLock` from the moment it is asked; `SAME`/`NONE` with a lock → nothing changes, no full request
     (`roleKept` keeps a still desk from being looked at on every tick); `NONE` without a lock → the usual answer, and
     `roleRelook` looks at that picture twice more, ≥4 s apart (a card first caught out of focus). The prompts forbid
-    describing or reading the card back. Memory and the snap cache are keyed by "role card or not" (`req.scene` →
+    describing or reading the card back. **The full model is a detector too**: `SYSTEM_RULES` ends with the role-card
+    rule, so a usual request whose answer carries a `ROLE: <role>` second line (`splitAnswer(...).role`; header lines
+    STORYLINE/FRAMES/ROLE in any order) is promoted in `finish` to a role answer and locked — the quick look missing a
+    card never leaves it described. The verdict rides on the frame (`frame.roleLook`: `card:X`, `card:X (by the
+    answer)`, `no role card seen`, `same card`, `look failed`) and shows at the end of the answer's meta line, so a
+    screenshot says which path ran. Memory and the snap cache are keyed by "role card or not" (`req.scene` →
     `note.scene`, `cacheFind(sig, isRole)`, `recall(sig, q, isRole)`): a card's earlier description is never replayed
-    as its role lines. The lock lets go on Stop, "Lens, next", a spoken "Lens, …" question, or switching the setting.
+    as its role lines; a visual note from before this rule (no `note.rv`) is not replayed on the usual path either
+    while Role-play cards is on — that picture is answered afresh once and remembered anew. The lock lets go on
+    Stop, "Lens, next", a spoken "Lens, …" question, or switching the setting. `parseRoleLook` reads the quick
+    look's verdict as JSON, `CARD | … | … | …` or prose ("role: Patient"), never as "role-play".
 
 ## Tests (run before every push)
 

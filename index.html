@@ -758,7 +758,10 @@
     'If the photo contains no question, that line is a short title of what is in the frame (at most six words). ' +
     'Then a blank line, then a brief explanation. Never put anything before the ANSWER line. ' +
     'When the photo shows nothing worth answering — an empty desk or floor, a wall, a blur, the camera on the move, nothing to read and no question — the first line is exactly "ANSWER: nothing to read" and the explanation is one short line, so what was on screen before can stay. ' +
-    'The user is waiting hands-free and reads the reply as it arrives, so reason no longer than the question needs: a plain photo or a simple question gets a quick, direct reply; keep the deepest deliberation for problems that call for it.';
+    'The user is waiting hands-free and reads the reply as it arrives, so reason no longer than the question needs: a plain photo or a simple question gets a quick, direct reply; keep the deepest deliberation for problems that call for it. ' +
+    'ROLE-PLAY CARDS are the one exception to describing: when the current photo shows a role-play card — a card or page that gives a SETTING, names a role for the reader to play (DOCTOR, PATIENT, CARER, NURSE, CANDIDATE…) and lists a TASK or tasks — do not describe it, summarise it or read it back. ' +
+    'Take that role and write the words that person says to carry out every task on the card, as one continuous speech the user reads aloud (contractions, hesitations, a real voice — no stage directions, no labels, nothing but the spoken words). ' +
+    'Then the first line is "ANSWER: " plus a short title of the scene, the second line is exactly "ROLE: " plus the role named on the card, then a blank line, then the speech. Use the current photo only for this; earlier frames do not apply to a role-play card.';
   // ----- Scene mode: the camera captures a scenario prompt, Claude generates character dialogue -----
   const SCENE_SYSTEM_RULES =
     'You are a dialogue generator for a fiction author who is sight-reading character lines on the mic. ' +
@@ -775,7 +778,8 @@
     'NEVER describe, summarise, narrate, or read the card back. Do not say what is on the screen, what the page is, ' +
     'whether frames match, or what the scenario is about. You are not an observer — you ARE the character, speaking. ' +
     'Every word of your reply (after the title line) is a word the character says out loud.\n\n' +
-    'Format every reply the same way: the first line is "ANSWER: " followed by a short title of the scenario (at most eight words). ' +
+    'Format every reply the same way: the first line is "ANSWER: " followed by a short title of the scenario (at most eight words); ' +
+    'the second line is exactly "ROLE: " followed by the role you are playing, as the card names it. ' +
     'Then a blank line, then the character\'s dialogue as flowing speech — no stage directions, no action lines, no parenthetical ' +
     'notes, no speaker labels, just the words the character would say, written to be spoken aloud in one take. ' +
     'Write in the character\'s natural voice: contractions, hesitations ("well," "look,"), sentence fragments — whatever makes it ' +
@@ -803,7 +807,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-03 18:40';
+  const BUILD = '2026-10-03 19:05';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -1380,13 +1384,33 @@
     if (j.usage) { const [pIn, pOut] = priceFor(PAGE_CHECK_MODEL); sessionCost += ((j.usage.input_tokens || 0) * pIn + (j.usage.output_tokens || 0) * pOut) / 1e6; refreshReadouts(); }
     return parseRoleLook((j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('\n'), !!lockedFrame);
   }
-  // Tolerant of how a model writes it: **CARD** | …, a missing last field, a sentence after the verdict.
+  // Tolerant of how a model writes it: **CARD** | …, a missing last field, a sentence after the verdict, JSON,
+  // or prose ("Yes — role: Patient, setting: …").
   function parseRoleLook(text, paired) {
     const t = String(text || '').trim();
+    const clean = (s) => String(s || '').replace(/[*_`"]/g, '').trim();
+    const jm = /\{[\s\S]*\}/.exec(t);
+    if (jm) {
+      try {
+        const j = JSON.parse(jm[0]);
+        if (j && typeof j === 'object') {
+          if (j.role && j.card !== false) return { card: { role: clean(j.role), setting: clean(j.setting), task: clean(j.task) } };
+          if (paired && j.same === true) return { same: true };
+          if (j.card === false || j.none === true) return { none: true };
+        }
+      } catch (e) {}
+    }
     const line = t.split('\n').find((l) => /\b(?:CARD|NEW)\b[*_]*\s*\|/i.test(l));
     if (line) {
-      const parts = line.slice(line.search(/\b(?:CARD|NEW)\b/i)).split('|').map((s) => s.replace(/[*_`]/g, '').trim());
+      const parts = line.slice(line.search(/\b(?:CARD|NEW)\b/i)).split('|').map(clean);
       if (parts[1]) return { card: { role: parts[1], setting: parts[2] || '', task: parts.slice(3).join(' | ') } };
+    }
+    if (!/^\W*(?:NONE|SAME)\b/i.test(t) && /\b(?:CARD|NEW|yes|role-?play)\b/i.test(t)) {
+      const rm = /\brole(?!-?\s?play)\b\s*(?:is|[:=–—]|-\s)\s*(?:the\s+)?([A-Za-z][A-Za-z' /-]{1,30}?)(?=[\s,.;|\n)]|$)/i.exec(t);
+      if (rm) {
+        const sm = /\bsetting\b\s*(?:is|[:=\-–—])\s*([^|\n;]{1,80}?)(?=[.;|\n]|$)/i.exec(t), km = /\btask\b\s*(?:is|[:=\-–—])\s*([^|\n]{1,120}?)(?=\n|$)/i.exec(t);
+        return { card: { role: clean(rm[1]), setting: clean(sm && sm[1]), task: clean(km && km[1]) } };
+      }
     }
     if (paired && /^\W*SAME\b/i.test(t)) return { same: true };
     return { none: true };
@@ -1395,6 +1419,7 @@
   // the picture is a DIFFERENT role card.
   function decideRole(frame, source, r) {
     if (!running && source !== 'button') return;
+    frame.roleLook = !r ? 'look failed' : r.card ? 'card:' + r.card.role : r.same ? 'same card' : 'no role card seen';   // shown in the meta line
     // speech began while the look was out: nothing new while you talk — the held snap runs once the quiet spell is over
     if (source !== 'button' && holdingForSpeech()) { heldSnap = true; return; }
     if (r && r.card) { roleRelook = null; frame.role = r.card; snapProceed(frame, source, true); return; }   // a (new) role card: its lines
@@ -1433,7 +1458,7 @@
     lastGoodText = hit.text; showingTranscript = false; renderLiveStrip(); shownSig = frame.sig || null; shownFrame = frame.b64 ? frame : null;
     const { head, body } = splitAnswer(hit.text);
     answerBody.innerHTML = renderAnswer(hit.text, false); answerBody.classList.remove('stale');
-    answerMeta.textContent = frame.tag + ' · ' + fmtTime(frame.at) + ' · ' + sourceLabel(hit.from);
+    answerMeta.textContent = frame.tag + ' · ' + fmtTime(frame.at) + ' · ' + sourceLabel(hit.from) + (frame.roleLook ? ' · ' + frame.roleLook : '');
     copyBtn.hidden = false; $('readBtn').hidden = false;
     setStatus(running ? 'done' : 'idle', 'From memory for ' + frame.tag);
     openReader(body || hit.text, head || 'From memory', { force: true, from: hit.from });
@@ -1488,6 +1513,7 @@
       for (const v of st.visuals || []) {
         if (!v.text || q !== normQ(v.question)) continue;
         if (!!v.scene !== !!isRole) continue;   // a role card's lines only for a role card, a description only for anything else
+        if (!isRole && !v.rv && S.roleAuto !== false) continue;   // a note from before the role rule might be a card described: looked at afresh once, then remembered anew
         const vs = noteSig(v);
         if (sig && vs) { if (!sameScene(sig, vs)) continue; }
         else if (sig || vs) continue;   // a picture on one side only
@@ -1677,6 +1703,16 @@
       const ok = !req.error && req.text && !/^nothing to read\b/i.test(splitAnswer(req.text).head);
       if (ok) roleLock.text = req.text; else roleLock.failed = true;
     }
+    // the usual answer came back as a role card's lines (the model saw the card even if the quick look did not):
+    // from here on it is one — remembered as such and locked on screen like any other
+    if (!req.scene && !req.error && req.text && !req.frame.question && S.roleAuto !== false) {
+      const r = splitAnswer(req.text).role;
+      if (r) {
+        req.scene = true; req.frame.role = { role: r, setting: '', task: '' }; req.frame.roleLook = 'card:' + r + ' (by the answer)';
+        forgetFrame(req.frame);   // not a page of any document
+        roleLock = { card: req.frame.role, frame: req.frame, reqId: req.id, text: req.text, failed: false }; roleKept = null; roleRelook = null;
+      }
+    }
     if (req.error) {
       if (req === current && req.error.message !== 'Stopped') {
         setStatus('error', `Failed on ${req.frame.tag}`);
@@ -1719,6 +1755,7 @@
     shownSig = req.frame.sig || null; shownFrame = req.frame.b64 ? req.frame : null;
     const inAll = req.inTok + (req.cacheW || 0) + (req.cacheR || 0);
     const bits = [req.frame.tag, fmtTime(req.frame.at), `${secs(took)}`, `${inAll}${req.cacheR ? ' (' + req.cacheR + ' cached)' : ''}→${req.outTok} tok`, `$${req.cost.toFixed(3)}`, sourceLabel(from)];
+    if (req.frame.roleLook) bits.push(req.frame.roleLook);   // what the role-card look made of the picture
     answerMeta.textContent = bits.join(' · ');
     answerBody.innerHTML = renderAnswer(req.text || '(no text in the reply)', false);
     answerBody.classList.remove('stale');
@@ -1843,16 +1880,18 @@
     if (!m) return { head: '', body: t };
     const head = m[1].replace(/[*_]+$/g, '').trim();
     let body = nl < 0 ? '' : t.slice(nl + 1).replace(/^\s*\n/, '');
-    let story = '', frames = '';
-    const sm = /^\s*(?:[*_]+)?storyline(?:[*_]+)?\s*:\s*(.*)$/i.exec(body.split('\n')[0] || '');
-    if (sm) {
-      const v = sm[1].replace(/[*_]+$/g, '').trim();
-      if (v && !/^none\.?$/i.test(v)) story = v;
+    // header lines after ANSWER, in any order: STORYLINE: …, FRAMES: continues|new, ROLE: … (a role-play card's lines)
+    let story = '', frames = '', role = '';
+    for (let i = 0; i < 3; i++) {
+      const first = body.split('\n')[0] || '';
+      let m;
+      if ((m = /^\s*(?:[*_]+)?storyline(?:[*_]+)?\s*:(?:[*_]+)?\s*(.*)$/i.exec(first))) { const v = m[1].replace(/^[*_]+|[*_]+$/g, '').trim(); if (v && !/^none\.?$/i.test(v)) story = v; }
+      else if ((m = /^\s*(?:[*_]+)?frames(?:[*_]+)?\s*:(?:[*_]+)?\s*(continues|new)\b/i.exec(first))) frames = m[1].toLowerCase();
+      else if ((m = /^\s*(?:[*_]+)?role(?:[*_]+)?\s*:(?:[*_]+)?\s*(.*)$/i.exec(first))) { const v = m[1].replace(/^[*_]+|[*_]+$/g, '').trim(); if (v && !/^none\.?$/i.test(v)) role = v; }
+      else break;
       body = body.split('\n').slice(1).join('\n').replace(/^\s*\n/, '');
     }
-    const fm = /^\s*(?:[*_]+)?frames(?:[*_]+)?\s*:\s*(continues|new)\b/i.exec(body.split('\n')[0] || '');
-    if (fm) { frames = fm[1].toLowerCase(); body = body.split('\n').slice(1).join('\n').replace(/^\s*\n/, ''); }
-    return { head, body, story, frames };
+    return { head, body, story, frames, role };
   }
   function headlineSize(str) {
     const n = str.length;
@@ -2823,7 +2862,8 @@
     const note = { id: 'vf_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), at: req.frame.at.getTime(), tag: req.frame.tag, question: req.frame.question || '',
       caption: (head || '').slice(0, 200) + (body ? ' — ' + body.replace(/\s+/g, ' ').slice(0, 300) : ''),
       sig: req.frame.sig ? sigToB64(req.frame.sig) : '', text: (req.text || '').slice(0, 6000) };   // the memory: picture fingerprint + the whole text
-    if (req.scene) note.scene = true;   // a Scene answer: replayed from memory only in Scene mode
+    note.rv = 1;   // answered with the role-card rule in force (see memoryHit)
+    if (req.scene) note.scene = true;   // a role card's lines: replayed from memory only for a role card
     target.visuals = (target.visuals || []).concat([note]);
     if (target === story) saveDraft(); else { target.updatedAt = Date.now(); saveStories(); scheduleSync(); }
     if (!req.frame.b64) return;   // a question with no photo: the note is kept, there is no picture to upload

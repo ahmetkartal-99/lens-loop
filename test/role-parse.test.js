@@ -18,6 +18,13 @@ const cases = [
   ['NEW | Doctor | Medical ward in a hospital | Advise the patient', true, 'card Doctor'],
   ['NEW**|** Nurse | Ward 3 | Check the dressing', true, 'card Nurse'],
   ['SAME', false, 'none'],                                                                   // SAME only means something with a locked card
+  ['{"card": true, "role": "Patient", "setting": "Medical ward", "task": "Explain that you are worried"}', false, 'card Patient'],
+  ['Here you go:\n```json\n{"role":"Doctor","setting":"Clinic","task":"Advise"}\n```', false, 'card Doctor'],
+  ['{"card": false}', false, 'none'],
+  ['{"same": true}', true, 'same'],
+  ['Yes, this is a role-play card. Role: Patient. Setting: Medical ward in a hospital. Task: Explain that you are worried.', false, 'card Patient'],
+  ['Yes — the role is the Carer, setting: Suburban Clinic', false, 'card Carer'],
+  ['This photo shows a desk and a keyboard; it is not a card.', false, 'none'],                // prose with no verdict word
 ];
 let bad = 0;
 for (const [t, paired, want] of cases) {
@@ -27,5 +34,22 @@ for (const [t, paired, want] of cases) {
 }
 const full = parseRoleLook('CARD | Patient | Medical ward in a hospital | Explain that you are very worried', false).card;
 if (!(full.setting === 'Medical ward in a hospital' && /very worried/.test(full.task))) { bad++; console.error('FAIL: setting/task fields', JSON.stringify(full)); } else console.log('ok: setting and task fields kept');
+const prose = parseRoleLook('Yes, this is a role-play card. Role: Patient. Setting: Medical ward in a hospital. Task: Explain that you are worried.', false).card;
+if (!(prose.role === 'Patient' && prose.setting === 'Medical ward in a hospital' && /worried/.test(prose.task))) { bad++; console.error('FAIL: prose fields', JSON.stringify(prose)); } else console.log('ok: prose fields kept');
+
+// the reply parser: the ROLE: header line is read in any order with STORYLINE/FRAMES and stripped from the body
+const a2 = html.indexOf('  function splitAnswer('), b2 = html.indexOf('  function headlineSize(');
+const splitAnswer = new Function(html.slice(a2, b2) + '; return splitAnswer;')();
+const sa = [
+  ['ANSWER: Worried about going home\nROLE: Patient\n\nDoctor, I still feel weak.', { role: 'Patient', body: 'Doctor, I still feel weak.' }],
+  ['ANSWER: Title\nSTORYLINE: none\nFRAMES: new\nROLE: Doctor\n\nGood morning.', { role: 'Doctor', body: 'Good morning.', frames: 'new' }],
+  ['ANSWER: Title\n**ROLE:** Carer\n\nHi there.', { role: 'Carer', body: 'Hi there.' }],
+  ['ANSWER: A desk\n\nA grey desk.', { role: '', body: 'A grey desk.' }],
+];
+for (const [t, want] of sa) {
+  const r = splitAnswer(t);
+  const ok = r.role === want.role && r.body === want.body && (want.frames === undefined || r.frames === want.frames);
+  if (!ok) { bad++; console.error('FAIL: splitAnswer', JSON.stringify(t), '->', JSON.stringify(r)); } else console.log('ok: splitAnswer', JSON.stringify(t).slice(0, 50), '-> role', JSON.stringify(r.role));
+}
 console.log(bad ? 'ROLE PARSE FAILED' : 'ALL TESTS PASSED');
 process.exitCode = bad ? 1 : 0;

@@ -149,6 +149,84 @@ const DESCRIBE = { desk: 'ANSWER: An empty desk\n\nA grey surface, nothing to re
   }
   assert(errors.length === 0, 'no page errors' + (errors.length ? ': ' + errors.join(' | ') : ''));
   console.log('looks:', looks.map((l) => l.scene + ':' + l.kind + ':' + l.answer.split(' |')[0]).join(', '));
-  await browser.close(); server.close();
+  await browser.close();
+
+  // ---- Part 2: the quick look misses the card every time (answers NONE), and an old description of that very card
+  // sits in memory from before the role rule. The full model must still catch it by its answer (a ROLE: line), the
+  // stale description must not be replayed, and the lines must then lock like any other.
+  const b2 = await chromium.launch();
+  const ctx2 = await b2.newContext({ viewport: { width: 420, height: 860 } });
+  const p2 = await ctx2.newPage();
+  const errors2 = []; p2.on('pageerror', (e) => errors2.push(String(e)));
+  await ctx2.addInitScript(() => {
+    localStorage.setItem('lensloop.settings', JSON.stringify({ v: 3, interval: 5, saveKey: true, saveAudio: false, key: 'sk-ant-test-0000', quietSec: 2, sttEngine: 'phone', useStories: true }));
+    class HushSR { start() {} stop() { this.onend && this.onend(); } abort() { this.stop(); } }
+    window.webkitSpeechRecognition = HushSR; window.SpeechRecognition = HushSR;
+    window.__scene = 'card1';
+    const cv = document.createElement('canvas'); cv.width = 640; cv.height = 480;
+    const draw = () => {
+      const g = cv.getContext('2d'), s = window.__scene;
+      g.fillStyle = '#787878'; g.fillRect(0, 0, 640, 480);
+      if (s === 'card1') { for (let y = 0; y < 480; y += 32) for (let x = 0; x < 640; x += 32) { g.fillStyle = ((x + y) / 32) % 2 ? '#c8c8c8' : '#3c3c3c'; g.fillRect(x, y, 32, 32); } }
+    };
+    draw(); setInterval(draw, 100);
+    const vstream = cv.captureStream(10);
+    const md = navigator.mediaDevices || (navigator.mediaDevices = {});
+    md.getUserMedia = async (c) => {
+      const tracks = [];
+      if (!c || c.video) tracks.push(...vstream.getVideoTracks().map((t) => t.clone()));
+      if (c && c.audio) { const ac = new AudioContext(); tracks.push(...ac.createMediaStreamDestination().stream.getAudioTracks()); }
+      return new MediaStream(tracks);
+    };
+  });
+  // a stale memory note of card 1 — a description made before the role rule (no rv flag), with the card's fingerprint
+  await p2.goto(`http://127.0.0.1:${port}/index.html#key=sk-ant-test-0000`);
+  await p2.waitForTimeout(800);
+  const planted = await p2.evaluate(async () => {
+    // the page's own fingerprint of the current camera picture, via a hidden capture
+    const v = document.getElementById('video'); const s = await navigator.mediaDevices.getUserMedia({ video: true }); v.srcObject = s; await v.play();
+    await new Promise((r) => setTimeout(r, 600));
+    // the same fingerprint the page makes (frameSignature): 48×36 grey, (3R + 6G + B) / 10
+    const sc = document.createElement('canvas'); sc.width = 48; sc.height = 36; const c = sc.getContext('2d', { willReadFrequently: true });
+    c.drawImage(v, 0, 0, 48, 36);
+    const d = c.getImageData(0, 0, 48, 36).data, sig = new Uint8Array(48 * 36);
+    for (let i = 0; i < sig.length; i++) sig[i] = (d[i * 4] * 3 + d[i * 4 + 1] * 6 + d[i * 4 + 2]) / 10;
+    let b = ''; for (let i = 0; i < sig.length; i++) b += String.fromCharCode(sig[i]);
+    s.getTracks().forEach((t) => t.stop()); v.srcObject = null;
+    const note = { id: 'vf_stale', at: Date.now() - 3600000, tag: 'F-0001', question: '', caption: 'Roleplayer card', sig: btoa(b), text: 'ANSWER: Roleplayer card, medical ward\n\nThe card says: you are 54 years old and were admitted with pneumonia.' };
+    const st = { id: 'st_old', title: 'Old session', createdAt: Date.now() - 7200000, updatedAt: Date.now() - 3600000, seconds: 60, words: 3, text: 'old transcript', summary: 'Old.', keys: 'k', use: true, visuals: [note] };
+    await new Promise((res) => { const r = indexedDB.open('lensloop', 3); r.onsuccess = () => { const tx = r.result.transaction('storylines', 'readwrite'); tx.objectStore('storylines').put(st); tx.oncomplete = () => res(); }; });
+    return sig.length;
+  });
+  assert(planted > 0, 'part 2: a stale description of the card planted in memory (' + planted + '-byte fingerprint)');
+  const main2 = [];
+  await p2.route('https://api.anthropic.com/v1/messages', async (route) => {
+    const body = JSON.parse(route.request().postData());
+    if (/haiku/.test(body.model)) return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ content: [{ type: 'text', text: 'NONE' }], usage: {} }) });   // the quick look never sees the card
+    const ut = textOf(body.messages[0].content), st = sysText(body.system);
+    main2.push(/dialogue generator/i.test(st) ? 'role' : 'normal');
+    // the full model sees the card in the usual request and answers in role, as the rules now ask
+    const hasRule = /ROLE-PLAY CARDS are the one exception/.test(st);
+    return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse(hasRule ? 'ANSWER: Worried about going home\nSTORYLINE: none\nROLE: Patient\n\nDoctor, I still don\'t feel back to normal, and honestly I\'m scared to go home today.' : 'ANSWER: Roleplayer card\n\nThe card says: you are 54.') });
+  });
+  await p2.reload(); await p2.waitForTimeout(1500);
+  await p2.click('#startBtn');
+  await p2.waitForTimeout(9000);
+  const shown2 = await p2.evaluate(() => (document.getElementById('answerBody') || {}).textContent || '');
+  const meta2 = await p2.evaluate(() => (document.getElementById('answerMeta') || {}).textContent || '');
+  assert(main2.join() === 'normal', 'part 2: the quick look said NONE, so the usual request went out — not the stale memory (' + main2.join() + ')');
+  assert(/scared to go home/.test(shown2) && !/The card says/.test(shown2), 'part 2: the full model answered in role by itself and the lines are on screen');
+  assert(/card:Patient \(by the answer\)/.test(meta2), 'part 2: the meta line says the card was caught by the answer (' + meta2 + ')');
+  await p2.waitForTimeout(12000);
+  assert(main2.length === 1 && /scared to go home/.test(await p2.evaluate(() => document.getElementById('answerBody').textContent)), 'part 2: locked — the same card over 12 s brought no new answer (' + main2.join() + ')');
+  // during a recording the note goes into the live draft (local storage until Stop); saved storylines live in the database
+  const remembered = await p2.evaluate(() => new Promise((res) => {
+    let draft = []; try { draft = (JSON.parse(localStorage.getItem('lensloop.draft') || 'null') || {}).visuals || []; } catch (e) {}
+    const r = indexedDB.open('lensloop', 3);
+    r.onsuccess = () => { const q = r.result.transaction('storylines').objectStore('storylines').getAll(); q.onsuccess = () => res(q.result.flatMap((s) => s.visuals || []).concat(draft).map((v) => ({ scene: !!v.scene, rv: !!v.rv }))); };
+  }));
+  assert(remembered.some((v) => v.scene && v.rv), 'part 2: the lines were remembered as a role card\'s, with the rule in force (' + JSON.stringify(remembered) + ')');
+  assert(errors2.length === 0, 'part 2: no page errors' + (errors2.length ? ': ' + errors2.join(' | ') : ''));
+  await b2.close(); server.close();
   console.log(process.exitCode ? 'ROLE CARDS FAILED' : 'ROLE CARDS PASSED');
 })().catch((e) => { console.error(e); process.exit(1); });
