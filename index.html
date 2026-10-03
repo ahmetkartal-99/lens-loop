@@ -760,7 +760,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-02 23:10';
+  const BUILD = '2026-10-02 23:30';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -1147,6 +1147,7 @@
     pending = null;
     for (const r of active) r.ctrl.abort();
     active = [];
+    heldByVoice = false;
     if (listening) stopStory(true);   // the recording ends with the session and is saved
     stopCamera();
     if (!listening) releaseWake();
@@ -1205,7 +1206,7 @@
 
   function snap(source) {
     // while you speak, and for a quiet spell after, the text on screen stays: nothing new is generated or shown
-    if (source !== 'button' && holdingForSpeech()) { heldSnap = true; if (!active.length) setStatus('armed', 'Holding the text while you speak'); return; }
+    if (source !== 'button' && holdingForSpeech()) { heldSnap = true; if (!active.length) setStatus('armed', heldByVoice ? 'Holding this text — say "Lens, next" to move on' : 'Holding the text while you speak'); return; }
     let frame;
     try { frame = captureFrame(); } catch (e) { showBanner(e.message); return; }
     const sig = frame.sig;
@@ -1261,7 +1262,9 @@
   // generated for the camera and nothing new is shown — a text that was already on its way waits. In the
   // word-by-word panel the highlight follows the voice meanwhile (see voiceFollow).
   let lastSpokenAt = 0, heldSnap = false, heldReq = null, lastShownId = 0, shownSig = null;   // shownSig: the picture the text on screen is about
-  const holdingForSpeech = () => !!lastSpokenAt && Date.now() - lastSpokenAt < (S.quietSec || 25) * 1000;
+  // "Lens, hold" keeps the text on screen until "Lens, next" (or Done, or the session ends)
+  let heldByVoice = false;
+  const holdingForSpeech = () => heldByVoice || (!!lastSpokenAt && Date.now() - lastSpokenAt < (S.quietSec || 25) * 1000);
   let lastHeard = '';
   function heardSpeech(text, isFinal) {
     text = (text || '').trim();
@@ -1473,7 +1476,7 @@
     }
     failStreak = 0;
     if (req.text) { try { cacheStore(req.frame.sig || lastSig, req.text); } catch (e) {} }
-    if (req.frame.b64 && req.text && S.useStories) recordVisual(req);
+    if (req.text && S.useStories) recordVisual(req);   // every answer is kept with its storyline, photo or not
     if (req === current) {
       // a camera text that arrives while you speak waits for the quiet spell; your own question shows at once
       if (!req.frame.question && holdingForSpeech()) { heldReq = req; setStatus('armed', `Text for ${req.frame.tag} ready · shown when you pause`); }
@@ -2366,6 +2369,14 @@
     if (/^(?:start\s+(?:a\s+)?)?(?:new|next|another|fresh)\s+(?:storyline|story\s*line|chapter|story|session|recording)\b/.test(low)) return { kind: 'new' };
     if (/^(?:stop|end|finish|close)\b(?:\s+(?:the\s+)?(?:recording|listening|session|storyline|everything))?$/.test(low) || /^(?:that'?s\s+all|i'?m\s+done|we'?re\s+done)\b/.test(low)) return { kind: 'stop' };
     if (/^(?:take|snap|grab)\s+(?:a\s+)?(?:picture|photo|frame|shot|snapshot)\b/.test(low) || /^(?:look\s+at|read|check|see)\s+(?:this|that|the\s+note|my\s+notes?|the\s+page|the\s+sketch)\b/.test(low)) return { kind: 'snap', text: rest };
+    // the text on screen, by voice: nothing to touch
+    if (/^(?:hold|hold\s+(?:it|this|that|on)|keep\s+(?:it|this|that)|wait|stay|freeze)$/.test(low)) return { kind: 'hold' };
+    if (/^(?:next|continue|go\s+on|carry\s+on|move\s+on|release|new\s+text|next\s+(?:one|text|answer))$/.test(low)) return { kind: 'next' };
+    if (/^(?:again|once\s+more|repeat|restart|from\s+the\s+top|read\s+(?:it|that)\s+again|start\s+over)$/.test(low)) return { kind: 'again' };
+    if (/^(?:slower|slow\s+down|slow)$/.test(low)) return { kind: 'slower' };
+    if (/^(?:faster|speed\s+up|quicker|fast)$/.test(low)) return { kind: 'faster' };
+    if (/^(?:pause|stop\s+(?:reading|scrolling)|halt)$/.test(low)) return { kind: 'pause' };
+    if (/^(?:play|resume|go|scroll|keep\s+(?:reading|scrolling|going))$/.test(low)) return { kind: 'play' };
     return { kind: 'question', text: rest };
   }
   let awaitingQuestion = 0;
@@ -2380,6 +2391,13 @@
     if (cmd.kind === 'snap') { if (running && stream) sendQuestion(cmd.text || 'What is in this picture?', true); else showBanner('The camera is not running, so there is nothing to look at.', 'note'); return; }
     if (cmd.kind === 'new') { const next = story.engine; stopStory(true, true); startStory({ micStream, continuing: next }); return; }
     if (cmd.kind === 'stop') { if (running) stop(); else stopStory(true); return; }
+    if (cmd.kind === 'hold') { heldByVoice = true; stopAuto(); if (reader.open) readerState.textContent = 'held — say "Lens, next" to move on'; setStatus('armed', 'Holding this text — say "Lens, next" to move on'); return; }
+    if (cmd.kind === 'next') { heldByVoice = false; lastSpokenAt = 0; heldSnap = true; if (heldReq) { const r = heldReq; heldReq = null; if (r.id > lastShownId) displayAnswer(r); } else setStatus('armed', 'Moving on'); return; }
+    if (cmd.kind === 'again') { if (reader.open) { reader.pos = 0; reader.lastPhrase = -1; paintReader(); startAuto(); } return; }
+    if (cmd.kind === 'slower') { wordSecs = Math.min(4, +(wordSecs + 0.5).toFixed(2)); updateSpeed(); return; }
+    if (cmd.kind === 'faster') { wordSecs = Math.max(0.25, +(wordSecs - 0.5).toFixed(2)); updateSpeed(); return; }
+    if (cmd.kind === 'pause') { if (reader.open) stopAuto(); return; }
+    if (cmd.kind === 'play') { if (reader.open) startAuto(); return; }
   }
   async function startStory(opts) {
     opts = opts || {};
@@ -2555,6 +2573,7 @@
       sig: req.frame.sig ? sigToB64(req.frame.sig) : '', text: (req.text || '').slice(0, 6000) };   // the memory: picture fingerprint + the whole text
     target.visuals = (target.visuals || []).concat([note]);
     if (target === story) saveDraft(); else { target.updatedAt = Date.now(); saveStories(); scheduleSync(); }
+    if (!req.frame.b64) return;   // a question with no photo: the note is kept, there is no picture to upload
     fetch('data:image/jpeg;base64,' + req.frame.b64).then((r) => r.blob()).then((blob) =>
       dbRun('readwrite', (store) => store.put({ id: note.id, storyId: target.id, blob, mime: 'image/jpeg', createdAt: note.at, tag: note.tag, caption: note.caption, driveId: null, name: '' }), 'frames')
     ).then(() => uploadFrames()).catch(() => {});
@@ -2982,7 +3001,7 @@
   function storyText(st) {
     return `${st.title}\nRecorded ${new Date(st.createdAt).toLocaleString()} · ${mmss((st.seconds || 0) * 1000)} · ${st.words || 0} words\n\n` +
       (st.summary ? 'Summary: ' + st.summary + '\n' : '') + (st.keys ? 'Key terms: ' + st.keys + '\n' : '') + '\nTranscript:\n' + st.text + '\n' +
-      (st.visuals && st.visuals.length ? '\nVisual notes (photos in this folder):\n' + st.visuals.map((v) => `- ${new Date(v.at).toLocaleString()} ${v.tag}: ${v.caption}`).join('\n') + '\n' : '');
+      (st.visuals && st.visuals.length ? '\nAnswers given during this storyline (photos in this folder):\n' + st.visuals.map((v) => `\n— ${new Date(v.at).toLocaleString()} ${v.tag}${v.question ? ' · asked: ' + v.question : ''}\n${v.text || v.caption}`).join('\n') + '\n' : '');
   }
   async function pushStory(st, folderId) {
     const meta = { name: safeName(st.title) + '.json', appProperties: { lensloop: '1', storyId: st.id, updatedAt: String(st.updatedAt || 0) } };
@@ -3368,6 +3387,7 @@
     const cachedText = lastGoodText;
     if (cachedText) { const hit = snapCache.find((c) => c.text === cachedText); if (hit) hit.readPos = reader.pos; }
     reader.open = false; readerEl.classList.remove('open', 'feed'); stageEl.classList.remove('feeding'); readerEl.setAttribute('aria-hidden', 'true');
+    heldByVoice = false;
     applyPanelRotation();
     if (voiceHold) { clearTimeout(voiceHold.timer); voiceHold = null; }
     voiceReset();

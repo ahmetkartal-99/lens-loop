@@ -88,6 +88,16 @@ const sse = (text) => { const ev = (e, d) => `event: ${e}\ndata: ${JSON.stringif
   await page.waitForTimeout(6000);
   assert(/auto-scrolling/.test(await page.textContent('#readerState')), 'timer resumed after the second reading');
   assert(requests === 1, 'nothing new was generated while speaking / in the quiet spell (' + requests + ')');
+  // 5. the text on screen by voice: hold, slower, again, next — nothing touched
+  await page.evaluate(() => window.__say('Lens, hold', true)); await page.waitForTimeout(300);
+  assert(/held/.test(await page.textContent('#readerState')), '"Lens, hold" holds the text (' + (await page.textContent('#readerState')) + ')');
+  const paceBefore = parseFloat(await page.textContent('#spdLabel'));
+  await page.evaluate(() => window.__say('Lens, slower', true)); await page.waitForTimeout(200);
+  assert(Math.abs(parseFloat(await page.textContent('#spdLabel')) - (paceBefore + 0.5)) < 0.01, '"Lens, slower" added half a second per word (' + paceBefore + ' → ' + (await page.textContent('#spdLabel')) + ')');
+  await page.evaluate(() => window.__say('Lens, next', true)); await page.waitForTimeout(60);
+  assert(/Moving on/.test(await page.textContent('#statusText')), '"Lens, next" released the hold (' + (await page.textContent('#statusText')) + ')');
+  await page.evaluate(() => window.__say('Lens, again', true)); await page.waitForTimeout(300);
+  assert((await curIndex()) <= 1 && /auto-scrolling/.test(await page.textContent('#readerState')), '"Lens, again" restarted from the top (word ' + (await curIndex()) + ')');
   // a few recorded sentences, so the session is worth saving; then end it: the storyline (with its memory) is saved on the phone
   await page.evaluate(() => { window.__say('We talked about the ferry and the toll today.', true); window.__say('The keeper stays on the far bank.', true); });
   await page.waitForTimeout(300);

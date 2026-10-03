@@ -49,7 +49,9 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
    three words past the last match; the worklet streams 100 ms chunks (`Int16Array(1600)`, both copies).
    **Nothing changes while you talk** (`holdingForSpeech`, `S.quietSec` = 25): no camera text is generated
    (`snap` holds, `heldSnap`) or shown (`finish` parks the answer in `heldReq`) until the quiet spell has
-   passed; your own spoken questions show at once.
+   passed; your own spoken questions show at once. By voice: "Lens, hold" (`heldByVoice`) keeps the text until
+   "Lens, next" (which also skips the quiet spell); "Lens, again / slower / faster / pause / play" drive the panel.
+   Every answer, photo or not, becomes a note in its storyline; the Drive `.txt` lists them in full.
    **Memory first** (`recall` → `memoryHit`/`cacheHit`): every visual note keeps the picture's fingerprint
    (`sig`, base64 of the 32×24 grey signature) and the whole `text`; a matching picture or question is answered
    from memory with no request, labelled `[memory · Google Drive]` / `[memory · this phone]`; fresh answers are
