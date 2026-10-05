@@ -239,100 +239,145 @@ const DESCRIBE = { desk: 'ANSWER: An empty desk\n\nA grey surface, nothing to re
   assert(errors2.length === 0, 'part 2: no page errors' + (errors2.length ? ': ' + errors2.join(' | ') : ''));
   await b2.close();
 
-  // ---- Part 3: a WRITING task (case notes, then "Writing Task: write a letter of referral…"). The quick look must not
-  // take it for a role-play card; the full model writes the letter (a TASK: line) with the case notes among the earlier
-  // frames; the letter is locked: the desk and the case notes shown again change nothing and cost no request; a
-  // different task (a multiple-choice item) replaces it.
-  const b3 = await chromium.launch();
-  const ctx3 = await b3.newContext({ viewport: { width: 420, height: 860 } });
-  const p3 = await ctx3.newPage();
-  const errors3 = []; p3.on('pageerror', (e) => errors3.push(String(e)));
-  await ctx3.addInitScript(() => {
-    localStorage.setItem('lensloop.settings', JSON.stringify({ v: 3, interval: 5, saveKey: true, saveAudio: false, key: 'sk-ant-test-0000', quietSec: 2, sttEngine: 'phone' }));
-    class HushSR { start() {} stop() { this.onend && this.onend(); } abort() { this.stop(); } }
-    window.webkitSpeechRecognition = HushSR; window.SpeechRecognition = HushSR;
-    window.__scene = 'desk';
-    const cv = document.createElement('canvas'); cv.width = 640; cv.height = 480;
-    const draw = () => {
-      const g = cv.getContext('2d'), s = window.__scene;
-      g.fillStyle = '#787878'; g.fillRect(0, 0, 640, 480);
-      if (s === 'notes') { for (let y = 0; y < 480; y += 24) { g.fillStyle = (y / 24) % 2 ? '#d0d0d0' : '#303030'; g.fillRect(0, y, 640, 24); } }
-      if (s === 'task') { for (let y = 0; y < 480; y += 48) for (let x = 0; x < 640; x += 48) { g.fillStyle = ((x + y) / 48) % 2 ? '#b0b0b0' : '#404040'; g.fillRect(x, y, 48, 48); } }
-      if (s === 'mcq') { for (let x = 0; x < 640; x += 40) { g.fillStyle = (x / 40) % 2 ? '#f0f0f0' : '#101010'; g.fillRect(x, 0, 40, 480); } }
-    };
-    draw(); setInterval(draw, 100);
-    const vstream = cv.captureStream(10);
-    const md = navigator.mediaDevices || (navigator.mediaDevices = {});
-    md.getUserMedia = async (c) => {
-      const tracks = [];
-      if (!c || c.video) tracks.push(...vstream.getVideoTracks().map((t) => t.clone()));
-      if (c && c.audio) { const ac = new AudioContext(); tracks.push(...ac.createMediaStreamDestination().stream.getAudioTracks()); }
-      return new MediaStream(tracks);
-    };
-  });
-  let scene3 = 'desk';
-  const main3 = [], looks3 = [], singlePrompts = [];
+  // ---- Parts 3 and 4: a WRITING task over several pages (case notes, then "Writing Task: write a letter of referral…").
+  // A harness with a camera this test switches between pages (desk / notes / notes2 / task / mcq) and a fake Claude
+  // endpoint whose quick look answers as a well-behaved model would for these pages.
   const LETTER = 'ANSWER: Referral to Dr Smith\nTASK: referral letter — Mrs Sharma to Dr Smith\n\nDear Dr Smith,\n\nThank you for seeing Mrs Priya Sharma, a 60-year-old retired clerical worker with type 2 diabetes since 1999, whose fasting sugars remain in the 16+ range despite metformin 750 mg b.d. and glipizide.';
-  await p3.route('https://api.anthropic.com/v1/messages', async (route) => {
-    const body = JSON.parse(route.request().postData());
-    const ut = textOf(body.messages[0].content);
-    if (/haiku/.test(body.model)) {
-      let answer;
-      if (/SAME or DIFFERENT/.test(ut)) answer = 'DIFFERENT';
-      else if (/Answer about the SECOND photo/.test(ut)) {   // the paired look — with a writing task locked it must offer MORE / TASK
-        const taskStyle = /whose finished text the user is reading now/.test(ut) && /\nMORE — /.test(ut) && /\nTASK — /.test(ut);
-        answer = scene3 === 'desk' ? 'NONE' : scene3 === 'mcq' ? 'OTHER' : scene3 === 'task' ? 'SAME' : taskStyle ? 'MORE' : 'NONE';
-        looks3.push({ scene: scene3, kind: taskStyle ? 'pair-task' : 'pair-role', answer });
-      } else { singlePrompts.push(ut); answer = 'NONE'; looks3.push({ scene: scene3, kind: 'single', answer }); }   // never a role card here
-      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ content: [{ type: 'text', text: answer }], usage: { input_tokens: 1500, output_tokens: 20 } }) });
-    }
-    const images = body.messages[0].content.filter((c) => c.type === 'image').length;
-    main3.push(scene3 + ':' + images + 'img');
-    const text = scene3 === 'task' ? LETTER : scene3 === 'mcq' ? 'ANSWER: C) Pneumonia\n\nThe findings fit a lobar pneumonia.' : scene3 === 'notes' ? 'ANSWER: Case notes — Mrs Priya Sharma\n\nCase notes for a 60-year-old with type 2 diabetes.' : 'ANSWER: An empty desk\n\nA grey surface, nothing to read.';
-    return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse(text) });
-  });
-  const shown3 = () => p3.evaluate(() => (document.getElementById('answerBody') || {}).textContent || '');
-  const go3 = async (s) => { scene3 = s; await p3.evaluate((v) => { window.__scene = v; }, s); };
+  async function writingHarness() {
+    const b = await chromium.launch();
+    const ctx = await b.newContext({ viewport: { width: 420, height: 860 } });
+    const p = await ctx.newPage();
+    const h = { b, p, errors: [], main: [], looks: [], singlePrompts: [], scene: 'desk' };
+    p.on('pageerror', (e) => h.errors.push(String(e)));
+    await ctx.addInitScript(() => {
+      localStorage.setItem('lensloop.settings', JSON.stringify({ v: 3, interval: 5, saveKey: true, saveAudio: false, key: 'sk-ant-test-0000', quietSec: 2, sttEngine: 'phone' }));
+      class HushSR { start() {} stop() { this.onend && this.onend(); } abort() { this.stop(); } }
+      window.webkitSpeechRecognition = HushSR; window.SpeechRecognition = HushSR;
+      window.__scene = 'desk';
+      const cv = document.createElement('canvas'); cv.width = 640; cv.height = 480;
+      const draw = () => {
+        const g = cv.getContext('2d'), s = window.__scene;
+        g.fillStyle = '#787878'; g.fillRect(0, 0, 640, 480);
+        if (s === 'notes') { for (let y = 0; y < 480; y += 24) { g.fillStyle = (y / 24) % 2 ? '#d0d0d0' : '#303030'; g.fillRect(0, y, 640, 24); } }
+        if (s === 'notes2') { for (let y = 0; y < 480; y += 16) { g.fillStyle = (y / 16) % 3 ? '#e8e8e8' : '#202020'; g.fillRect(0, y, 640, 16); } }
+        if (s === 'task') { for (let y = 0; y < 480; y += 48) for (let x = 0; x < 640; x += 48) { g.fillStyle = ((x + y) / 48) % 2 ? '#b0b0b0' : '#404040'; g.fillRect(x, y, 48, 48); } }
+        if (s === 'mcq') { for (let x = 0; x < 640; x += 40) { g.fillStyle = (x / 40) % 2 ? '#f0f0f0' : '#101010'; g.fillRect(x, 0, 40, 480); } }
+      };
+      draw(); setInterval(draw, 100);
+      const vstream = cv.captureStream(10);
+      const md = navigator.mediaDevices || (navigator.mediaDevices = {});
+      md.getUserMedia = async (c) => {
+        const tracks = [];
+        if (!c || c.video) tracks.push(...vstream.getVideoTracks().map((t) => t.clone()));
+        if (c && c.audio) { const ac = new AudioContext(); tracks.push(...ac.createMediaStreamDestination().stream.getAudioTracks()); }
+        return new MediaStream(tracks);
+      };
+    });
+    const look = (ut) => {
+      const paired = /Answer about the SECOND photo/.test(ut), taskStyle = paired && /whose finished text the user is reading now/.test(ut);
+      if (h.scene === 'desk') return 'NONE';
+      if (h.scene === 'mcq') return paired ? 'OTHER' : 'NONE';
+      if (h.scene === 'notes' || h.scene === 'notes2') return taskStyle ? 'MORE' : 'NOTES | Mrs Priya Sharma';
+      if (h.scene === 'task') return taskStyle ? 'SAME' : 'WRITE | a letter of referral to Dr Smith';
+      return 'NONE';
+    };
+    await p.route('https://api.anthropic.com/v1/messages', async (route) => {
+      const body = JSON.parse(route.request().postData());
+      const ut = textOf(body.messages[0].content);
+      if (/haiku/.test(body.model)) {
+        let answer;
+        if (/SAME or DIFFERENT/.test(ut)) answer = 'DIFFERENT';
+        else { answer = look(ut); const paired = /Answer about the SECOND photo/.test(ut); if (!paired) h.singlePrompts.push(ut); h.looks.push({ scene: h.scene, kind: paired ? (/whose finished text/.test(ut) ? 'pair-task' : 'pair-role') : 'single', answer }); }
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ content: [{ type: 'text', text: answer }], usage: { input_tokens: 1500, output_tokens: 20 } }) });
+      }
+      const images = body.messages[0].content.filter((c) => c.type === 'image').length;
+      h.main.push(h.scene + ':' + images + 'img' + (/WRITING TASK/.test(ut) ? '+write' : ''));
+      const text = /WRITING TASK/.test(ut) || h.scene === 'task' ? LETTER : h.scene === 'mcq' ? 'ANSWER: C) Pneumonia\n\nThe findings fit a lobar pneumonia.' : /^notes/.test(h.scene) ? 'ANSWER: Case notes — Mrs Priya Sharma\n\nCase notes for a 60-year-old with type 2 diabetes.' : 'ANSWER: An empty desk\n\nA grey surface, nothing to read.';
+      return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse(text) });
+    });
+    h.shown = () => p.evaluate(() => (document.getElementById('answerBody') || {}).textContent || '');
+    h.status = () => p.evaluate(() => (document.getElementById('statusText') || {}).textContent || '');
+    h.meta = () => p.evaluate(() => (document.getElementById('answerMeta') || {}).textContent || '');
+    h.go = async (s) => { h.scene = s; await p.evaluate((v) => { window.__scene = v; }, s); };
+    await p.goto(`http://127.0.0.1:${port}/index.html#key=sk-ant-test-0000`);
+    await p.waitForTimeout(800);
+    await p.click('#startBtn');
+    return h;
+  }
+  const looksOf = (h) => h.looks.map((l) => l.scene + ':' + l.kind + ':' + l.answer.split(' |')[0]).join(', ');
 
-  await p3.goto(`http://127.0.0.1:${port}/index.html#key=sk-ant-test-0000`);
-  await p3.waitForTimeout(800);
-  await p3.click('#startBtn');
-  await p3.waitForTimeout(7000);
-  assert(singlePrompts.length >= 1 && singlePrompts.every((u) => /A WRITING task is NOT a role-play card/.test(u)), '3. the quick look is told a writing task is not a role-play card');
+  // Part 3: the notes first, then the instructions. The quick look must not take the notes for a role-play card; the
+  // notes pages are collected with no full answer; the instructions page brings ONE request for the letter, with the
+  // pages among the earlier frames; the letter is locked: the desk and the pages it was written from change nothing
+  // and cost no request; a different task (a multiple-choice item) replaces it.
+  {
+    const h = await writingHarness();
+    await h.p.waitForTimeout(7000);
+    assert(h.singlePrompts.length >= 1 && h.singlePrompts.every((u) => /A WRITING task is NOT a role-play card/.test(u) && /\nNOTES \| /.test(u) && /\nWRITE \| /.test(u)), '3. the quick look is told a writing task is not a role-play card, and asked about notes and instructions pages');
 
-  // the case notes: the usual answer, not a role card
-  await go3('notes');
-  await p3.waitForTimeout(9000);
-  assert(main3.join() === 'desk:1img,notes:2img', '3a. case notes: the usual answer (' + main3.join() + ')');
+    await h.go('notes');
+    await h.p.waitForTimeout(8000);
+    assert(h.main.join() === 'desk:1img', '3a. a case-notes page: collected, no full answer (' + h.main.join() + ')');
+    assert(/case notes collected \(1 page\)/i.test(await h.status()), '3a. the status line says so (' + await h.status() + ')');
+    await h.go('notes2');
+    await h.p.waitForTimeout(8000);
+    assert(h.main.join() === 'desk:1img', '3a. a second page: collected too, still no full answer (' + h.main.join() + ')');
+    assert(/case notes collected \(2 pages\)/i.test(await h.status()), '3a. two pages collected (' + await h.status() + ')');
+    assert(/empty desk/.test(await h.shown()), '3a. the screen is unchanged meanwhile');
 
-  // the task page: the letter is written with the case notes among the earlier frames, and locked
-  await go3('task');
-  await p3.waitForTimeout(9000);
-  assert(main3.join() === 'desk:1img,notes:2img,task:3img', '3b. the task page: the letter asked for, with the case notes among the earlier frames (' + main3.join() + ')');
-  let s3 = await shown3();
-  assert(/Dear Dr Smith/.test(s3) && /Priya Sharma/.test(s3), '3b. the letter is on screen');
-  assert(/task:referral letter/.test(await p3.evaluate(() => document.getElementById('answerMeta').textContent)), '3b. the meta line says a task was caught by the answer');
+    await h.go('task');
+    await h.p.waitForTimeout(9000);
+    assert(h.main.join() === 'desk:1img,task:4img+write', '3b. the instructions page: ONE request for the letter, the desk and both notes pages among the earlier frames, told it is a writing task (' + h.main.join() + ')');
+    let s3 = await h.shown();
+    assert(/Dear Dr Smith/.test(s3) && /Priya Sharma/.test(s3), '3b. the letter is on screen');
+    assert(/task:referral letter/.test(await h.meta()), '3b. the meta line says a task was caught by the answer');
+    assert(/keeping the referral letter/i.test(await h.status()), '3b. the status line says the text is kept (' + await h.status() + ')');
 
-  // the desk: the letter stays, no request
-  await go3('desk');
-  await p3.waitForTimeout(9000);
-  assert(main3.length === 3 && /Dear Dr Smith/.test(await shown3()), '3c. the desk: the letter stays, no new answer (' + main3.join() + ')');
+    await h.go('desk');
+    await h.p.waitForTimeout(9000);
+    assert(h.main.length === 2 && /Dear Dr Smith/.test(await h.shown()), '3c. the desk: the letter stays, no new answer (' + h.main.join() + ')');
 
-  // back to the case notes the letter was written from: nothing changes, and not even a quick look is spent
-  const looksBefore3 = looks3.length;
-  await go3('notes');
-  await p3.waitForTimeout(9000);
-  assert(main3.length === 3 && /Dear Dr Smith/.test(await shown3()), '3d. the case notes again: the letter stays, no new answer (' + main3.join() + ')');
-  assert(!looks3.slice(looksBefore3).some((l) => l.scene === 'notes'), '3d. a page the letter was written from is known: no quick look spent on it (' + looks3.slice(looksBefore3).map((l) => l.scene + ':' + l.answer).join(', ') + ')');
+    const looksBefore = h.looks.length;
+    await h.go('notes2');
+    await h.p.waitForTimeout(9000);
+    assert(h.main.length === 2 && /Dear Dr Smith/.test(await h.shown()), '3d. the case notes again: the letter stays, no new answer (' + h.main.join() + ')');
+    assert(!h.looks.slice(looksBefore).some((l) => l.scene === 'notes2'), '3d. a page the letter was written from is known: no quick look spent on it (' + h.looks.slice(looksBefore).map((l) => l.scene + ':' + l.answer).join(', ') + ')');
 
-  // a different task: answered, the letter gone
-  await go3('mcq');
-  await p3.waitForTimeout(9000);
-  assert(main3.join() === 'desk:1img,notes:2img,task:3img,mcq:4img', '3e. a multiple-choice item: answered as usual (' + main3.join() + ')');
-  s3 = await shown3();
-  assert(/Pneumonia/.test(s3) && !/Dear Dr Smith/.test(s3), '3e. the answer is on screen, the letter is gone');
-  assert(errors3.length === 0, 'part 3: no page errors' + (errors3.length ? ': ' + errors3.join(' | ') : ''));
-  console.log('part 3 looks:', looks3.map((l) => l.scene + ':' + l.kind + ':' + l.answer).join(', '));
-  await b3.close(); server.close();
+    await h.go('mcq');
+    await h.p.waitForTimeout(9000);
+    assert(h.main.join() === 'desk:1img,task:4img+write,mcq:5img', '3e. a multiple-choice item: answered as usual (' + h.main.join() + ')');
+    s3 = await h.shown();
+    assert(/Pneumonia/.test(s3) && !/Dear Dr Smith/.test(s3), '3e. the answer is on screen, the letter is gone');
+    assert(h.errors.length === 0, 'part 3: no page errors' + (h.errors.length ? ': ' + h.errors.join(' | ') : ''));
+    console.log('part 3 looks:', looksOf(h));
+    await h.b.close();
+  }
+
+  // Part 4: the other order — the instructions page first (the letter written without the notes), then two notes
+  // pages close together: gathered, and the letter written again ONCE, after the pages stop coming.
+  {
+    const h = await writingHarness();
+    await h.p.waitForTimeout(6000);
+    await h.go('task');
+    await h.p.waitForTimeout(9000);
+    assert(h.main.join() === 'desk:1img,task:2img+write', '4a. the instructions first: the letter written from what is in hand (' + h.main.join() + ')');
+    assert(/Dear Dr Smith/.test(await h.shown()), '4a. the letter is on screen');
+    await h.go('notes');
+    await h.p.waitForTimeout(3600);
+    await h.go('notes2');
+    await h.p.waitForTimeout(2500);
+    assert(h.main.length === 2, '4b. two notes pages in quick succession: gathered, no request yet (' + h.main.join() + ')');
+    assert(/Dear Dr Smith/.test(await h.shown()), '4b. the letter still on screen meanwhile');
+    assert(/more of the task collected \(2 pages\)/i.test(await h.status()), '4b. the status line says so (' + await h.status() + ')');
+    await h.p.waitForTimeout(9000);
+    assert(h.main.join() === 'desk:1img,task:2img+write,notes2:4img+write', '4c. then the letter written again ONCE, with the instructions and both pages among the frames, told it is more of the task (' + h.main.join() + ')');
+    assert(/Dear Dr Smith/.test(await h.shown()), '4c. the rewritten letter is on screen');
+    await h.p.waitForTimeout(9000);
+    assert(h.main.length === 3, '4d. and locked again: nothing more (' + h.main.join() + ')');
+    assert(h.errors.length === 0, 'part 4: no page errors' + (h.errors.length ? ': ' + h.errors.join(' | ') : ''));
+    console.log('part 4 looks:', looksOf(h));
+    await h.b.close();
+  }
+  server.close();
   console.log(process.exitCode ? 'ROLE CARDS FAILED' : 'ROLE CARDS PASSED');
 })().catch((e) => { console.error(e); process.exit(1); });

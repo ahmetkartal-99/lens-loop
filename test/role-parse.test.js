@@ -32,16 +32,26 @@ const cases = [
   ['MORE', true, 'more'],
   ['**MORE** — the case notes for the same task.', true, 'more'],
   ['{"more": true}', true, 'more'],
-  ['TASK', true, 'newTask'],
-  ['TASK — a different letter.', true, 'newTask'],
-  ['{"task": true}', true, 'newTask'],
+  ['TASK', true, 'newTask a writing task'],
+  ['TASK — a different letter.', true, 'newTask a writing task'],
+  ['{"task": true}', true, 'newTask a writing task'],
   ['MORE', false, 'none'],
   ['TASK', false, 'none'],
+  ['WRITE | a letter of referral to Dr Smith', false, 'write a letter of referral to Dr Smith'],
+  ['**WRITE** | referral letter', true, 'write referral letter'],
+  ['{"write": "a referral letter"}', false, 'write a referral letter'],
+  ['NOTES | Mrs Priya Sharma', false, 'notes Mrs Priya Sharma'],
+  ['NOTES | Mrs Priya Sharma', true, 'notes Mrs Priya Sharma'],
+  ['{"notes": "Mrs Sharma, diabetes"}', false, 'notes Mrs Sharma, diabetes'],
+  ['TASK | a discharge summary for Mr Jones', true, 'newTask a discharge summary for Mr Jones'],
+  ['TASK | a discharge summary for Mr Jones', false, 'none'],
+  ['WRITE', false, 'write a writing task'],
+  ['NOTES', false, 'notes case notes'],
 ];
 let bad = 0;
 for (const [t, paired, want] of cases) {
   const r = parseRoleLook(t, paired);
-  const got = r.card ? 'card ' + r.card.role : r.same ? 'same' : r.more ? 'more' : r.newTask ? 'newTask' : r.other ? 'other' : 'none';
+  const got = r.card ? 'card ' + r.card.role : r.write ? 'write ' + r.write : r.notes ? 'notes ' + r.notes : r.same ? 'same' : r.more ? 'more' : r.newTask ? 'newTask ' + r.newTask : r.other ? 'other' : 'none';
   if (got !== want) { bad++; console.error('FAIL:', JSON.stringify(t), '->', got, '(wanted', want + ')'); } else console.log('ok:', JSON.stringify(t).slice(0, 70), '->', got);
 }
 const full = parseRoleLook('CARD | Patient | Medical ward in a hospital | Explain that you are very worried', false).card;

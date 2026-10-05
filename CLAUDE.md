@@ -129,11 +129,18 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     the case notes among the earlier frames; reply header `TASK: <name>`, `splitAnswer(...).task`); and either stays
     on screen EXACTLY AS IT IS until a DIFFERENT task appears, whatever else the camera sees. The lock has a `kind`
     (`'role'` | `'task'`); a task lock keeps `seen` = the pages the text was written from (`req.seenFrames`), which
-    `snap()` counts among the known pictures, so showing the case notes again costs nothing; the paired quick look for
-    a task lock answers SAME / MORE (another page of the same task with new information → written again in full) /
-    TASK (a different writing task) / NEW | … (a role card) / OTHER / NONE. The quick look and the rules say outright
-    that a writing task and its case notes are NOT a role-play card (that misread sent a referral task down the
-    speaking path).
+    `snap()` counts among the known pictures, so showing the case notes again costs nothing. **A writing task spans
+    pages, so it is collect-then-write**: the quick look answers `NOTES | <subject>` for a page of case notes
+    (collected by `collectPage` — `rememberFrame` + `roleMaterial`, no full request, the screen unchanged, the status
+    line and recording strip say "case notes collected (n pages)" via `taskNote`) and `WRITE | <what>` for the page
+    with the instructions (→ `frame.write`, `frame.fresh` so memory is bypassed, the usual request with the pages
+    among the earlier frames and a line saying it is a writing task). The paired look for a task lock answers SAME /
+    MORE (another page of the same task → gathered, and the piece written again ONCE after `ROLE_MORE_SETTLE_MS` = 6 s
+    without a further page: `roleMoreGo`, `frame.writeMore`, never once per page) / `TASK | <what>` (a different
+    writing task) / `NOTES | …` (another subject's notes: collected, the lock stays) / NEW | … (a role card) / OTHER /
+    NONE. The quick look and the rules say outright that a writing task and its case notes are NOT a role-play card
+    (that misread sent a referral task down the speaking path). Stop, "Lens, next", a spoken question and the
+    setting clear the collected pages too (`clearMaterial`).
     Every new picture first gets a quick look by `PAGE_CHECK_MODEL` (`roleCardCheck`: `CARD | role | setting | task`
     or `NONE`; with lines locked it compares the new picture with the locked card: `SAME` / `NEW | …` / `NONE`), then
     `decideRole`: a (new) card → a focused request (`frame.role` → `send` with `scene`: ONE card, no earlier frames, no
