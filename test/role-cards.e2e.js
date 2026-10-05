@@ -216,7 +216,7 @@ const DESCRIBE = { desk: 'ANSWER: An empty desk\n\nA grey surface, nothing to re
     const ut = textOf(body.messages[0].content), st = sysText(body.system);
     main2.push(/dialogue generator/i.test(st) ? 'role' : 'normal');
     // the full model sees the card in the usual request and answers in role, as the rules now ask
-    const hasRule = /ROLE-PLAY CARDS are the one exception/.test(st);
+    const hasRule = /A SPEAKING ROLE-PLAY CARD/.test(st) && /"ROLE: "/.test(st);
     return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse(hasRule ? 'ANSWER: Worried about going home\nSTORYLINE: none\nROLE: Patient\n\nDoctor, I still don\'t feel back to normal, and honestly I\'m scared to go home today.' : 'ANSWER: Roleplayer card\n\nThe card says: you are 54.') });
   });
   await p2.reload(); await p2.waitForTimeout(1500);
@@ -237,6 +237,102 @@ const DESCRIBE = { desk: 'ANSWER: An empty desk\n\nA grey surface, nothing to re
   }));
   assert(remembered.some((v) => v.scene && v.rv), 'part 2: the lines were remembered as a role card\'s, with the rule in force (' + JSON.stringify(remembered) + ')');
   assert(errors2.length === 0, 'part 2: no page errors' + (errors2.length ? ': ' + errors2.join(' | ') : ''));
-  await b2.close(); server.close();
+  await b2.close();
+
+  // ---- Part 3: a WRITING task (case notes, then "Writing Task: write a letter of referral…"). The quick look must not
+  // take it for a role-play card; the full model writes the letter (a TASK: line) with the case notes among the earlier
+  // frames; the letter is locked: the desk and the case notes shown again change nothing and cost no request; a
+  // different task (a multiple-choice item) replaces it.
+  const b3 = await chromium.launch();
+  const ctx3 = await b3.newContext({ viewport: { width: 420, height: 860 } });
+  const p3 = await ctx3.newPage();
+  const errors3 = []; p3.on('pageerror', (e) => errors3.push(String(e)));
+  await ctx3.addInitScript(() => {
+    localStorage.setItem('lensloop.settings', JSON.stringify({ v: 3, interval: 5, saveKey: true, saveAudio: false, key: 'sk-ant-test-0000', quietSec: 2, sttEngine: 'phone' }));
+    class HushSR { start() {} stop() { this.onend && this.onend(); } abort() { this.stop(); } }
+    window.webkitSpeechRecognition = HushSR; window.SpeechRecognition = HushSR;
+    window.__scene = 'desk';
+    const cv = document.createElement('canvas'); cv.width = 640; cv.height = 480;
+    const draw = () => {
+      const g = cv.getContext('2d'), s = window.__scene;
+      g.fillStyle = '#787878'; g.fillRect(0, 0, 640, 480);
+      if (s === 'notes') { for (let y = 0; y < 480; y += 24) { g.fillStyle = (y / 24) % 2 ? '#d0d0d0' : '#303030'; g.fillRect(0, y, 640, 24); } }
+      if (s === 'task') { for (let y = 0; y < 480; y += 48) for (let x = 0; x < 640; x += 48) { g.fillStyle = ((x + y) / 48) % 2 ? '#b0b0b0' : '#404040'; g.fillRect(x, y, 48, 48); } }
+      if (s === 'mcq') { for (let x = 0; x < 640; x += 40) { g.fillStyle = (x / 40) % 2 ? '#f0f0f0' : '#101010'; g.fillRect(x, 0, 40, 480); } }
+    };
+    draw(); setInterval(draw, 100);
+    const vstream = cv.captureStream(10);
+    const md = navigator.mediaDevices || (navigator.mediaDevices = {});
+    md.getUserMedia = async (c) => {
+      const tracks = [];
+      if (!c || c.video) tracks.push(...vstream.getVideoTracks().map((t) => t.clone()));
+      if (c && c.audio) { const ac = new AudioContext(); tracks.push(...ac.createMediaStreamDestination().stream.getAudioTracks()); }
+      return new MediaStream(tracks);
+    };
+  });
+  let scene3 = 'desk';
+  const main3 = [], looks3 = [], singlePrompts = [];
+  const LETTER = 'ANSWER: Referral to Dr Smith\nTASK: referral letter — Mrs Sharma to Dr Smith\n\nDear Dr Smith,\n\nThank you for seeing Mrs Priya Sharma, a 60-year-old retired clerical worker with type 2 diabetes since 1999, whose fasting sugars remain in the 16+ range despite metformin 750 mg b.d. and glipizide.';
+  await p3.route('https://api.anthropic.com/v1/messages', async (route) => {
+    const body = JSON.parse(route.request().postData());
+    const ut = textOf(body.messages[0].content);
+    if (/haiku/.test(body.model)) {
+      let answer;
+      if (/SAME or DIFFERENT/.test(ut)) answer = 'DIFFERENT';
+      else if (/Answer about the SECOND photo/.test(ut)) {   // the paired look — with a writing task locked it must offer MORE / TASK
+        const taskStyle = /whose finished text the user is reading now/.test(ut) && /\nMORE — /.test(ut) && /\nTASK — /.test(ut);
+        answer = scene3 === 'desk' ? 'NONE' : scene3 === 'mcq' ? 'OTHER' : scene3 === 'task' ? 'SAME' : taskStyle ? 'MORE' : 'NONE';
+        looks3.push({ scene: scene3, kind: taskStyle ? 'pair-task' : 'pair-role', answer });
+      } else { singlePrompts.push(ut); answer = 'NONE'; looks3.push({ scene: scene3, kind: 'single', answer }); }   // never a role card here
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ content: [{ type: 'text', text: answer }], usage: { input_tokens: 1500, output_tokens: 20 } }) });
+    }
+    const images = body.messages[0].content.filter((c) => c.type === 'image').length;
+    main3.push(scene3 + ':' + images + 'img');
+    const text = scene3 === 'task' ? LETTER : scene3 === 'mcq' ? 'ANSWER: C) Pneumonia\n\nThe findings fit a lobar pneumonia.' : scene3 === 'notes' ? 'ANSWER: Case notes — Mrs Priya Sharma\n\nCase notes for a 60-year-old with type 2 diabetes.' : 'ANSWER: An empty desk\n\nA grey surface, nothing to read.';
+    return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse(text) });
+  });
+  const shown3 = () => p3.evaluate(() => (document.getElementById('answerBody') || {}).textContent || '');
+  const go3 = async (s) => { scene3 = s; await p3.evaluate((v) => { window.__scene = v; }, s); };
+
+  await p3.goto(`http://127.0.0.1:${port}/index.html#key=sk-ant-test-0000`);
+  await p3.waitForTimeout(800);
+  await p3.click('#startBtn');
+  await p3.waitForTimeout(7000);
+  assert(singlePrompts.length >= 1 && singlePrompts.every((u) => /A WRITING task is NOT a role-play card/.test(u)), '3. the quick look is told a writing task is not a role-play card');
+
+  // the case notes: the usual answer, not a role card
+  await go3('notes');
+  await p3.waitForTimeout(9000);
+  assert(main3.join() === 'desk:1img,notes:2img', '3a. case notes: the usual answer (' + main3.join() + ')');
+
+  // the task page: the letter is written with the case notes among the earlier frames, and locked
+  await go3('task');
+  await p3.waitForTimeout(9000);
+  assert(main3.join() === 'desk:1img,notes:2img,task:3img', '3b. the task page: the letter asked for, with the case notes among the earlier frames (' + main3.join() + ')');
+  let s3 = await shown3();
+  assert(/Dear Dr Smith/.test(s3) && /Priya Sharma/.test(s3), '3b. the letter is on screen');
+  assert(/task:referral letter/.test(await p3.evaluate(() => document.getElementById('answerMeta').textContent)), '3b. the meta line says a task was caught by the answer');
+
+  // the desk: the letter stays, no request
+  await go3('desk');
+  await p3.waitForTimeout(9000);
+  assert(main3.length === 3 && /Dear Dr Smith/.test(await shown3()), '3c. the desk: the letter stays, no new answer (' + main3.join() + ')');
+
+  // back to the case notes the letter was written from: nothing changes, and not even a quick look is spent
+  const looksBefore3 = looks3.length;
+  await go3('notes');
+  await p3.waitForTimeout(9000);
+  assert(main3.length === 3 && /Dear Dr Smith/.test(await shown3()), '3d. the case notes again: the letter stays, no new answer (' + main3.join() + ')');
+  assert(!looks3.slice(looksBefore3).some((l) => l.scene === 'notes'), '3d. a page the letter was written from is known: no quick look spent on it (' + looks3.slice(looksBefore3).map((l) => l.scene + ':' + l.answer).join(', ') + ')');
+
+  // a different task: answered, the letter gone
+  await go3('mcq');
+  await p3.waitForTimeout(9000);
+  assert(main3.join() === 'desk:1img,notes:2img,task:3img,mcq:4img', '3e. a multiple-choice item: answered as usual (' + main3.join() + ')');
+  s3 = await shown3();
+  assert(/Pneumonia/.test(s3) && !/Dear Dr Smith/.test(s3), '3e. the answer is on screen, the letter is gone');
+  assert(errors3.length === 0, 'part 3: no page errors' + (errors3.length ? ': ' + errors3.join(' | ') : ''));
+  console.log('part 3 looks:', looks3.map((l) => l.scene + ':' + l.kind + ':' + l.answer).join(', '));
+  await b3.close(); server.close();
   console.log(process.exitCode ? 'ROLE CARDS FAILED' : 'ROLE CARDS PASSED');
 })().catch((e) => { console.error(e); process.exit(1); });

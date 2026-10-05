@@ -121,10 +121,19 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     the foot of Settings. A declined motion permission shows a banner instead of silently leaving text unturned.
 12. **Answer panel.** "ANSWER:" headline, storyline tag, cost/latency readouts (cached tokens counted), history
     of 40, copy, Read button, settings sheet, intro text, privacy/terms pages, PWA icons.
-13. **Role-play cards** — automatic, nothing to switch on per card (`S.roleAuto`, default on; `S.sceneCharacter` =
-    optional voice notes). The author's spec: a card with a SETTING, a role (DOCTOR, PATIENT, CARER…) and a TASK list
-    is answered IN that role — the lines that carry out the tasks, for him to read aloud with voice-follow — and those
-    lines stay on screen EXACTLY AS THEY ARE until a DIFFERENT role card appears, whatever else the camera sees.
+13. **Tasks: role-play cards and writing tasks** — automatic, nothing to switch on (`S.roleAuto`, default on;
+    `S.sceneCharacter` = optional voice notes). The author's spec: a SPEAKING role-play card (a SETTING, a role —
+    DOCTOR, PATIENT, CARER… — and a TASK list) is answered IN that role — the lines that carry out the tasks, for him
+    to read aloud with voice-follow; a WRITING task ("Writing Task: write a letter of referral…", with case notes on
+    the pages before) gets the finished piece itself (`SYSTEM_RULES` rule (2): format and length as asked, facts from
+    the case notes among the earlier frames; reply header `TASK: <name>`, `splitAnswer(...).task`); and either stays
+    on screen EXACTLY AS IT IS until a DIFFERENT task appears, whatever else the camera sees. The lock has a `kind`
+    (`'role'` | `'task'`); a task lock keeps `seen` = the pages the text was written from (`req.seenFrames`), which
+    `snap()` counts among the known pictures, so showing the case notes again costs nothing; the paired quick look for
+    a task lock answers SAME / MORE (another page of the same task with new information → written again in full) /
+    TASK (a different writing task) / NEW | … (a role card) / OTHER / NONE. The quick look and the rules say outright
+    that a writing task and its case notes are NOT a role-play card (that misread sent a referral task down the
+    speaking path).
     Every new picture first gets a quick look by `PAGE_CHECK_MODEL` (`roleCardCheck`: `CARD | role | setting | task`
     or `NONE`; with lines locked it compares the new picture with the locked card: `SAME` / `NEW | …` / `NONE`), then
     `decideRole`: a (new) card → a focused request (`frame.role` → `send` with `scene`: ONE card, no earlier frames, no

@@ -29,11 +29,19 @@ const cases = [
   ['**OTHER** — a multiple-choice question.', true, 'other'],
   ['{"other": true}', true, 'other'],
   ['OTHER', false, 'none'],                                                                  // OTHER only means something with a locked card
+  ['MORE', true, 'more'],
+  ['**MORE** — the case notes for the same task.', true, 'more'],
+  ['{"more": true}', true, 'more'],
+  ['TASK', true, 'newTask'],
+  ['TASK — a different letter.', true, 'newTask'],
+  ['{"task": true}', true, 'newTask'],
+  ['MORE', false, 'none'],
+  ['TASK', false, 'none'],
 ];
 let bad = 0;
 for (const [t, paired, want] of cases) {
   const r = parseRoleLook(t, paired);
-  const got = r.card ? 'card ' + r.card.role : r.same ? 'same' : r.other ? 'other' : 'none';
+  const got = r.card ? 'card ' + r.card.role : r.same ? 'same' : r.more ? 'more' : r.newTask ? 'newTask' : r.other ? 'other' : 'none';
   if (got !== want) { bad++; console.error('FAIL:', JSON.stringify(t), '->', got, '(wanted', want + ')'); } else console.log('ok:', JSON.stringify(t).slice(0, 70), '->', got);
 }
 const full = parseRoleLook('CARD | Patient | Medical ward in a hospital | Explain that you are very worried', false).card;
@@ -49,10 +57,12 @@ const sa = [
   ['ANSWER: Title\nSTORYLINE: none\nFRAMES: new\nROLE: Doctor\n\nGood morning.', { role: 'Doctor', body: 'Good morning.', frames: 'new' }],
   ['ANSWER: Title\n**ROLE:** Carer\n\nHi there.', { role: 'Carer', body: 'Hi there.' }],
   ['ANSWER: A desk\n\nA grey desk.', { role: '', body: 'A grey desk.' }],
+  ['ANSWER: Referral to Dr Smith\nTASK: referral letter — Mrs Sharma to Dr Smith\n\nDear Dr Smith,', { role: '', task: 'referral letter — Mrs Sharma to Dr Smith', body: 'Dear Dr Smith,' }],
+  ['ANSWER: Referral\nSTORYLINE: none\nFRAMES: continues\n**TASK:** referral letter\n\nDear Dr Smith,', { role: '', task: 'referral letter', body: 'Dear Dr Smith,', frames: 'continues' }],
 ];
 for (const [t, want] of sa) {
   const r = splitAnswer(t);
-  const ok = r.role === want.role && r.body === want.body && (want.frames === undefined || r.frames === want.frames);
+  const ok = r.role === want.role && r.body === want.body && (want.frames === undefined || r.frames === want.frames) && (want.task === undefined ? r.task === '' : r.task === want.task);
   if (!ok) { bad++; console.error('FAIL: splitAnswer', JSON.stringify(t), '->', JSON.stringify(r)); } else console.log('ok: splitAnswer', JSON.stringify(t).slice(0, 50), '-> role', JSON.stringify(r.role));
 }
 console.log(bad ? 'ROLE PARSE FAILED' : 'ALL TESTS PASSED');

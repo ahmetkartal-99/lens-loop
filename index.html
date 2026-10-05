@@ -584,9 +584,9 @@
     <div class="field" style="background:#1a1f2a;border-radius:10px;padding:12px 14px;margin:4px 0 8px">
       <label style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
         <input type="checkbox" id="roleAuto" style="width:18px;height:18px">
-        <span style="font-size:15px;font-weight:600">Role-play cards — speak the role</span>
+        <span style="font-size:15px;font-weight:600">Tasks — do the task, keep the text</span>
       </label>
-      <div class="hint" style="margin-bottom:8px">Automatic. When the camera sees a role-play card (a SETTING, a role such as DOCTOR or PATIENT, and a TASK list), Claude becomes that role and writes the lines that carry out the tasks, for you to read aloud. The lines stay on screen until a different role card appears.</div>
+      <div class="hint" style="margin-bottom:8px">Automatic. A speaking role-play card (a SETTING, a role such as DOCTOR or PATIENT, a TASK list): Claude becomes that role and writes the lines that carry out the tasks, for you to read aloud. A writing task (a letter, referral or report from case notes): Claude writes the finished piece. Either stays on screen until a different task appears — the desk, your hand or the same pages again change nothing.</div>
       <label for="sceneCharacter" style="font-size:13px">Voice notes (optional — the role comes from the card)</label>
       <textarea id="sceneCharacter" placeholder="e.g. Calm GP in her 40s. Warm but direct, plain language, Australian accent.&#10;Leave blank and the card's own heading picks the role automatically." style="min-height:72px"></textarea>
     </div>
@@ -759,9 +759,14 @@
     'Then a blank line, then a brief explanation. Never put anything before the ANSWER line. ' +
     'When the photo shows nothing worth answering — an empty desk or floor, a wall, a blur, the camera on the move, nothing to read and no question — the first line is exactly "ANSWER: nothing to read" and the explanation is one short line, so what was on screen before can stay. ' +
     'The user is waiting hands-free and reads the reply as it arrives, so reason no longer than the question needs: a plain photo or a simple question gets a quick, direct reply; keep the deepest deliberation for problems that call for it. ' +
-    'ROLE-PLAY CARDS are the one exception to describing: when the current photo shows a role-play card — a card or page that gives a SETTING, names a role for the reader to play (DOCTOR, PATIENT, CARER, NURSE, CANDIDATE…) and lists a TASK or tasks — do not describe it, summarise it or read it back. ' +
+    'TWO KINDS OF TASK are never described but DONE. ' +
+    '(1) A SPEAKING ROLE-PLAY CARD — a card or page that gives a SETTING, names a role for the reader to play in a conversation (DOCTOR, PATIENT, CARER, NURSE, CANDIDATE…) and lists a TASK or tasks for that role: do not describe it, summarise it or read it back. ' +
     'Take that role and write the words that person says to carry out every task on the card, as one continuous speech the user reads aloud (contractions, hesitations, a real voice — no stage directions, no labels, nothing but the spoken words). ' +
-    'Then the first line is "ANSWER: " plus a short title of the scene, the second line is exactly "ROLE: " plus the role named on the card, then a blank line, then the speech. Use the current photo only for this; earlier frames do not apply to a role-play card.';
+    'Then the first line is "ANSWER: " plus a short title of the scene, the second line is exactly "ROLE: " plus the role named on the card, then a blank line, then the speech. Use the current photo only for this; earlier frames do not apply to a role-play card. ' +
+    '(2) A WRITING TASK — instructions to write a letter, referral, discharge summary, email or report ("Writing Task", "write a letter of referral to Dr …"), usually from case notes (PATIENT DETAILS, history, O/E, pathology, dated entries) on the pages before — this is NOT a role-play: ' +
+    'write the finished piece itself, in the format and length asked for (date, address and salutation, a body that expands the relevant notes into complete sentences, a sign-off), drawing every fact from the case notes among the frames. ' +
+    'First line "ANSWER: " plus a short title, second line exactly "TASK: " plus a few words naming the task (for example "TASK: referral letter — Mrs Sharma to Dr Smith"), then a blank line, then the piece. ' +
+    'If the task is in view but its case notes are not yet, still write it as far as the notes allow and end with one line naming what is still missing; when the notes arrive the piece is written again in full.';
   // ----- Scene mode: the camera captures a scenario prompt, Claude generates character dialogue -----
   const SCENE_SYSTEM_RULES =
     'You are a dialogue generator for a fiction author who is sight-reading character lines on the mic. ' +
@@ -775,6 +780,8 @@
     'If a CHARACTER field is set below, use it for voice and style notes (accent, personality, speech patterns) but still take the ' +
     'ROLE from the card itself. If the card has no clear role heading, fall back to the CHARACTER field for which role to play; ' +
     'if neither is set, play the professional/authority role.\n\n' +
+    'If what the photo actually shows is NOT a speaking role-play card but a WRITING task (instructions to write a letter, referral, email or report, ' +
+    'or case notes for one), do not role-play it: write the finished piece as asked, and make the second line "TASK: " plus a few words naming it instead of "ROLE: ".\n\n' +
     'NEVER describe, summarise, narrate, or read the card back. Do not say what is on the screen, what the page is, ' +
     'whether frames match, or what the scenario is about. You are not an observer — you ARE the character, speaking. ' +
     'Every word of your reply (after the title line) is a word the character says out loud.\n\n' +
@@ -807,7 +814,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-04 23:55';
+  const BUILD = '2026-10-05 00:40';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -1275,11 +1282,13 @@
     // the same page moved in the hand looks like — a quick look by a small fast model decides (SAME or
     // DIFFERENT), so a page turn is never missed and a steady page never costs another full answer.
     // known pictures: the one the text on screen is about, the empty scene last seen, the last frame sent
-    const known = [reader.open ? shownFrame : null, nothingFrame, lastSentFrame, roleLock ? roleKept : null].filter((f) => f && f.sig);
+    const seen = roleLock && roleLock.seen ? roleLock.seen : [];   // the pages a locked text was written from
+    const known = [reader.open ? shownFrame : null, nothingFrame, lastSentFrame, roleLock ? roleKept : null].concat(seen).filter((f) => f && f.sig);
+    const loose = (f) => f === shownFrame || f === nothingFrame || f === roleKept || seen.includes(f);   // drift of these is still the same picture
     let ref = null;
     if (source !== 'button' && S.skipStill !== false && !retryFrame && sig && known.length) {
       for (const f of known) {
-        if (sameScene(sig, f.sig) || ((f === shownFrame || f === nothingFrame || f === roleKept) && nearScene(sig, f.sig))) {
+        if (sameScene(sig, f.sig) || (loose(f) && nearScene(sig, f.sig))) {
           if (roleRelookDue(sig)) { roleRelookGo(frame, source); return; }   // a card caught out of focus a moment ago: one more look
           skippedSince = frameNo; return;
         }
@@ -1356,28 +1365,39 @@
   // that carry out its tasks, for the user to read aloud — and those lines are LOCKED on screen: other pictures (the
   // desk, a hand, the same card again) change nothing and cost no full answer; only a DIFFERENT card replaces them.
   // "Lens, next", Stop, or switching the setting off lets them go.
-  let roleLock = null;     // { card: { role, setting, task }, frame, reqId, text, failed } — the card whose lines are on screen
+  // { kind: 'role' | 'task', card: { role, setting, task }, frame, reqId, text, failed, seen } — what is locked on screen:
+  // a role card's lines, or a writing task's finished text (kind 'task'; seen = the pages it was written from, so
+  // showing one of them again changes nothing).
+  let roleLock = null;
   let roleRelook = null;   // { sig, at, n } — a picture just judged "no card": looked at again a couple of times (focus, glare)
   let roleKept = null;     // the last picture judged "keep the lines" (the desk, the same card moved): not looked at again while it stays
   let roleCheckBusy = false;
   async function roleCardCheck(frame, lockedFrame) {
-    const ask = 'a role-play card: a card or page that gives a SETTING, names a role for the reader to play (for example DOCTOR, ' +
-      'PATIENT, CARER, NURSE, PARENT, RELATIVE, PHARMACIST — often headed "Roleplayer Card" or "Candidate Card") and lists a TASK or tasks';
+    const ask = 'a SPEAKING role-play card: a card or page that gives a SETTING, names a role for the reader to play in a conversation (for example DOCTOR, ' +
+      'PATIENT, CARER, NURSE, PARENT, RELATIVE, PHARMACIST — often headed "Roleplayer Card" or "Candidate Card") and lists a TASK or tasks for that role to do in the conversation';
+    const notCard = 'A WRITING task is NOT a role-play card: instructions to write a letter, referral, discharge summary, email or report ("Writing Task", "write a letter of referral to Dr …"), ' +
+      'and the case notes that go with one (PATIENT DETAILS, history, O/E, pathology, dated entries) — nor is a reading passage, a multiple-choice item or an exam question.';
+    const taskLock = !!(lockedFrame && roleLock && roleLock.kind === 'task');
     const content = lockedFrame ? [
-      { type: 'text', text: 'First photo — the role-play card whose lines the user is reading now:' },
+      { type: 'text', text: taskLock ? 'First photo — the page that set the task whose finished text the user is reading now (a writing task; its case notes or further pages may be elsewhere):'
+        : 'First photo — the role-play card whose lines the user is reading now:' },
       { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: lockedFrame.b64 } },
       { type: 'text', text: 'Second photo — what the phone camera sees now:' },
       { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: frame.b64 } },
       { type: 'text', text: 'Answer about the SECOND photo, on one line and nothing else:\n' +
-        'SAME — if it shows the same role-play card as the first (same role, same tasks), merely moved, tilted, cropped, lit or photographed differently;\n' +
-        'NEW | <the role, one or two words> | <the setting> | <the first ten words of the first task> — if it shows a DIFFERENT, legible ' + ask + ';\n' +
-        'OTHER — if it shows something else that asks for an answer: a question, a problem, a multiple-choice item, an exercise, a page of text to read;\n' +
-        'NONE — if it shows nothing to answer (a desk, a hand, a wall, a blur, the back of a page, or a card too blurred or cut off to read).' } ]
+        (taskLock
+          ? 'SAME — if it is the same page as the first, merely moved, tilted, cropped, lit or photographed differently;\n' +
+            'MORE — if it is another page of the SAME task carrying information the first photo does not show (its case notes, patient details, further instructions);\n' +
+            'TASK — if it is a DIFFERENT writing task (other instructions, another patient, another letter or report);\n'
+          : 'SAME — if it shows the same role-play card as the first (same role, same tasks), merely moved, tilted, cropped, lit or photographed differently;\n') +
+        'NEW | <the role, one or two words> | <the setting> | <the first ten words of the first task> — if it shows a ' + (taskLock ? '' : 'DIFFERENT, ') + 'legible ' + ask + ';\n' +
+        'OTHER — if it shows something else that asks for an answer: a question, a problem, a multiple-choice item, an exercise' + (taskLock ? '' : ', a writing task or its case notes') + ', a page of text to read;\n' +
+        'NONE — if it shows nothing to answer (a desk, a hand, a wall, a blur, the back of a page, or a page too blurred or cut off to read).\n' + notCard } ]
     : [
       { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: frame.b64 } },
       { type: 'text', text: 'Does this phone photo show ' + ask + '? If yes and its role and tasks can be read, answer on one line and nothing else:\n' +
         'CARD | <the role, one or two words> | <the setting> | <the first ten words of the first task>\n' +
-        'If two cards are visible, take the one that is fully legible or larger. Otherwise (anything else, or a card too blurred or cut off to read) answer exactly: NONE' } ];
+        'If two cards are visible, take the one that is fully legible or larger. Otherwise (anything else, or a card too blurred or cut off to read) answer exactly: NONE\n' + notCard } ];
     const body = { model: PAGE_CHECK_MODEL, max_tokens: 80, messages: [{ role: 'user', content }] };
     const res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': S.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify(body) });
     const j = await res.json();
@@ -1397,6 +1417,8 @@
         if (j && typeof j === 'object') {
           if (j.role && j.card !== false) return { card: { role: clean(j.role), setting: clean(j.setting), task: clean(j.task) } };
           if (paired && j.same === true) return { same: true };
+          if (paired && j.more === true) return { more: true };
+          if (paired && j.task === true) return { newTask: true };
           if (paired && j.other === true) return { other: true };
           if (j.card === false || j.none === true) return { none: true };
         }
@@ -1415,24 +1437,34 @@
       }
     }
     if (paired && /^\W*SAME\b/i.test(t)) return { same: true };
+    if (paired && /^\W*MORE\b/i.test(t)) return { more: true };
+    if (paired && /^\W*TASK\b/i.test(t)) return { newTask: true };
     if (paired && /^\W*OTHER\b/i.test(t)) return { other: true };
     return { none: true };
   }
   // The decision for a new picture once the quick look is back. Whatever it says, a locked card's lines stay unless
   // the picture is a DIFFERENT role card.
+  // What is locked on screen, in words: "the Patient lines" or "the referral letter text".
+  const lockName = () => !roleLock ? '' : roleLock.kind === 'task' ? 'the ' + roleLock.card.role + ' text' : 'the ' + roleLock.card.role + ' lines';
   function decideRole(frame, source, r) {
     if (!running && source !== 'button') return;
-    frame.roleLook = !r ? 'look failed' : r.card ? 'card:' + r.card.role : r.same ? 'same card' : r.other ? 'a different task' : 'no role card seen';   // shown in the meta line
+    frame.roleLook = !r ? 'look failed' : r.card ? 'card:' + r.card.role : r.same ? (roleLock && roleLock.kind === 'task' ? 'same task' : 'same card')
+      : r.more ? 'more of the same task' : r.newTask ? 'a different writing task' : r.other ? 'a different task' : 'no role card seen';   // shown in the meta line
     // speech began while the look was out: nothing new while you talk — the held snap runs once the quiet spell is over
     if (source !== 'button' && holdingForSpeech()) { heldSnap = true; return; }
     if (r && r.card) { roleRelook = null; frame.role = r.card; snapProceed(frame, source, true); return; }   // a (new) role card: its lines
     if (r && r.same && roleLock) {
-      if (!roleLock.text && roleLock.failed) { frame.role = roleLock.card; snapProceed(frame, source, true); return; }   // its lines never came: ask again
-      roleKept = frame; skippedSince = frameNo; setStatus(active.length ? 'thinking' : 'armed', 'Keeping the ' + roleLock.card.role + ' lines'); return;
+      if (!roleLock.text && roleLock.failed) {   // its text never came: ask again, the same way
+        if (roleLock.kind === 'task') { roleLock = null; snapProceed(frame, source, false); } else { frame.role = roleLock.card; snapProceed(frame, source, true); }
+        return;
+      }
+      roleKept = frame; skippedSince = frameNo; setStatus(active.length ? 'thinking' : 'armed', 'Keeping ' + lockName()); return;
     }
-    // a different task in view (a question, a problem, a multiple-choice item): the role lines have had their turn
-    if (r && r.other && roleLock) { roleLock = null; roleKept = null; snapProceed(frame, source, false); return; }
-    if (roleLock) { roleKept = frame; skippedSince = frameNo; if (!active.length) setStatus('armed', 'Keeping the ' + roleLock.card.role + ' lines — show another role card or a question to change them'); return; }
+    // more of the same writing task (its case notes, say): the text is written again with the new page in hand
+    if (r && r.more && roleLock) { roleLock = null; roleKept = null; snapProceed(frame, source, false); return; }
+    // a different task in view (a question, a multiple-choice item, another writing task): the locked text has had its turn
+    if (r && (r.other || r.newTask) && roleLock) { roleLock = null; roleKept = null; snapProceed(frame, source, false); return; }
+    if (roleLock) { roleKept = frame; skippedSince = frameNo; if (!active.length) setStatus('armed', 'Keeping ' + lockName() + ' — show another task to change it'); return; }
     if (r && r.none && frame.sig) roleRelook = { sig: frame.sig, at: Date.now(), n: 0 };
     snapProceed(frame, source, false);   // not a role card, nothing locked: the usual answer
   }
@@ -1562,7 +1594,7 @@
       text: '', inTok: 0, outTok: 0, cost: 0, stop: '', error: null,
       scene,   // a role card's lines: memory replays them only for a role card
     };
-    if (scene) { roleLock = { card: frame.role, frame, reqId: req.id, text: '', failed: false }; roleKept = null; }   // locked from the moment they are asked for
+    if (scene) { roleLock = { kind: 'role', card: frame.role, frame, reqId: req.id, text: '', failed: false, seen: [] }; roleKept = null; }   // locked from the moment they are asked for
     active.push(req);
     current = req;
     hideBanner();
@@ -1580,6 +1612,7 @@
     // A role card is read on its own: no earlier frames merged in (they would blend the patient card with the
     // doctor card and tip the model into describing the "document" instead of speaking one role).
     const earlier = scene ? [] : docFramesFor(frame);
+    req.seenFrames = earlier.concat([frame]).filter((f) => f.sig);   // the pages this answer is made from (a writing task's lock keeps them)
     const content = [];
     if (earlier.length) {
       content.push({ type: 'text', text: `EARLIER FRAMES — ${earlier.length} picture${earlier.length === 1 ? '' : 's'} the camera took in the last ${DOC_FRAMES_MINUTES} minutes, oldest first, each labelled. If the current frame continues what (some of) these show — the next page of the same document or instructions, a passage the current questions refer to, the same sketch or board — read them together as one and answer about the whole; a document that runs over several frames is one document, in this order. Pictures that have nothing to do with the current frame can be ignored.` });
@@ -1715,7 +1748,18 @@
       if (r) {
         req.scene = true; req.frame.role = { role: r, setting: '', task: '' }; req.frame.roleLook = 'card:' + r + ' (by the answer)';
         forgetFrame(req.frame);   // not a page of any document
-        roleLock = { card: req.frame.role, frame: req.frame, reqId: req.id, text: req.text, failed: false }; roleKept = null; roleRelook = null;
+        roleLock = { kind: 'role', card: req.frame.role, frame: req.frame, reqId: req.id, text: req.text, failed: false, seen: [] }; roleKept = null; roleRelook = null;
+      }
+    }
+    // a writing task's finished text (the model answered with a TASK: line): locked on screen with the pages it was
+    // written from, until a different task comes into view or more of this one does
+    if (!req.error && req.text && !req.frame.question && S.roleAuto !== false) {
+      const t = splitAnswer(req.text).task;
+      if (t) {
+        req.frame.roleLook = 'task:' + t + ' (by the answer)';
+        if (req.scene) { req.scene = false; rememberFrame(req.frame); }   // a role card it was not: back among the document pages
+        roleLock = { kind: 'task', card: { role: t, setting: '', task: t }, frame: req.frame, reqId: req.id, text: req.text, failed: false, seen: (req.seenFrames || []).slice() };
+        roleKept = null; roleRelook = null;
       }
     }
     if (req.error) {
@@ -1885,18 +1929,20 @@
     if (!m) return { head: '', body: t };
     const head = m[1].replace(/[*_]+$/g, '').trim();
     let body = nl < 0 ? '' : t.slice(nl + 1).replace(/^\s*\n/, '');
-    // header lines after ANSWER, in any order: STORYLINE: …, FRAMES: continues|new, ROLE: … (a role-play card's lines)
-    let story = '', frames = '', role = '';
-    for (let i = 0; i < 3; i++) {
+    // header lines after ANSWER, in any order: STORYLINE: …, FRAMES: continues|new, ROLE: … (a role-play card's lines),
+    // TASK: … (a writing task's finished text)
+    let story = '', frames = '', role = '', task = '';
+    for (let i = 0; i < 4; i++) {
       const first = body.split('\n')[0] || '';
       let m;
       if ((m = /^\s*(?:[*_]+)?storyline(?:[*_]+)?\s*:(?:[*_]+)?\s*(.*)$/i.exec(first))) { const v = m[1].replace(/^[*_]+|[*_]+$/g, '').trim(); if (v && !/^none\.?$/i.test(v)) story = v; }
       else if ((m = /^\s*(?:[*_]+)?frames(?:[*_]+)?\s*:(?:[*_]+)?\s*(continues|new)\b/i.exec(first))) frames = m[1].toLowerCase();
       else if ((m = /^\s*(?:[*_]+)?role(?:[*_]+)?\s*:(?:[*_]+)?\s*(.*)$/i.exec(first))) { const v = m[1].replace(/^[*_]+|[*_]+$/g, '').trim(); if (v && !/^none\.?$/i.test(v)) role = v; }
+      else if ((m = /^\s*(?:[*_]+)?task(?:[*_]+)?\s*:(?:[*_]+)?\s*(.*)$/i.exec(first))) { const v = m[1].replace(/^[*_]+|[*_]+$/g, '').trim(); if (v && !/^none\.?$/i.test(v)) task = v; }
       else break;
       body = body.split('\n').slice(1).join('\n').replace(/^\s*\n/, '');
     }
-    return { head, body, story, frames, role };
+    return { head, body, story, frames, role, task };
   }
   function headlineSize(str) {
     const n = str.length;
