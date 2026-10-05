@@ -807,7 +807,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-03 19:35';
+  const BUILD = '2026-10-04 23:55';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -1582,7 +1582,7 @@
     const earlier = scene ? [] : docFramesFor(frame);
     const content = [];
     if (earlier.length) {
-      content.push({ type: 'text', text: `EARLIER FRAMES — ${earlier.length} picture${earlier.length === 1 ? '' : 's'} the camera took in the last minutes, oldest first, each labelled. If the current frame continues what (some of) these show — the next page of the same document or instructions, the same sketch or board — read them together as one and answer about the whole; a document that runs over several frames is one document, in this order.` });
+      content.push({ type: 'text', text: `EARLIER FRAMES — ${earlier.length} picture${earlier.length === 1 ? '' : 's'} the camera took in the last ${DOC_FRAMES_MINUTES} minutes, oldest first, each labelled. If the current frame continues what (some of) these show — the next page of the same document or instructions, a passage the current questions refer to, the same sketch or board — read them together as one and answer about the whole; a document that runs over several frames is one document, in this order. Pictures that have nothing to do with the current frame can be ignored.` });
       earlier.forEach((f, i) => {
         content.push({ type: 'text', text: `Earlier frame ${i + 1} of ${earlier.length} (${f.tag}, ${mmss(Date.now() - f.at.getTime())} ago)` });
         content.push(i === earlier.length - 1 ? { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: f.b64 }, cache_control: { type: 'ephemeral' } } : { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: f.b64 } });
@@ -2375,14 +2375,18 @@
     }
     return { blocks, tail };
   }
-  // The frames of the last ten minutes (at most eleven), oldest first: what a document shown page by page is made of.
+  // The frames of the last DOC_FRAMES_MINUTES (the newest DOC_FRAMES_SEND of them), oldest first: what a document shown
+  // page by page is made of — a passage on one page answers the questions on the next, a quarter of an hour later.
+  // Each picture is about 2,500 tokens; the set is cache-marked, so a request pays the cache-read rate for all but
+  // the newest picture. Role-play cards are never part of it (send, finish).
+  const DOC_FRAMES_MINUTES = 50, DOC_FRAMES_SEND = 24, DOC_FRAMES_KEEP = 48;
   const docFrames = [];
   function docFramesFor(frame) {
-    const cut = Date.now() - 10 * 60 * 1000;
+    const cut = Date.now() - DOC_FRAMES_MINUTES * 60 * 1000;
     while (docFrames.length && docFrames[0].at.getTime() < cut) docFrames.shift();
-    return docFrames.filter((f) => f !== frame && f.b64).slice(-11);
+    return docFrames.filter((f) => f !== frame && f.b64).slice(-DOC_FRAMES_SEND);
   }
-  function rememberFrame(frame) { if (frame.b64) { docFrames.push(frame); if (docFrames.length > 24) docFrames.shift(); } }
+  function rememberFrame(frame) { if (frame.b64) { docFrames.push(frame); if (docFrames.length > DOC_FRAMES_KEEP) docFrames.shift(); } }
   function forgetFrame(frame) { const i = docFrames.indexOf(frame); if (i >= 0) docFrames.splice(i, 1); }
 
   // ----- cloud speech recognition: ElevenLabs Scribe v2 Realtime -----

@@ -53,7 +53,8 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
    "Lens, next" (which also skips the quiet spell); "Lens, again / slower / faster / pause / play" drive the panel.
    Every answer, photo or not, becomes a note in its storyline; the Drive `.txt` lists them in full.
    **Documents page by page** (`docFrames`, `docFramesFor`, `rememberFrame`/`forgetFrame`): the frames of the last
-   ten minutes (≤11) go into every request before the current one (not for a role-play card — see 13), oldest first, the last one cache-marked; the
+   `DOC_FRAMES_MINUTES` = 50 minutes (the newest `DOC_FRAMES_SEND` = 24 of up to `DOC_FRAMES_KEEP` = 48 kept) go into
+   every request before the current one (not for a role-play card — see 13), oldest first, the last one cache-marked; the
    session's open tail now rides in the message after them (`buildSystem` returns `{ blocks, tail }`) so the
    frames stay cached. The reply's third line `FRAMES: continues|new` (`splitAnswer(...).frames`): `new` waits
    for `readingUnderWay()` to end before display; `nothing to read` (head) keeps the text, is never cached or
