@@ -257,6 +257,10 @@
     margin: 0 0 14px;
     border-bottom: 3px solid var(--accent);
   }
+  /* a verdict: the option letter (or Yes/No, or the value) huge in the accent colour, the option text large beside it */
+  .big-answer.verdict { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 18px; }
+  .verdict-key { font-size: 104px; line-height: .95; font-weight: 900; color: var(--accent); letter-spacing: -.02em; }
+  .verdict-text { font-weight: 800; line-height: 1.08; flex: 1 1 60%; min-width: 0; }
   .answer-head {
     display: flex; align-items: center; gap: 10px;
     padding: 9px 14px;
@@ -814,7 +818,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-05 01:20';
+  const BUILD = '2026-10-07 00:30';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -1557,9 +1561,12 @@
     answerMeta.textContent = frame.tag + ' · ' + fmtTime(frame.at) + ' · ' + sourceLabel(hit.from) + (frame.roleLook ? ' · ' + frame.roleLook : '');
     copyBtn.hidden = false; $('readBtn').hidden = false;
     setStatus(running ? 'done' : 'idle', 'From memory for ' + frame.tag);
-    openReader(body || hit.text, head || 'From memory', { force: true, from: hit.from });
-    if (hit.readPos > 0 && hit.readPos < reader.words.length) { reader.pos = hit.readPos; paintReader(); }
-    startAuto();
+    if (isVerdictText(hit.text)) showVerdictPanel();   // a remembered verdict: the panel, big and bold, no feed
+    else {
+      openReader(body || hit.text, head || 'From memory', { force: true, from: hit.from });
+      if (hit.readPos > 0 && hit.readPos < reader.words.length) { reader.pos = hit.readPos; paintReader(); }
+      startAuto();
+    }
     lastShownId = ++reqSeq;
   }
 
@@ -1876,12 +1883,19 @@
     if (req.stop === 'max_tokens') showBanner('The reply hit the max output tokens limit and was cut off. Raise the limit in settings if this keeps happening.', 'note');
     else if (req.stop === 'refusal') showBanner('Claude declined to answer this frame.', 'note');
     setStatus(running ? 'done' : 'idle', running ? `Answered ${req.frame.tag} · next in ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s` : 'Idle');
-    // the text plays word by word in the panel; if it streamed in while the reply was still coming, keep the place
+    // the text plays word by word in the panel; if it streamed in while the reply was still coming, keep the place.
+    // A verdict (a multiple-choice letter, Yes/No, a value) stays in the answer panel, big and bold, with no feed.
     if (req.text && req.frame.b64) {
-      const { head, body } = splitAnswer(req.text);
-      if (reader.open && reader.streamId === req.id) { growReader(body || req.text); reader.streamId = 0; readerTitle.textContent = head || req.frame.tag; readerSrc.textContent = sourceLabel(from); if (!autoTimer && !voiceHold) startAuto(); }
+      const a = splitAnswer(req.text), { head, body } = a;
+      if (verdictOf(a)) showVerdictPanel();
+      else if (reader.open && reader.streamId === req.id) { growReader(body || req.text); reader.streamId = 0; readerTitle.textContent = head || req.frame.tag; readerSrc.textContent = sourceLabel(from); if (!autoTimer && !voiceHold) startAuto(); }
       else { openReader(body || req.text, head || req.frame.tag, { force: true, from }); startAuto(); }
     }
+  }
+  // The answer panel in front for a verdict: the feed (if one is open over it) is closed, the panel opened.
+  function showVerdictPanel() {
+    if (reader.open && readerEl.classList.contains('feed')) closeReader();
+    setPanel(true);
   }
   // The reply streams: as soon as its first sentence is in, it starts playing in the panel while the rest
   // arrives (the words come far faster than they are read), so the wait is the thinking, not the writing.
@@ -1893,9 +1907,10 @@
     streamTimer = setTimeout(() => {
       streamTimer = null;
       if (req !== current || req.endedAt) return;
-      const { head, body, frames } = splitAnswer(req.text);
+      const a = splitAnswer(req.text), { head, body, frames } = a;
       if (!body || countWords(body) < 4) return;
       if (!req.frame.question && (/^nothing to read\b/i.test(head) || (frames === 'new' && readingUnderWay() && reader.streamId !== req.id))) return;   // keeps what is on screen
+      if (verdictOf(a)) { if (!reader.streamId) { showVerdictPanel(); shownSig = req.frame.sig || null; shownFrame = req.frame.b64 ? req.frame : null; } return; }   // streams into the panel itself, no feed
       if (reader.open && reader.streamId === req.id) { growReader(body); return; }
       if (reader.streamId && reader.streamId !== req.id) return;   // another reply is on its way in
       openReader(body, head || req.frame.tag, { force: true, from: apiSource(req.text) });
@@ -2016,11 +2031,32 @@
     if (n <= 90) return 27;
     return 22;
   }
+  // A VERDICT is an answer you take in at a glance rather than read aloud: the letter of a multiple-choice option
+  // ("B) Chloride-bicarbonate ionic shift"), Yes/No/True/False, a bare value with its units. It is shown in the
+  // answer panel — the key huge and bold in the accent colour, the option text large under it, the explanation
+  // below — and never in the word-by-word feed, which is for text to be read aloud (role lines, a letter, a note).
+  function verdictOf(a) {
+    if (!a || !a.head || a.role || a.task) return null;
+    const h = a.head.replace(/[*_`]/g, '').trim();   // **B)** → B)
+    if (/^nothing to read\b/i.test(h)) return null;
+    let m;
+    // B) …, C. …, (D) …, 3) …: the option mark, then a separator that is followed by a space or ends the line —
+    // so "B-cell lymphoma" and "7.4" are not options
+    if ((m = /^\(?([A-Ha-h]|\d{1,2})(?:\)|\s*[.:\-–—])(?=\s|$)\s*(.*)$/.exec(h))) return { key: m[1].toUpperCase(), rest: m[2].trim() };
+    if ((m = /^(yes|no|true|false)\b[\s,.:;—–-]*(.*)$/i.exec(h))) return { key: m[1][0].toUpperCase() + m[1].slice(1).toLowerCase(), rest: m[2].trim() };
+    if (h.length <= 24 && /^[-+−]?\d[\d.,]*(?:\s?(?:×\s?10\^?-?\d+)?\s?[a-zA-Zµ%°/]{0,12})?$/.test(h)) return { key: h, rest: '' };   // 42 mmol/L, 3.5 %
+    return null;
+  }
+  const isVerdictText = (text) => !!verdictOf(splitAnswer(text || ''));
   function renderAnswer(text, streaming) {
-    const { head, body, story } = splitAnswer(text);
+    const a = splitAnswer(text);
+    const { head, body, story } = a;
     const cursor = streaming ? '<span class="cursor" aria-hidden="true"></span>' : '';
     if (!head) return md(text) + cursor;
-    const big = '<div class="big-answer" style="font-size:' + headlineSize(head) + 'px">' + esc(head) + (body || story ? '' : cursor) + '</div>';
+    const v = verdictOf(a);
+    const big = v
+      ? '<div class="big-answer verdict"><span class="verdict-key">' + esc(v.key) + '</span>' + (v.rest ? '<span class="verdict-text" style="font-size:' + Math.max(30, headlineSize(v.rest)) + 'px">' + esc(v.rest) + '</span>' : '') + (body || story ? '' : cursor) + '</div>'
+      : '<div class="big-answer" style="font-size:' + headlineSize(head) + 'px">' + esc(head) + (body || story ? '' : cursor) + '</div>';
     const tag = story ? '<div class="story-tag">Storyline · ' + esc(story) + '</div>' : '';
     return big + tag + (body ? md(body) + cursor : (story ? cursor : ''));
   }

@@ -31,7 +31,7 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
    "Lens, stop recording". Busy policy (latest/skip), image size, max output tokens, zoom chips, upright photo.
 2. **Snap cache.** The last 20 frames' signatures keep their answers (`snapCache`, with `readPos`): a picture that
    already has an answer shows it again without a request, opens the reader and resumes where reading stopped.
-3. **Metered feed.** Every camera answer opens the reader by itself (`openReader(..., { force: true })`) and
+3. **Metered feed.** Every camera answer that is text to read aloud opens the reader by itself (`openReader(..., { force: true })`) and
    plays word by word at `wordSecs` = 1.5 s per word (−/+ 0.25–4 s, Auto/Pause); `closeReader` saves the position.
    Lyrics layout (`phrasesOf`, `layoutReader`, `paintReader`): phrases as `.ph` divs, the live one `.on` biggest
    and bright in the upper part of the box, earlier ones `.done`, the live word `.w.cur`. The reply streams into
@@ -120,7 +120,13 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     once when the server's `BUILD` differs (never mid-session or during a sign-in bounce); the build stamp is at
     the foot of Settings. A declined motion permission shows a banner instead of silently leaving text unturned.
 12. **Answer panel.** "ANSWER:" headline, storyline tag, cost/latency readouts (cached tokens counted), history
-    of 40, copy, Read button, settings sheet, intro text, privacy/terms pages, PWA icons.
+    of 40, copy, Read button, settings sheet, intro text, privacy/terms pages, PWA icons. **A verdict stays in the
+    panel, big and bold, and never opens the feed** (`verdictOf`, `isVerdictText`, `showVerdictPanel`; `.big-answer
+    .verdict`, `.verdict-key` 104 px in the accent colour, `.verdict-text`): the letter of a multiple-choice option
+    ("B) …", "C.", "(D)", "3)"), Yes/No/True/False, or a bare value with units — never an answer with a ROLE:/TASK:
+    line, nor a title that merely starts with "A " or "B-". `displayAnswer`, `streamToPanel` and `showRecalled` route
+    on it; a feed open over the panel is closed first. Text to read aloud (role lines, a letter, a description) keeps
+    the feed. `test/verdict.test.js` fixes the boundary.
 13. **Tasks: role-play cards and writing tasks** — automatic, nothing to switch on (`S.roleAuto`, default on;
     `S.sceneCharacter` = optional voice notes). The author's spec: a SPEAKING role-play card (a SETTING, a role —
     DOCTOR, PATIENT, CARER… — and a TASK list) is answered IN that role — the lines that carry out the tasks, for him
@@ -164,7 +170,8 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
 ## Tests (run before every push)
 
 - `node --check` on the script body, then `node test/live-prompt.test.js` (prompt assembly, no browser) and
-  `node test/role-parse.test.js` (the role-card verdict read however a model writes it).
+  `node test/role-parse.test.js` (the role-card verdict read however a model writes it) and `node test/verdict.test.js`
+  (which answers are shown big in the panel, which go to the feed).
 - `node test/session.e2e.js`, `node test/drive-renewal.e2e.js`, `node test/fresh-build.e2e.js`,
   `node test/memory-voice.e2e.js`, `node test/drive-helper.e2e.js`, `node test/drive-expired-open.e2e.js` (the app
   opened hours later: a silent renewal, retries on a backoff, a dead token in Google's real shape, and the banner only

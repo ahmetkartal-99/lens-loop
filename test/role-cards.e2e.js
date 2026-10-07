@@ -147,6 +147,18 @@ const DESCRIBE = { desk: 'ANSWER: An empty desk\n\nA grey surface, nothing to re
   s = await shown();
   assert(/Pneumonia/.test(s) && !/what to look out for/.test(s), '7. the answer is on screen, the Doctor\'s lines are gone');
   assert(/a different task/.test(await page.evaluate(() => document.getElementById('answerMeta').textContent)), '7. the meta line says why');
+  // a multiple-choice answer is a VERDICT: the option letter huge and bold in the answer panel, the feed closed —
+  // whereas the Doctor's lines a moment ago were in the word-by-word feed
+  const verdict = await page.evaluate(() => {
+    const k = document.querySelector('#answerBody .big-answer.verdict .verdict-key'), t = document.querySelector('#answerBody .verdict-text');
+    const reader = document.getElementById('reader');
+    const feedOpen = !!reader && reader.classList.contains('open') && reader.classList.contains('feed');
+    const panelHidden = getComputedStyle(document.querySelector('.answer')).visibility === 'hidden';
+    return { key: k && k.textContent, keyPx: k && parseFloat(getComputedStyle(k).fontSize), text: t && t.textContent, feedOpen, panelHidden };
+  });
+  assert(verdict.key === 'C' && /Pneumonia/.test(verdict.text || ''), '7. the verdict: the letter and the option text in the panel (' + JSON.stringify(verdict) + ')');
+  assert(verdict.keyPx >= 90, '7. the letter is huge (' + verdict.keyPx + 'px)');
+  assert(!verdict.feedOpen && !verdict.panelHidden, '7. no word-by-word feed over it; the panel is in front');
 
   // the role requests themselves: one card, the role-play rules, the role named, no document scaffolding, no session transcript
   for (const b of roleBodies) {
