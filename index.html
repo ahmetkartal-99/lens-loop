@@ -257,6 +257,12 @@
     margin: 0 0 14px;
     border-bottom: 3px solid var(--accent);
   }
+  /* the live role play: the other party's line, large, read at a glance */
+  .convo-who { font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+  .convo-you { color: var(--muted); font-size: 15px; line-height: 1.3; margin-bottom: 10px; }
+  .convo-line { font-size: 30px; font-weight: 700; line-height: 1.22; letter-spacing: -.005em; overflow-wrap: anywhere; }
+  .convo-line.stale { opacity: .55; }
+  .convo-end { margin-top: 12px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
   /* a verdict: the option letter (or Yes/No, or the value) huge in the accent colour, the option text large beside it */
   .big-answer.verdict { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 18px; }
   .verdict-key { font-size: 104px; line-height: .95; font-weight: 900; color: var(--accent); letter-spacing: -.02em; }
@@ -590,7 +596,28 @@
         <input type="checkbox" id="roleAuto" style="width:18px;height:18px">
         <span style="font-size:15px;font-weight:600">Tasks — do the task, keep the text</span>
       </label>
-      <div class="hint" style="margin-bottom:8px">Automatic. A speaking role-play card (a SETTING, a role such as DOCTOR or PATIENT, a TASK list): Claude becomes that role and writes the lines that carry out the tasks, for you to read aloud. A writing task (a letter, referral or report from case notes, over several pages): the case-notes pages are collected as you show them, and the page with the writing instructions brings the finished piece, written from all of them. Either stays on screen until a different task appears — the desk, your hand or the same pages again change nothing.</div>
+      <div class="hint" style="margin-bottom:8px">Automatic. A speaking role-play card (a SETTING, a role such as DOCTOR or PATIENT, a TASK list): Claude shows a briefing — setting, your role, background, the task points. Say <b>"I'm ready"</b> and Claude becomes the role on the card for a live conversation: it stays in character, asks for information, raises worries from the card, and closes at about the length set below. Say "Lens, next" to end it early. A writing task (a letter, referral or report from case notes, over several pages): the case-notes pages are collected as you show them, and the page with the writing instructions brings the finished piece. The text on screen stays until a different task appears.</div>
+      <div class="row" style="grid-template-columns:1.4fr 1fr 1fr">
+        <div class="field">
+          <label for="convoEffort" style="font-size:13px">Role play — thinking</label>
+          <select id="convoEffort">
+            <option value="low">low — first words in about a second</option>
+            <option value="medium">medium — a few seconds</option>
+            <option value="high">high — longer</option>
+            <option value="xhigh">xhigh — much longer</option>
+            <option value="max">max — 10–40 s before every reply</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="convoMinutes" style="font-size:13px">Role play length (min)</label>
+          <input id="convoMinutes" type="number" min="1" max="20" step="1" inputmode="numeric">
+        </div>
+        <div class="field">
+          <label for="convoPause" style="font-size:13px">Your turn ends after (s)</label>
+          <input id="convoPause" type="number" min="0.3" max="5" step="0.1" inputmode="decimal">
+        </div>
+      </div>
+      <div class="hint" style="margin-bottom:8px">Each sentence you say goes out the moment it is transcribed, so the model is already thinking while the pause runs; a further sentence inside the pause folds into the same turn. A reply still cannot arrive before the model has produced it: at <b>low</b> the first words land about a second after you stop talking; at <b>max</b> the model deliberates for ten to forty seconds first. The briefing runs at this effort too, so it is on screen within seconds; answers to anything else use the effort set at the top of the script.</div>
       <label for="sceneCharacter" style="font-size:13px">Voice notes (optional — the role comes from the card)</label>
       <textarea id="sceneCharacter" placeholder="e.g. Calm GP in her 40s. Warm but direct, plain language, Australian accent.&#10;Leave blank and the card's own heading picks the role automatically." style="min-height:72px"></textarea>
     </div>
@@ -765,46 +792,58 @@
     'The user is waiting hands-free and reads the reply as it arrives, so reason no longer than the question needs: a plain photo or a simple question gets a quick, direct reply; keep the deepest deliberation for problems that call for it. ' +
     'TWO KINDS OF TASK are never described but DONE. ' +
     '(1) A SPEAKING ROLE-PLAY CARD — a card or page that gives a SETTING, names a role for the reader to play in a conversation (DOCTOR, PATIENT, CARER, NURSE, CANDIDATE…) and lists a TASK or tasks for that role: do not describe it, summarise it or read it back. ' +
-    'Take that role and write the words that person says to carry out every task on the card, as one continuous speech the user reads aloud (contractions, hesitations, a real voice — no stage directions, no labels, nothing but the spoken words). ' +
-    'Then the first line is "ANSWER: " plus a short title of the scene, the second line is exactly "ROLE: " plus the role named on the card, then a blank line, then the speech. Use the current photo only for this; earlier frames do not apply to a role-play card. ' +
+    'It opens a live spoken practice in which YOU will play the role named on the card and the user plays the other party (the doctor or nurse for a patient\'s, relative\'s or carer\'s card; the patient or relative for a doctor\'s or nurse\'s card). Write the BRIEFING the user reads first: ' +
+    'the first line is "ANSWER: " plus a short title of the scene, the second line is exactly "ROLE: " plus the role named on the card (the one you will play), then a blank line, then short markdown with exactly these bold labels — ' +
+    '**Setting:** one line; **Your role:** the part the user plays, one line; **Background:** two or three sentences on the patient or situation as the card gives it; **Tasks:** four or five bullets, the card\'s task points for your role, in its order — ' +
+    'and the closing line *Say "I\'m ready" to begin — I will be the <role>.* Never start the conversation in the briefing. Use the current photo only for this; earlier frames do not apply to a role-play card. ' +
     '(2) A WRITING TASK — instructions to write a letter, referral, discharge summary, email or report ("Writing Task", "write a letter of referral to Dr …"), usually from case notes (PATIENT DETAILS, history, O/E, pathology, dated entries) on the pages before — this is NOT a role-play: ' +
     'write the finished piece itself, in the format and length asked for (date, address and salutation, a body that expands the relevant notes into complete sentences, a sign-off), drawing every fact from the case notes among the frames. ' +
     'First line "ANSWER: " plus a short title, second line exactly "TASK: " plus a few words naming the task (for example "TASK: referral letter — Mrs Sharma to Dr Smith"), then a blank line, then the piece. ' +
     'If the task is in view but its case notes are not yet, still write it as far as the notes allow and end with one line naming what is still missing; when the notes arrive the piece is written again in full.';
-  // ----- Scene mode: the camera captures a scenario prompt, Claude generates character dialogue -----
+  // ----- Role-play cards: the briefing, then a live conversation -----
+  // A speaking role card (OET-style) is turned into a BRIEFING for the user to read — setting, the part the user
+  // plays, background, the card's task points — and, once the user says "I'm ready", a live conversation in which
+  // the model plays the role on the card (convoRules below) and the user plays the other party.
   const SCENE_SYSTEM_RULES =
-    'You are a dialogue generator for a fiction author who is sight-reading character lines on the mic. ' +
-    'The user\'s camera is pointed at a page from a roleplay scenario — often a multi-page PDF where each page is one role\'s task card ' +
-    '(e.g. page 1 is the doctor\'s card, page 2 is the patient\'s card). The card the camera is showing you right now IS the role ' +
-    'to play. Read it, identify whose task card this is from the heading and instructions (e.g. "DOCTOR\'S TASK", "CANDIDATE CARD", ' +
-    '"PATIENT", "INTERLOCUTOR"), and generate natural, speakable dialogue AS that person.\n\n' +
-    'USE THE CARD\'S OWN CONTENT to build the dialogue: its bullet points, talking points, clinical tasks, situation notes — fold ' +
-    'all of them into flowing speech. If the card references the other side\'s concerns or likely responses, have your character ' +
-    'address those conversationally as if the other person just spoke.\n\n' +
-    'If a CHARACTER field is set below, use it for voice and style notes (accent, personality, speech patterns) but still take the ' +
-    'ROLE from the card itself. If the card has no clear role heading, fall back to the CHARACTER field for which role to play; ' +
-    'if neither is set, play the professional/authority role.\n\n' +
+    'You are preparing a spoken role-play practice (like the OET speaking test) from a role card the user\'s camera is showing. ' +
+    'The card names a role (DOCTOR, NURSE, PATIENT, CARER, RELATIVE, PARENT, PHARMACIST…), a setting and a list of tasks for that role. ' +
+    'In the practice YOU will play the role named on the card, and the USER plays the other party in the conversation: if the card is a ' +
+    'patient\'s, relative\'s or carer\'s card, the user is the doctor or nurse; if it is a doctor\'s or nurse\'s card, the user is the patient ' +
+    'or relative it describes.\n\n' +
+    'Write the BRIEFING the user reads before the practice begins — nothing else. ' +
+    'First line: "ANSWER: " followed by a short title of the scene (at most eight words). ' +
+    'Second line: exactly "ROLE: " followed by the role named on the card — the one you will play (for example "ROLE: Patient", "ROLE: Carer"). ' +
+    'Then a blank line, then short markdown with exactly these bold labels:\n' +
+    '**Setting:** one line.\n' +
+    '**Your role:** the part the user plays, one line (for example "the doctor — a GP at this clinic").\n' +
+    '**Background:** two or three sentences on the patient or situation, as the card gives it.\n' +
+    '**Tasks:** four or five bullets — the card\'s task points for the role you play, each one short line, in the card\'s order.\n' +
+    'Finish with the line: *Say "I\'m ready" to begin — I will be the <role>.*\n' +
+    'Never describe the photo, never add tasks the card does not have, never start the conversation here, never read the card back word for word.\n\n' +
     'If what the photo actually shows is NOT a speaking role-play card but a WRITING task (instructions to write a letter, referral, email or report, ' +
     'or case notes for one), do not role-play it: write the finished piece as asked, and make the second line "TASK: " plus a few words naming it instead of "ROLE: ".\n\n' +
-    'NEVER describe, summarise, narrate, or read the card back. Do not say what is on the screen, what the page is, ' +
-    'whether frames match, or what the scenario is about. You are not an observer — you ARE the character, speaking. ' +
-    'Every word of your reply (after the title line) is a word the character says out loud.\n\n' +
-    'Format every reply the same way: the first line is "ANSWER: " followed by a short title of the scenario (at most eight words); ' +
-    'the second line is exactly "ROLE: " followed by the role you are playing, as the card names it. ' +
-    'Then a blank line, then the character\'s dialogue as flowing speech — no stage directions, no action lines, no parenthetical ' +
-    'notes, no speaker labels, just the words the character would say, written to be spoken aloud in one take. ' +
-    'Write in the character\'s natural voice: contractions, hesitations ("well," "look,"), sentence fragments — whatever makes it ' +
-    'sound like a real person talking, not a textbook. Vary the rhythm. ' +
-    'Cover all the talking points on the card but fold them into natural speech — never read them as a list. ' +
-    'When the photo shows nothing worth generating from — an empty desk, a wall, a blur — the first line is "ANSWER: nothing to read" ' +
-    'and the explanation is one short line, so what was on screen before can stay. ' +
-    'The author is recording and reads the text as it streams in, so start the dialogue immediately — no preamble.';
+    'When the photo shows nothing worth briefing — an empty desk, a wall, a blur — the first line is "ANSWER: nothing to read" ' +
+    'and the explanation is one short line, so what was on screen before can stay.';
   const SCENE_PROMPT =
-    'This photo is one role card from a role-play (for example an OET speaking card). Work out which role this card is for, ' +
-    'then BECOME that person and speak their lines — a continuous monologue to read aloud on the mic: greet, ask, explain, and ' +
-    'respond to the other side as if they were replying between your lines, covering every task on the card. ' +
-    'Do NOT describe, summarise, or read the card back, and do not mention the screen or the photo — give only the words the ' +
-    'character says. Only if the frame holds no card at all, say in one short line what is in it.';
+    'This photo is a role card from a speaking role-play. Write the briefing as the rules say: title, ROLE line, then Setting, Your role, ' +
+    'Background, Tasks, and the closing line. Do not start the conversation. Only if the frame holds no card at all, say in one short line what is in it.';
+  // The rules for one conversation turn: the model is the card's role, the user the other party. Static, so the
+  // block is cached across the turns; the clock rides on the latest user message instead (convoMessages).
+  function convoRules(c) {
+    const notes = S.sceneCharacter ? '\n\nVOICE NOTES for your character: ' + S.sceneCharacter : '';
+    return 'You are playing the ' + c.role + ' in a spoken role-play practice (like the OET speaking test). The user plays ' + c.counterpart + '. ' +
+      'The role card (its photo opened this conversation; its briefing is below) is your script: its background is your situation and its tasks are what you bring up.\n\n' +
+      'RULES. Stay in character the whole time: speak only as the ' + c.role + ', in the first person, in natural spoken English — contractions, hesitations, short sentences. ' +
+      'Reply to what the user just said, as a real person would in conversation: one to three sentences a turn, a little more only when telling your story — never a speech, never a list. ' +
+      'Ask for more information when a real ' + c.role + ' would (what the doctor means, what happens next, whether it is serious, what they should do at home). ' +
+      'Over the conversation raise two or three realistic worries or objections drawn from the card\'s tasks — one at a time, at natural moments, after the user has said something that invites them, never all at once. ' +
+      'Work through the card\'s task points in their order where that is natural; if the user asks something the card does not cover, invent a plausible detail consistent with it and keep it consistent afterwards. ' +
+      'If you could not make out what the user said, ask them to repeat it, in character. ' +
+      'Never narrate, never give stage directions, never label the speaker, never mention being an AI or a role play, never give the user feedback or advice on their performance — only the words the ' + c.role + ' says.\n\n' +
+      'The clock: each user message ends with a bracketed note of the elapsed time. When it says the time is nearly up, steer towards a natural close within the next exchange or two. ' +
+      'When it says this is the final exchange, close the conversation in one or two sentences and end your reply with the exact line "[End of role play]".' +
+      notes + '\n\nBRIEFING:\n' + c.brief;
+  }
 
   const DIGEST_RULES =
     'You read automatic speech-to-text transcripts of a fiction author\'s spoken brainstorming and world-building sessions. ' +
@@ -818,7 +857,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-07 10:30';
+  const BUILD = '2026-10-07 14:10';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -864,7 +903,10 @@
     saveAudio: true,
     driveHelper: '',   // web-app URL of drive-helper.gs typed in settings; empty = the DRIVE_HELPER_URL above
     quietSec: 25,   // seconds without speech before new camera text may be generated or shown
-    roleAuto: true,     // a role-play card in view (SETTING / role / TASK) is answered in that role and its lines locked on screen
+    roleAuto: true,     // a role-play card in view (SETTING / role / TASK) brings a briefing and, on "I'm ready", a live role play
+    convoEffort: 'low', // thinking effort for a role card's briefing and the role play's turns: low = the first words about a second after you stop talking
+    convoMinutes: 5,    // the role play is steered to a close at about this length
+    convoPause: 0.6,    // seconds after your last words (as transcribed) before they go out; ElevenLabs itself commits after 0.8 s of silence
     sceneCharacter: '', // who the character is, how they talk — fed into the system prompt in Scene mode
   };
   const STORE = 'lensloop.settings';
@@ -944,7 +986,7 @@
   const history = [];
 
   // ---------- status / readouts ----------
-  let statusAt = 0;   // when the status was last set: a short notice ("Moving on", "Keeping the Patient lines") holds for a moment
+  let statusAt = 0;   // when the status was last set: a short notice ("Moving on", "Keeping the Patient briefing") holds for a moment
   function setStatus(kind, text) {
     statusEl.dataset.kind = kind;
     statusText.textContent = text;
@@ -1212,6 +1254,7 @@
     for (const r of active) r.ctrl.abort();
     active = [];
     heldByVoice = false;
+    if (convoActive()) endConvo('session stopped');
     roleLock = null; roleRelook = null; clearMaterial();   // the session ends: no role lines or collected pages held over
     if (listening) stopStory(true);   // the recording ends with the session and is saved
     stopCamera();
@@ -1279,6 +1322,7 @@
   function cacheStore(sig, text, scene) { if (!sig || !text) return; const existing = cacheFind(sig, scene); if (existing) { existing.text = text; return; } snapCache.push({ sig: new Uint8Array(sig), text, readPos: 0, scene: !!scene }); if (snapCache.length > 20) snapCache.shift(); }
 
   function snap(source) {
+    if (convoActive() && source !== 'button') { skippedSince = frameNo; return; }   // a role play is running: the camera waits
     // while you speak, and for a quiet spell after, the text on screen stays: nothing new is generated or shown
     if (source !== 'button' && holdingForSpeech()) { heldSnap = true; if (!active.length) setStatus('armed', heldByVoice ? 'Holding this text — say "Lens, next" to move on' : 'Holding the text while you speak'); return; }
     let frame;
@@ -1370,8 +1414,8 @@
   }
 
   // ----- role-play cards: a card with a SETTING, a role to play and a TASK list -----
-  // Every new picture gets a quick look by the small fast model. A role card is answered in that role — the lines
-  // that carry out its tasks, for the user to read aloud — and those lines are LOCKED on screen: other pictures (the
+  // Every new picture gets a quick look by the small fast model. A role card brings its BRIEFING (setting, the user's
+  // part, background, tasks; "I'm ready" then starts the live role play) and that is LOCKED on screen: other pictures (the
   // desk, a hand, the same card again) change nothing and cost no full answer; only a DIFFERENT card replaces them.
   // "Lens, next", Stop, or switching the setting off lets them go.
   // { kind: 'role' | 'task', card: { role, setting, task }, frame, reqId, text, failed, seen } — what is locked on screen:
@@ -1409,6 +1453,173 @@
     snapProceed(f, 'change', false);
   }
   function clearMaterial() { roleMaterial = []; roleMorePending = null; clearTimeout(roleMoreTimer); roleMoreTimer = 0; }
+
+  // ----- the live role play: the model is the card's role, the user the other party -----
+  // After the briefing, "I'm ready" starts it. The user speaks; each transcribed sentence goes out the moment it
+  // lands (with the whole dialogue so far), and a pause of S.convoPause seconds decides whether a further sentence
+  // folds into it (convoHeard); the reply streams into the answer panel as it arrives (no word-by-word metering — it
+  // is read at a glance and answered). The camera loop pauses meanwhile.
+  // Turns run at S.convoEffort (low by default: the first words land about a second after the user stops; at max
+  // the model thinks for ten to forty seconds before each reply). The whole dialogue is saved into the storyline.
+  let convo = null;   // { card, role, counterpart, frame, brief, history: [{ role, text }], startedAt, pending, timer, inFlight, turns, ended }
+  function convoActive() { return !!convo && !convo.ended; }
+  const convoElapsed = () => convo ? Math.round((Date.now() - convo.startedAt) / 1000) : 0;
+  const convoClock = () => { const e = convoElapsed(); return Math.floor(e / 60) + ':' + String(e % 60).padStart(2, '0'); };
+  function counterpartOf(role) {
+    const r = (role || '').toLowerCase();
+    if (/doctor|physician|gp|nurse|pharmacist|dentist|physio|therapist|midwife|clinician|surgeon|vet/.test(r)) return 'the patient (or the relative or carer the card describes)';
+    return 'the doctor or nurse (the health professional in this scene)';
+  }
+  function startConvo() {
+    if (!roleLock || roleLock.kind !== 'role' || !roleLock.text) return;
+    if (convo && !convo.ended) return;
+    const role = roleLock.card.role || 'the role on the card';
+    convo = { card: roleLock.card, role, counterpart: counterpartOf(role), frame: roleLock.frame, brief: splitAnswer(roleLock.text).body || roleLock.text,
+      history: [], startedAt: Date.now(), pending: '', timer: 0, inFlight: null, turns: 0, ended: false, lastUser: '', lastInterim: '', firstWordMs: [] };
+    for (const r of active) r.ctrl.abort();   // nothing else on the wire while the conversation runs
+    pending = null; showingTranscript = false;
+    if (reader.open && readerEl.classList.contains('feed')) closeReader();
+    setPanel(true);
+    hideBanner();
+    setStatus('armed', 'Role play · you are ' + convo.counterpart.replace(/ \(.*\)$/, '') + ' · Claude is the ' + role);
+    renderConvo(true);
+    convo.pending = '[I am ready. Open the conversation with your first line as the ' + role + ' — greet me or begin as the situation calls for, in one or two sentences.]';
+    convoSend();
+  }
+  const OPENER_RE = /^\[I am ready[^\]]*\]\s*/;   // the cue that opens the conversation is not the user's words
+  // The user's words, as they come. A transcribed sentence goes out AT ONCE — the model starts on it while the
+  // pause (S.convoPause) still runs — but stays PROVISIONAL until the pause has passed with nothing more said: the
+  // reply is kept back meanwhile, and a further sentence inside the pause aborts the request and sends both
+  // together. So the pause costs no time (it overlaps the model's thinking) and still keeps a turn in one piece.
+  // Words said while a committed reply is still coming wait and go as the next turn.
+  function convoHeard(text) {
+    if (!convoActive()) return;
+    const c = convo;
+    text = text.trim(); if (!text) return;
+    if (c.inFlight && c.inFlight.provisional) {   // the last sentence is still inside its pause: this one joins it
+      const prev = c.inFlight.userText;
+      try { c.inFlight.ctrl.abort(); } catch (e) {} c.inFlight = null;
+      c.pending = prev + ' ' + (c.pending ? c.pending + ' ' : '') + text;
+    } else c.pending = (c.pending ? c.pending + ' ' : '') + text;
+    if (!c.inFlight) convoSend(); else convoSchedule();
+  }
+  // still talking (new words in a partial transcript): the pause starts over — an empty or repeated partial (a keepalive) does not count
+  function convoInterim(t) { t = (t || '').trim(); if (!t || !convoActive() || t === convo.lastInterim) return; convo.lastInterim = t; if (convo.timer || (convo.inFlight && convo.inFlight.provisional)) convoSchedule(); }
+  const convoPauseMs = () => Math.max(300, (parseFloat(S.convoPause) || 0.6) * 1000);
+  function convoSchedule() {
+    clearTimeout(convo.timer);
+    convo.timer = setTimeout(convoPauseOver, convoPauseMs());
+  }
+  // the pause has passed: a provisional request is committed (its reply shows from here on), or waiting words go out
+  function convoPauseOver() {
+    if (!convoActive()) return;
+    const c = convo; c.timer = 0;
+    if (c.inFlight) { if (c.inFlight.provisional) { c.inFlight.provisional = false; renderConvo(true); if (c.inFlight.done) convoSettle(c, c.inFlight); } return; }
+    if (c.pending) convoSend();
+  }
+  function convoSend() {
+    if (!convoActive() || !convo.pending || convo.inFlight) return;
+    const text = convo.pending; convo.pending = '';
+    convoRequest(text);
+    convoSchedule();   // the pause: words inside it fold into this request
+  }
+  function convoMessages(c, userText) {
+    const total = Math.max(1, parseFloat(S.convoMinutes) || 5), el = convoElapsed();
+    const clock = el >= total * 60 ? `[Elapsed ${convoClock()} of ${total} minutes — this is the final exchange: close the conversation and end with "[End of role play]".]`
+      : el >= total * 60 - 60 ? `[Elapsed ${convoClock()} of ${total} minutes — the time is nearly up; steer towards a natural close.]`
+      : `[Elapsed ${convoClock()} of about ${total} minutes.]`;
+    const msgs = [];
+    const opener = [{ type: 'text', text: 'This is the role card. You play the ' + c.role + '; I play ' + c.counterpart + '.' }];
+    if (c.frame && c.frame.b64) opener.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: c.frame.b64 }, cache_control: { type: 'ephemeral' } });
+    msgs.push({ role: 'user', content: opener });
+    msgs.push({ role: 'assistant', content: 'Understood — I am the ' + c.role + ' and will stay in character.' });
+    for (const h of c.history) msgs.push({ role: h.role, content: h.text });
+    msgs.push({ role: 'user', content: userText + '\n\n' + clock });
+    return msgs;
+  }
+  async function convoRequest(userText) {
+    const c = convo;
+    const body = { model: S.model, max_tokens: 400, stream: true, output_config: { effort: S.convoEffort || 'low' },
+      system: [{ type: 'text', text: convoRules(c), cache_control: { type: 'ephemeral' } }], messages: convoMessages(c, userText) };   // the dialogue so far, then these words
+    const f = c.inFlight = { ctrl: new AbortController(), text: '', userText, provisional: true, done: false, startedAt: Date.now(), firstAt: 0 };
+    c.lastUser = userText.replace(OPENER_RE, '');
+    renderConvo(true);
+    const [pIn, pOut] = priceFor(S.model);
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': S.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify(body), signal: f.ctrl.signal });
+      if (!res.ok) { let d = ''; try { const j = await res.json(); d = (j.error && j.error.message) || JSON.stringify(j); } catch (e) { d = res.statusText; } throw new Error('HTTP ' + res.status + ' · ' + d); }
+      await readSSE(res.body, (ev, data) => {
+        if (c.inFlight !== f) return;
+        if (ev === 'content_block_delta' && data.delta && data.delta.type === 'text_delta') {
+          if (!f.firstAt) { f.firstAt = Date.now(); c.firstWordMs.push(f.firstAt - f.startedAt); }
+          f.text += data.delta.text; if (!f.provisional) renderConvo(true);
+        } else if (ev === 'message_start' && data.message && data.message.usage) {
+          const u = data.message.usage; sessionCost += ((u.input_tokens || 0) * pIn + (u.cache_creation_input_tokens || 0) * pIn * 1.25 + (u.cache_read_input_tokens || 0) * pIn * 0.1) / 1e6;
+        } else if (ev === 'message_delta' && data.usage) { sessionCost += ((data.usage.output_tokens || 0) * pOut) / 1e6; refreshReadouts(); }
+        else if (ev === 'error') throw new Error((data.error && data.error.message) || 'stream error');
+      });
+      if (c.inFlight !== f) return;   // folded into a later request, or the role play ended
+      f.done = true;
+      if (!f.provisional) convoSettle(c, f);   // else the pause settles it (convoPauseOver)
+    } catch (e) {
+      if (c.inFlight !== f) return;
+      c.inFlight = null;
+      if (e.name === 'AbortError') return;
+      c.pending = userText.replace(OPENER_RE, '') + (c.pending ? ' ' + c.pending : '');   // the words were not answered: they go again with the next turn
+      showBanner('Role play: the reply failed (' + (e.message || e) + '). Say it again, or say "Lens, next" to end the role play.', 'note');
+      renderConvo(false);
+    }
+  }
+  // the reply is in and the pause is over: the turn joins the dialogue; words that arrived meanwhile go next
+  function convoSettle(c, f) {
+    if (c.inFlight !== f) return;
+    const raw = (f.text || '').trim();
+    const done = /\[End of role play\]/i.test(raw);
+    c.history.push({ role: 'user', text: f.userText });
+    c.history.push({ role: 'assistant', text: raw.replace(/\s*\[End of role play\]\s*$/i, '').trim() });
+    c.turns++;
+    c.inFlight = null;
+    renderConvo(false);
+    if (done || convoElapsed() > (Math.max(1, parseFloat(S.convoMinutes) || 5) * 60 + 90)) { endConvo('finished'); return; }
+    if (c.pending && !c.timer) convoSend();
+  }
+  function renderConvo(streaming) {
+    const c = convo; if (!c) return;
+    const cur = c.inFlight && c.inFlight.text && !c.inFlight.provisional ? c.inFlight.text.replace(/\s*\[End of role play\]\s*$/i, '') : '';
+    const last = [...c.history].reverse().find((h) => h.role === 'assistant');
+    const line = cur || (last ? last.text : '');
+    const waiting = !!c.inFlight && !cur;
+    const who = '<div class="convo-who">' + esc(c.role) + ' · role play ' + convoClock() + (c.ended ? ' · ended' : '') + '</div>';
+    const you = c.lastUser ? '<div class="convo-you">You: ' + esc(c.lastUser) + '</div>' : '';
+    const body = line ? '<div class="convo-line' + (waiting ? ' stale' : '') + '">' + esc(line) + (streaming && cur ? '<span class="cursor" aria-hidden="true"></span>' : '') + '</div>' : (waiting ? '<div class="convo-line stale">…</div>' : '');
+    const end = c.ended ? '<div class="convo-end">— end of role play · ' + convoClock() + ' —</div>' : '';
+    answerBody.innerHTML = '<div class="convo">' + who + you + body + end + '</div>';
+    answerBody.classList.remove('stale');
+    const ms = c.firstWordMs.length ? ' · first word ' + (c.firstWordMs[c.firstWordMs.length - 1] / 1000).toFixed(1) + ' s' : '';
+    answerMeta.textContent = 'Role play · ' + c.role + ' · turn ' + c.turns + ms + ' · ' + (S.convoEffort || 'low') + ' effort';
+    copyBtn.hidden = false; $('readBtn').hidden = true;
+  }
+  function convoTranscript(c) {
+    const you = c.counterpart.replace(/ \(.*\)$/, '');
+    return c.history.map((h) => ({ role: h.role, text: h.text.replace(OPENER_RE, '') })).filter((h) => h.text).map((h) => (h.role === 'user' ? 'You (' + you + ')' : c.role) + ': ' + h.text).join('\n');
+  }
+  function endConvo(reason) {
+    const c = convo; if (!c || c.ended) return;
+    c.ended = true;
+    clearTimeout(c.timer); c.timer = 0;
+    if (c.inFlight) { const f = c.inFlight; c.inFlight = null; if (f.done && f.text) { c.history.push({ role: 'user', text: f.userText }); c.history.push({ role: 'assistant', text: f.text.replace(/\s*\[End of role play\]\s*$/i, '').trim() }); c.turns++; } else { try { f.ctrl.abort(); } catch (e) {} } }
+    // the dialogue is kept with the storyline (so it reaches the Drive .txt) like any other note
+    const target = (listening && story) ? story : (stories.length ? stories[stories.length - 1] : null);
+    if (target && c.history.length > 1) {
+      const note = { id: 'rp_' + Date.now().toString(36), at: c.startedAt, tag: 'RP-' + String((target.visuals || []).length + 1).padStart(3, '0'), question: '',
+        caption: 'Role play as the ' + c.role + ' (' + convoClock() + ', ' + c.turns + ' turns)', sig: '', text: ('Role play — Claude as the ' + c.role + ', you as ' + c.counterpart.replace(/ \(.*\)$/, '') + ' · ' + convoClock() + '\n\n' + convoTranscript(c)).slice(0, 6000), rv: 1 };
+      target.visuals = (target.visuals || []).concat([note]);
+      if (target === story) saveDraft(); else { target.updatedAt = Date.now(); saveStories(); scheduleSync(); }
+    }
+    renderConvo(false);
+    // the camera loop resumes; the card's briefing stays locked, so "I'm ready" starts it again and another card brings a new one
+    setStatus('armed', 'Role play ended (' + reason + ') · ' + convoClock() + ' · ' + c.turns + ' turns · say "I\'m ready" for another go, or show another card');
+  }
   async function roleCardCheck(frame, lockedFrame) {
     const ask = 'a SPEAKING role-play card: a card or page that gives a SETTING, names a role for the reader to play in a conversation (for example DOCTOR, ' +
       'PATIENT, CARER, NURSE, PARENT, RELATIVE, PHARMACIST — often headed "Roleplayer Card" or "Candidate Card") and lists a TASK or tasks for that role to do in the conversation';
@@ -1422,7 +1633,7 @@
     const choiceLine = 'CHOICE — if it shows a question with lettered or numbered answer options (multiple choice, any subject — an exam item, a quiz, a practice test, true/false), or a fill-in-the-blank or short-answer item';
     const content = lockedFrame ? [
       { type: 'text', text: taskLock ? 'First photo — the page that set the task whose finished text the user is reading now (a writing task; its case notes or further pages may be elsewhere):'
-        : 'First photo — the role-play card whose lines the user is reading now:' },
+        : 'First photo — the role-play card the user is practising now (its briefing is on screen, or the role play is running):' },
       { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: lockedFrame.b64 } },
       { type: 'text', text: 'Second photo — what the phone camera sees now:' },
       { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: frame.b64 } },
@@ -1503,8 +1714,8 @@
   }
   // The decision for a new picture once the quick look is back. Whatever it says, a locked card's lines stay unless
   // the picture is a DIFFERENT role card.
-  // What is locked on screen, in words: "the Patient lines" or "the referral letter text".
-  const lockName = () => !roleLock ? '' : roleLock.kind === 'task' ? 'the ' + roleLock.card.role + ' text' : 'the ' + roleLock.card.role + ' lines';
+  // What is locked on screen, in words: "the Patient briefing" (or "role play") or "the referral letter text".
+  const lockName = () => !roleLock ? '' : roleLock.kind === 'task' ? 'the ' + roleLock.card.role + ' text' : convoActive() ? 'the ' + roleLock.card.role + ' role play' : 'the ' + roleLock.card.role + ' briefing';
   function decideRole(frame, source, r) {
     if (!running && source !== 'button') return;
     frame.roleLook = !r ? 'look failed' : r.card ? 'card:' + r.card.role : r.write ? 'writing task: ' + r.write : r.notes ? 'case notes: ' + r.notes
@@ -1573,7 +1784,7 @@
     answerMeta.textContent = frame.tag + ' · ' + fmtTime(frame.at) + ' · ' + sourceLabel(hit.from) + (frame.roleLook ? ' · ' + frame.roleLook : '');
     copyBtn.hidden = false; $('readBtn').hidden = false;
     setStatus(running ? 'done' : 'idle', 'From memory for ' + frame.tag);
-    if (isVerdictText(hit.text, frame.choice)) showVerdictPanel();   // a remembered verdict: the panel, big and bold, no feed
+    if (isVerdictText(hit.text, frame.choice) || (splitAnswer(hit.text).role && S.roleAuto !== false)) showVerdictPanel();   // a remembered verdict or briefing: the panel, no feed
     else {
       openReader(body || hit.text, head || 'From memory', { force: true, from: hit.from });
       if (hit.readPos > 0 && hit.readPos < reader.words.length) { reader.pos = hit.readPos; paintReader(); }
@@ -1706,7 +1917,7 @@
       content.push({ type: 'text', text: 'Spoken question from the user: ' + frame.question + (frame.b64 ? '\n\nA frame from the camera is attached in case the question refers to it.' : '') });
     } else {
       content.push({ type: 'text', text: scene
-        ? SCENE_PROMPT + '\n\nThis card was read as: ROLE ' + frame.role.role + (frame.role.setting ? ' — SETTING ' + frame.role.setting : '') + '. You are the ' + frame.role.role + '.'
+        ? SCENE_PROMPT + '\n\nThis card was read as: ROLE ' + frame.role.role + (frame.role.setting ? ' — SETTING ' + frame.role.setting : '') + '. In the practice you will play the ' + frame.role.role + '; the user plays the other party.'
         : (S.prompt || DEFAULT_PROMPT) + (frame.writeMore
           ? '\n\nThe current frame is a further page (case notes or more instructions) of the WRITING TASK whose instructions are among the earlier frames (' + frame.write + '). Write the finished piece again in full now, from all the pages, as the rules say: "ANSWER: " title, "TASK: " name, a blank line, the piece.'
           : frame.write
@@ -1718,7 +1929,7 @@
       model: S.model,
       max_tokens: S.maxTokens,
       stream: true,
-      output_config: { effort: S.effort },
+      output_config: { effort: scene ? (S.convoEffort || 'low') : S.effort },   // a role card's briefing at the role-play effort: on screen in seconds, not after a long think
       system: sys.blocks,
       messages: [{ role: 'user', content }],
     };
@@ -1899,7 +2110,7 @@
     // A verdict (a multiple-choice letter, Yes/No, a value) stays in the answer panel, big and bold, with no feed.
     if (req.text && req.frame.b64) {
       const a = splitAnswer(req.text), { head, body } = a;
-      if (verdictOf(a, req.frame.choice)) showVerdictPanel();
+      if (verdictOf(a, req.frame.choice) || (a.role && S.roleAuto !== false)) showVerdictPanel();   // a verdict, or a role card's briefing
       else if (reader.open && reader.streamId === req.id) { growReader(body || req.text); reader.streamId = 0; readerTitle.textContent = head || req.frame.tag; readerSrc.textContent = sourceLabel(from); if (!autoTimer && !voiceHold) startAuto(); }
       else { openReader(body || req.text, head || req.frame.tag, { force: true, from }); startAuto(); }
     }
@@ -1922,7 +2133,7 @@
       const a = splitAnswer(req.text), { head, body, frames } = a;
       if (!body || countWords(body) < 4) return;
       if (!req.frame.question && (/^nothing to read\b/i.test(head) || (frames === 'new' && readingUnderWay() && reader.streamId !== req.id))) return;   // keeps what is on screen
-      if (verdictOf(a, req.frame.choice)) { if (!reader.streamId) { showVerdictPanel(); shownSig = req.frame.sig || null; shownFrame = req.frame.b64 ? req.frame : null; } return; }   // streams into the panel itself, no feed
+      if (verdictOf(a, req.frame.choice) || (a.role && S.roleAuto !== false)) { if (!reader.streamId) { showVerdictPanel(); shownSig = req.frame.sig || null; shownFrame = req.frame.b64 ? req.frame : null; } return; }   // streams into the panel itself, no feed
       if (reader.open && reader.streamId === req.id) { growReader(body); return; }
       if (reader.streamId && reader.streamId !== req.id) return;   // another reply is on its way in
       openReader(body, head || req.frame.tag, { force: true, from: apiSource(req.text) });
@@ -1991,7 +2202,9 @@
         setStatus(current.firstTextAt ? 'streaming' : 'thinking', `${phase} ${current.frame.tag} · ${secs(Date.now() - current.startedAt)}${queued}`);
       }
     } else if (noticeHolding()) {
-      // a short notice just set ("Moving on", "Keeping the Patient lines", "Case notes collected …") stays readable for a moment
+      // a short notice just set ("Moving on", "Keeping the Patient briefing", "Case notes collected …") stays readable for a moment
+    } else if (convoActive()) {
+      setStatus('streaming', 'Role play ' + convoClock() + ' · you are ' + convo.counterpart.replace(/ \(.*\)$/, '') + ' · Claude is the ' + convo.role + (convo.inFlight ? ' · replying' : convo.pending ? ' · heard, waiting for your pause' : ' · listening') + ' · "Lens, next" ends it');
     } else if (running && statusEl.dataset.kind === 'done' && current) {
       setStatus('done', `Answered ${current.frame.tag} · next in ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s` + taskNote());
     } else if (running && listening && story && !awaitingQuestion) {
@@ -2098,6 +2311,7 @@
     s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
     s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     s = s.replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, '$1<em>$2</em>');
+    s = s.replace(/(^|[^\w])_([^_\n]+)_(?!\w)/g, '$1<em>$2</em>');
     return s;
   }
   function md(src) {
@@ -2169,6 +2383,9 @@
     $('useStories').checked = !!S.useStories;
     $('askWithFrame').checked = !!S.askWithFrame;
     $('roleAuto').checked = S.roleAuto !== false;
+    $('convoEffort').value = S.convoEffort || 'low';
+    $('convoMinutes').value = S.convoMinutes || 5;
+    $('convoPause').value = S.convoPause || 0.6;
     $('sceneCharacter').value = S.sceneCharacter || '';
     sheet.hidden = false; sheetBack.hidden = false;
   }
@@ -2223,6 +2440,9 @@
     S.useStories = $('useStories').checked;
     S.askWithFrame = $('askWithFrame').checked;
     S.roleAuto = $('roleAuto').checked;
+    S.convoEffort = $('convoEffort').value || 'low';
+    S.convoMinutes = clamp(parseFloat($('convoMinutes').value) || 5, 1, 20);
+    S.convoPause = clamp(parseFloat($('convoPause').value) || 0.6, 0.3, 5);
     S.sceneCharacter = $('sceneCharacter').value.trim();
     applyPanelRotation();
     saveSettings();
@@ -2838,6 +3058,8 @@
     const rest = m[1].trim().replace(/[.!?]+$/, '').trim();
     const low = rest.toLowerCase();
     if (!rest) return { kind: 'await' };
+    if (/^(?:i'?m\s+|i\s+am\s+)?ready\b/.test(low) || /^(?:start|begin)\s+(?:the\s+)?role\s*-?\s*play\b/.test(low)) return { kind: 'ready' };
+    if (/^(?:end|stop|finish|quit)\s+(?:the\s+)?role\s*-?\s*play\b/.test(low)) return { kind: 'endplay' };
     if (/^(?:start\s+(?:a\s+)?)?(?:new|next|another|fresh)\s+(?:storyline|story\s*line|chapter|story|session|recording)\b/.test(low)) return { kind: 'new' };
     if (/^(?:stop|end|finish|close)\b(?:\s+(?:the\s+)?(?:recording|listening|session|storyline|everything))?$/.test(low) || /^(?:that'?s\s+all|i'?m\s+done|we'?re\s+done)\b/.test(low)) return { kind: 'stop' };
     if (/^(?:take|snap|grab)\s+(?:a\s+)?(?:picture|photo|frame|shot|snapshot)\b/.test(low) || /^(?:look\s+at|read|check|see)\s+(?:this|that|the\s+note|my\s+notes?|the\s+page|the\s+sketch)\b/.test(low)) return { kind: 'snap', text: rest };
@@ -2852,9 +3074,21 @@
     return { kind: 'question', text: rest };
   }
   let awaitingQuestion = 0;
+  const READY_RE = /^\W*(?:ok(?:ay)?[,.]?\s*)?(?:(?:i'?m|i am|we'?re|we are)\s+ready|ready|let'?s\s+(?:start|begin|go)|start(?:\s+the)?\s+role\s*-?\s*play)\W*$/i;
   function handleUtterance(text) {
     if (!story) return;
     const cmd = parseCommand(text);
+    // the live role play: "I'm ready" starts it from a briefing; while it runs, everything said is a turn
+    if (!cmd && roleLock && roleLock.kind === 'role' && roleLock.text && !convoActive() && READY_RE.test(text)) { story.finals.push({ t: Math.round((Date.now() - story.startedAt) / 1000), text }); saveDraft(); startConvo(); return; }
+    if (convoActive()) {
+      if (cmd && (cmd.kind === 'next' || cmd.kind === 'endplay')) { endConvo('ended by you'); heldByVoice = false; lastSpokenAt = 0; return; }   // the camera looks again at once
+      if (cmd && cmd.kind === 'stop') { if (running) stop(); else stopStory(true); return; }
+      if (cmd && cmd.kind === 'question') { sendQuestion(cmd.text); return; }   // a question for Claude itself ends the role play and is answered
+      if (!cmd) { story.finals.push({ t: Math.round((Date.now() - story.startedAt) / 1000), text }); saveDraft(); convoHeard(text); return; }
+      return;   // the reader's own commands (hold, again, slower…) mean nothing here
+    }
+    if (cmd && cmd.kind === 'ready') { if (roleLock && roleLock.kind === 'role' && roleLock.text) startConvo(); else showBanner('Show a role card first — then say "I\'m ready".', 'note'); return; }
+    if (cmd && cmd.kind === 'endplay') return;
     if (!cmd && awaitingQuestion && Date.now() - awaitingQuestion < 12000) { awaitingQuestion = 0; sendQuestion(text.trim().replace(/[.!?]+$/, '')); return; }
     if (!cmd) { story.finals.push({ t: Math.round((Date.now() - story.startedAt) / 1000), text }); saveDraft(); return; }
     awaitingQuestion = 0;
@@ -2893,7 +3127,7 @@
       micStream: opts.micStream || null,
       keyterms: useCloud ? cloudKeyterms() : [],
       onFinal: (text) => { if (!story || !text) return; story.interim = ''; heardSpeech(text, true); handleUtterance(text); renderTranscript(); renderLiveStrip(); },
-      onInterim: (t) => { if (story) { story.interim = t; heardSpeech(t); renderTranscript(); renderLiveStrip(); } },
+      onInterim: (t) => { if (story) { story.interim = t; heardSpeech(t); convoInterim(t); renderTranscript(); renderLiveStrip(); } },
       onNote: (t) => { if (story) { story.note = t; renderLiveStrip(); } },
       onMic: (ms) => { micStream = ms; stopAudioCapture(); startAudioCapture(ms); },   // the engine got a fresh microphone; record from it too
       onFatal: (msg) => {
@@ -3106,6 +3340,7 @@
   }
   function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch (e) {} }
   function stopStory(save, quiet) {
+    if (convoActive()) endConvo('listening stopped');   // the dialogue joins this storyline before it is saved
     listening = false;
     awaitingQuestion = 0;
     clearInterval(livePushTimer); livePushTimer = null;
@@ -3295,6 +3530,7 @@
   }
   function sendQuestion(q, withFrame) {
     askNo += 1;
+    if (convoActive()) endConvo('a question was asked');
     roleLock = null; roleRelook = null; clearMaterial();   // an explicit spoken question: its answer shows, the locked text is let go
     const frame = { no: askNo, tag: 'Q-' + String(askNo).padStart(3, '0'), at: new Date(), thumb: MIC_THUMB, question: q, b64: null };
     if ((withFrame || S.askWithFrame) && stream && video.videoWidth) {

@@ -136,12 +136,45 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     letter, a description) keeps the feed. `test/verdict.test.js` fixes the boundary, `role-cards.e2e.js` steps 7
     and 3e check the rendered panel.
 13a. **Status notices hold.** `setStatus` stamps `statusAt`; the 250 ms ticker leaves a fresh `armed` notice alone
-    for `NOTICE_HOLD_MS` = 2.5 s (`noticeHolding`), so "Moving on", "Keeping the Patient lines", "Case notes
+    for `NOTICE_HOLD_MS` = 2.5 s (`noticeHolding`), so "Moving on", "Keeping the Patient briefing", "Case notes
     collected (2 pages)" are readable instead of being overwritten by the session line on the next tick.
+13b. **The live role play** (the author's spec, replacing the read-aloud monologue): a speaking role card brings a
+    BRIEFING — `SCENE_SYSTEM_RULES`/`SCENE_PROMPT` and `SYSTEM_RULES` rule (1) both ask for it — "ANSWER: title",
+    "ROLE: <the role on the card, which CLAUDE plays>", then markdown with exactly **Setting:** / **Your role:** (the
+    part the USER plays: the doctor or nurse for a patient's, relative's or carer's card, the patient for a doctor's)
+    / **Background:** / **Tasks:** (four or five bullets) and the cue *Say "I'm ready" to begin — I will be the
+    <role>.* It is shown in the answer panel like a verdict (never the feed), locked like any role lock, and runs at
+    `S.convoEffort` (default `low`, streamed) so it is on screen within seconds; `_…_` renders as italics too.
+    **"I'm ready"** (plain, `READY_RE` in `handleUtterance`: "I'm ready", "ready", "let's start", "start the role
+    play"; or "Lens, I'm ready" → `parseCommand` kind `ready`) with a role lock whose text is in → `startConvo()`:
+    Claude becomes the card's role (`convoRules(c)`: in character, 1–3 sentences a turn, asks for information, raises
+    two or three of the card's worries one at a time, works through the tasks, never feedback, never narration; the
+    briefing and `S.sceneCharacter` voice notes in the cached system block), the user is `counterpartOf(role)`. Every
+    final transcript while `convoActive()` is a turn (`convoHeard`), recorded in the storyline too. **No waiting on
+    the pause**: a transcribed sentence goes out AT ONCE as a PROVISIONAL request (`convoSend` → `convoRequest`, the
+    reply kept back from the panel), and the pause `S.convoPause` (default 0.6 s on top of ElevenLabs' own 0.8 s
+    silence commit; `convoSchedule` → `convoPauseOver`) only decides whether a further sentence folds in (abort,
+    resend both: `convoHeard`) or the request is committed (its reply shows, `convoSettle` adds the turn to
+    `convo.history`); words said while a committed reply is still coming wait and go as the next turn (`pending`);
+    partial transcripts with new words restart the pause (`convoInterim`), empty/repeated ones (keepalives) do not.
+    Turns: `max_tokens` 400, streamed at `S.convoEffort` (`low` → first words in about a second; the Settings hint says
+    plainly a reply cannot arrive before the model produced it), messages = the card photo (cache-marked) + a
+    standing "I am the <role>" + the dialogue + the user's words with a bracketed clock note (`convoMessages`:
+    "[Elapsed m:ss of about N minutes.]", "nearly up" from N−1 min, "final exchange … end with [End of role play]"
+    from N min, N = `S.convoMinutes`, default 5); "[End of role play]" in a reply, N+1.5 min, "Lens, next", "Lens, end
+    the role play", a spoken "Lens, …" question, Stop or Listen stop end it (`endConvo`): the dialogue is saved into
+    the storyline as a visual note `rp_…` (transcript "You (the doctor or nurse): … / Patient: …", no clock notes), the
+    briefing's lock STAYS so "I'm ready" starts another go and a different card brings a new briefing. Meanwhile
+    `snap()` returns at once (the camera waits), the status line reads "Role play m:ss · you are … · Claude is the …",
+    the panel shows `.convo-who` / `.convo-you` (the user's last words) / `.convo-line` (30 px, the reply as it
+    streams) / `.convo-end`, the meta line the turn, the first word's delay and the effort. `test/convo.test.js` fixes
+    the rules, counterparts, messages, clock and the spoken ways in and out; `role-cards.e2e.js` part 5 runs a whole
+    role play against the fake endpoint (eager send, fold-in, waiting words, the model's end, a second go, "Lens, next",
+    the saved transcript, the camera waiting and resuming).
 13. **Tasks: role-play cards and writing tasks** — automatic, nothing to switch on (`S.roleAuto`, default on;
     `S.sceneCharacter` = optional voice notes). The author's spec: a SPEAKING role-play card (a SETTING, a role —
-    DOCTOR, PATIENT, CARER… — and a TASK list) is answered IN that role — the lines that carry out the tasks, for him
-    to read aloud with voice-follow; a WRITING task ("Writing Task: write a letter of referral…", with case notes on
+    DOCTOR, PATIENT, CARER… — and a TASK list) brings its briefing and then a live role play (13b; the role answer's
+    text, `roleLock.text`, is the briefing); a WRITING task ("Writing Task: write a letter of referral…", with case notes on
     the pages before) gets the finished piece itself (`SYSTEM_RULES` rule (2): format and length as asked, facts from
     the case notes among the earlier frames; reply header `TASK: <name>`, `splitAnswer(...).task`); and either stays
     on screen EXACTLY AS IT IS until a DIFFERENT task appears, whatever else the camera sees. The lock has a `kind`
@@ -181,15 +214,17 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
 ## Tests (run before every push)
 
 - `node --check` on the script body, then `node test/live-prompt.test.js` (prompt assembly, no browser) and
-  `node test/role-parse.test.js` (the role-card verdict read however a model writes it) and `node test/verdict.test.js`
-  (which answers are shown big in the panel, which go to the feed).
+  `node test/role-parse.test.js` (the role-card verdict read however a model writes it), `node test/verdict.test.js`
+  (which answers are shown big in the panel, which go to the feed) and `node test/convo.test.js` (the live role
+  play's rules, who plays whom, the clock, "I'm ready" / "Lens, next").
 - `node test/session.e2e.js`, `node test/drive-renewal.e2e.js`, `node test/fresh-build.e2e.js`,
   `node test/memory-voice.e2e.js`, `node test/drive-helper.e2e.js`, `node test/drive-expired-open.e2e.js` (the app
   opened hours later: a silent renewal, retries on a backoff, a dead token in Google's real shape, and the banner only
   when a tap is truly needed), `node test/drive-vanished.e2e.js` (files deleted from Drive behind the app's back,
   against an in-memory Drive), `node test/role-cards.e2e.js` (desk → a role card caught blurred then legible → desk →
-  the same card → a different card → desk, against a controlled camera: the role's lines appear, stay locked, change
-  only for a different card), `node test/latency.e2e.js` (audio cadence and
+  the same card → a different card → desk, against a controlled camera: the card's briefing appears, stays locked,
+  changes only for a different card; writing tasks over pages; and part 5, a whole live role play by voice),
+  `node test/latency.e2e.js` (audio cadence and
   highlight reaction time), `node test/document.e2e.js` (a document page by page, the desk, a new subject) and
   `node test/hour-session.e2e.js` (an hour of dictation compressed into half a
   minute through the real ElevenLabs engine path with the socket mocked: draft, prompt, audio parts, saved
