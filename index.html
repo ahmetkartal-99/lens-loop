@@ -757,10 +757,10 @@
   const SYSTEM_RULES =
     'You are answering either from a single photo taken by a phone camera or from a question the user spoke aloud (sometimes both). Format every reply the same way: ' +
     'the very first line is exactly "ANSWER: " followed by the answer and nothing else on that line. ' +
-    'For a multiple-choice question that is the letter or number of the correct option plus its text, for example "ANSWER: C) $2000". ' +
+    'For a multiple-choice question — any subject, any format: lettered or numbered options, a quiz, an exam item, a practice test — that is the letter or number of the correct option plus its text, for example "ANSWER: C) $2000"; the line begins with the option itself, never with the question number, "Q1:", "Option" or "Answer". ' +
     'For a calculation it is the final value with units. For a yes/no question it is Yes or No plus a few words. ' +
     'If the photo contains no question, that line is a short title of what is in the frame (at most six words). ' +
-    'Then a blank line, then a brief explanation. Never put anything before the ANSWER line. ' +
+    'Then a blank line, then a brief explanation — of the answer itself, never of the photo: do not say what was blurred or is now legible, whether it is the same page as before, or what the earlier frames showed (the FRAMES line is for that). Never put anything before the ANSWER line. ' +
     'When the photo shows nothing worth answering — an empty desk or floor, a wall, a blur, the camera on the move, nothing to read and no question — the first line is exactly "ANSWER: nothing to read" and the explanation is one short line, so what was on screen before can stay. ' +
     'The user is waiting hands-free and reads the reply as it arrives, so reason no longer than the question needs: a plain photo or a simple question gets a quick, direct reply; keep the deepest deliberation for problems that call for it. ' +
     'TWO KINDS OF TASK are never described but DONE. ' +
@@ -818,7 +818,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-07 00:30';
+  const BUILD = '2026-10-07 10:30';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -944,10 +944,14 @@
   const history = [];
 
   // ---------- status / readouts ----------
+  let statusAt = 0;   // when the status was last set: a short notice ("Moving on", "Keeping the Patient lines") holds for a moment
   function setStatus(kind, text) {
     statusEl.dataset.kind = kind;
     statusText.textContent = text;
+    statusAt = Date.now();
   }
+  const NOTICE_HOLD_MS = 2500;
+  const noticeHolding = () => statusEl.dataset.kind === 'armed' && Date.now() - statusAt < NOTICE_HOLD_MS;   // the ticker leaves a fresh notice alone
   function refreshReadouts() {
     $('roInterval').textContent = S.interval;
     $('roEffort').textContent = S.effort;
@@ -1414,6 +1418,8 @@
     // the two halves of a writing task, which often span several pages: the material, and the instructions
     const notesLine = 'NOTES | <the patient or subject, a few words> — if it is a page of case notes or other material for a writing task (PATIENT DETAILS, social or medical history, medications, O/E, pathology results, dated clinical entries, a discharge plan) with no writing instructions on it';
     const writeLine = 'WRITE | <what is to be written, up to ten words> — if it is the page carrying the INSTRUCTIONS of a writing task ("Writing Task", "Using the information in the case notes, write a letter of referral to Dr …", "In your answer…", a word count)';
+    // a question with answer options, any subject: its answer is shown big in the panel, never read out word by word
+    const choiceLine = 'CHOICE — if it shows a question with lettered or numbered answer options (multiple choice, any subject — an exam item, a quiz, a practice test, true/false), or a fill-in-the-blank or short-answer item';
     const content = lockedFrame ? [
       { type: 'text', text: taskLock ? 'First photo — the page that set the task whose finished text the user is reading now (a writing task; its case notes or further pages may be elsewhere):'
         : 'First photo — the role-play card whose lines the user is reading now:' },
@@ -1429,14 +1435,15 @@
           : 'SAME — if it shows the same role-play card as the first (same role, same tasks), merely moved, tilted, cropped, lit or photographed differently;\n' +
             writeLine + ';\n' + notesLine + ';\n') +
         'NEW | <the role, one or two words> | <the setting> | <the first ten words of the first task> — if it shows a ' + (taskLock ? '' : 'DIFFERENT, ') + 'legible ' + ask + ';\n' +
-        'OTHER — if it shows something else that asks for an answer: a question, a problem, a multiple-choice item, an exercise, a page of text to read;\n' +
+        choiceLine + ';\n' +
+        'OTHER — if it shows something else that asks for an answer: an open question, a problem to work, an exercise, a page of text to read;\n' +
         'NONE — if it shows nothing to answer (a desk, a hand, a wall, a blur, the back of a page, or a page too blurred or cut off to read).\n' + notCard } ]
     : [
       { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: frame.b64 } },
       { type: 'text', text: 'What does this phone photo show? Answer on one line and nothing else, with one of:\n' +
         'CARD | <the role, one or two words> | <the setting> | <the first ten words of the first task> — if it shows ' + ask + ' and its role and tasks can be read (if two cards are visible, take the one that is fully legible or larger);\n' +
-        writeLine + ';\n' + notesLine + ';\n' +
-        'NONE — anything else: a question, a multiple-choice item, an exercise, a reading passage, a desk, a hand, a blur, or a page too blurred or cut off to read.\n' + notCard } ];
+        writeLine + ';\n' + notesLine + ';\n' + choiceLine + ';\n' +
+        'NONE — anything else: an open question, an exercise, a reading passage, a desk, a hand, a blur, or a page too blurred or cut off to read.\n' + notCard } ];
     const body = { model: PAGE_CHECK_MODEL, max_tokens: 80, messages: [{ role: 'user', content }] };
     const res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': S.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify(body) });
     const j = await res.json();
@@ -1457,6 +1464,7 @@
           if (j.role && j.card !== false) return { card: { role: clean(j.role), setting: clean(j.setting), task: clean(j.task) } };
           if (typeof j.write === 'string') return { write: clean(j.write) || 'a writing task' };
           if (typeof j.notes === 'string') return { notes: clean(j.notes) || 'case notes' };
+          if (j.choice === true) return { choice: true };
           if (paired && j.same === true) return { same: true };
           if (paired && j.more === true) return { more: true };
           if (paired && (j.task === true || typeof j.task === 'string')) return { newTask: typeof j.task === 'string' ? clean(j.task) : 'a writing task' };
@@ -1484,6 +1492,7 @@
         return { card: { role: clean(rm[1]), setting: clean(sm && sm[1]), task: clean(km && km[1]) } };
       }
     }
+    if (/^\W*CHOICE\b/i.test(t)) return { choice: true };
     if (paired && /^\W*SAME\b/i.test(t)) return { same: true };
     if (paired && /^\W*MORE\b/i.test(t)) return { more: true };
     if (paired && /^\W*TASK\b/i.test(t)) return { newTask: 'a writing task' };
@@ -1499,12 +1508,15 @@
   function decideRole(frame, source, r) {
     if (!running && source !== 'button') return;
     frame.roleLook = !r ? 'look failed' : r.card ? 'card:' + r.card.role : r.write ? 'writing task: ' + r.write : r.notes ? 'case notes: ' + r.notes
+      : r.choice ? 'a question with options'
       : r.same ? (roleLock && roleLock.kind === 'task' ? 'same task' : 'same card')
       : r.more ? 'more of the same task' : r.newTask ? 'a different writing task' : r.other ? 'a different task' : 'no role card seen';   // shown in the meta line
     // speech began while the look was out: nothing new while you talk — the held snap runs once the quiet spell is over
     if (source !== 'button' && holdingForSpeech()) { heldSnap = true; return; }
     if (r && r.card) { roleRelook = null; frame.role = r.card; snapProceed(frame, source, true); return; }   // a (new) role card: its lines
     if (r && r.notes) { roleRelook = null; collectPage(frame, r.notes, source); return; }   // a page of case notes: collected, nothing else changes
+    // a question with options (any subject): the usual answer, shown big in the panel whatever its wording; any locked text has had its turn
+    if (r && r.choice) { roleRelook = null; frame.choice = true; if (roleLock) { roleLock = null; roleKept = null; } snapProceed(frame, source, false); return; }
     if (r && (r.write || r.newTask)) {   // the writing instructions: the piece, written from the pages collected so far
       roleRelook = null; roleLock = null; roleKept = null; clearTimeout(roleMoreTimer); roleMoreTimer = 0; roleMorePending = null;
       frame.write = r.write || r.newTask; frame.fresh = true;
@@ -1557,11 +1569,11 @@
     flash.classList.remove('on'); void flash.offsetWidth; flash.classList.add('on');
     lastGoodText = hit.text; showingTranscript = false; renderLiveStrip(); shownSig = frame.sig || null; shownFrame = frame.b64 ? frame : null;
     const { head, body } = splitAnswer(hit.text);
-    answerBody.innerHTML = renderAnswer(hit.text, false); answerBody.classList.remove('stale');
+    answerBody.innerHTML = renderAnswer(hit.text, false, frame.choice); answerBody.classList.remove('stale');
     answerMeta.textContent = frame.tag + ' · ' + fmtTime(frame.at) + ' · ' + sourceLabel(hit.from) + (frame.roleLook ? ' · ' + frame.roleLook : '');
     copyBtn.hidden = false; $('readBtn').hidden = false;
     setStatus(running ? 'done' : 'idle', 'From memory for ' + frame.tag);
-    if (isVerdictText(hit.text)) showVerdictPanel();   // a remembered verdict: the panel, big and bold, no feed
+    if (isVerdictText(hit.text, frame.choice)) showVerdictPanel();   // a remembered verdict: the panel, big and bold, no feed
     else {
       openReader(body || hit.text, head || 'From memory', { force: true, from: hit.from });
       if (hit.readPos > 0 && hit.readPos < reader.words.length) { reader.pos = hit.readPos; paintReader(); }
@@ -1876,7 +1888,7 @@
     const bits = [req.frame.tag, fmtTime(req.frame.at), `${secs(took)}`, `${inAll}${req.cacheR ? ' (' + req.cacheR + ' cached)' : ''}→${req.outTok} tok`, `$${req.cost.toFixed(3)}`, sourceLabel(from)];
     if (req.frame.roleLook) bits.push(req.frame.roleLook);   // what the role-card look made of the picture
     answerMeta.textContent = bits.join(' · ');
-    answerBody.innerHTML = renderAnswer(req.text || '(no text in the reply)', false);
+    answerBody.innerHTML = renderAnswer(req.text || '(no text in the reply)', false, req.frame.choice);
     answerBody.classList.remove('stale');
     copyBtn.hidden = !req.text;
     $('readBtn').hidden = !req.text;
@@ -1887,7 +1899,7 @@
     // A verdict (a multiple-choice letter, Yes/No, a value) stays in the answer panel, big and bold, with no feed.
     if (req.text && req.frame.b64) {
       const a = splitAnswer(req.text), { head, body } = a;
-      if (verdictOf(a)) showVerdictPanel();
+      if (verdictOf(a, req.frame.choice)) showVerdictPanel();
       else if (reader.open && reader.streamId === req.id) { growReader(body || req.text); reader.streamId = 0; readerTitle.textContent = head || req.frame.tag; readerSrc.textContent = sourceLabel(from); if (!autoTimer && !voiceHold) startAuto(); }
       else { openReader(body || req.text, head || req.frame.tag, { force: true, from }); startAuto(); }
     }
@@ -1910,7 +1922,7 @@
       const a = splitAnswer(req.text), { head, body, frames } = a;
       if (!body || countWords(body) < 4) return;
       if (!req.frame.question && (/^nothing to read\b/i.test(head) || (frames === 'new' && readingUnderWay() && reader.streamId !== req.id))) return;   // keeps what is on screen
-      if (verdictOf(a)) { if (!reader.streamId) { showVerdictPanel(); shownSig = req.frame.sig || null; shownFrame = req.frame.b64 ? req.frame : null; } return; }   // streams into the panel itself, no feed
+      if (verdictOf(a, req.frame.choice)) { if (!reader.streamId) { showVerdictPanel(); shownSig = req.frame.sig || null; shownFrame = req.frame.b64 ? req.frame : null; } return; }   // streams into the panel itself, no feed
       if (reader.open && reader.streamId === req.id) { growReader(body); return; }
       if (reader.streamId && reader.streamId !== req.id) return;   // another reply is on its way in
       openReader(body, head || req.frame.tag, { force: true, from: apiSource(req.text) });
@@ -1927,7 +1939,7 @@
     const phase = r.firstTextAt ? 'answering' : 'thinking';
     answerMeta.textContent = `${r.frame.tag} · ${fmtTime(r.frame.at)} · ${phase} ${secs(elapsed)}`;
     if (r.text) {
-      answerBody.innerHTML = renderAnswer(r.text, true);
+      answerBody.innerHTML = renderAnswer(r.text, true, r.frame.choice);
       answerBody.classList.remove('stale');
       copyBtn.hidden = false;
     } else if (lastGoodText) {
@@ -1978,6 +1990,8 @@
         const queued = pending ? ` · ${pending.tag} queued` : '';
         setStatus(current.firstTextAt ? 'streaming' : 'thinking', `${phase} ${current.frame.tag} · ${secs(Date.now() - current.startedAt)}${queued}`);
       }
+    } else if (noticeHolding()) {
+      // a short notice just set ("Moving on", "Keeping the Patient lines", "Case notes collected …") stays readable for a moment
     } else if (running && statusEl.dataset.kind === 'done' && current) {
       setStatus('done', `Answered ${current.frame.tag} · next in ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s` + taskNote());
     } else if (running && listening && story && !awaitingQuestion) {
@@ -2035,27 +2049,41 @@
   // ("B) Chloride-bicarbonate ionic shift"), Yes/No/True/False, a bare value with its units. It is shown in the
   // answer panel — the key huge and bold in the accent colour, the option text large under it, the explanation
   // below — and never in the word-by-word feed, which is for text to be read aloud (role lines, a letter, a note).
-  function verdictOf(a) {
+  // `loose` is set when the quick look judged the PAGE a question with options (frame.choice): then the wording of
+  // the answer line matters less — "C Water treatment facility bond" or the bare option text is shown big all the same.
+  function verdictOf(a, loose) {
     if (!a || !a.head || a.role || a.task) return null;
-    const h = a.head.replace(/[*_`]/g, '').trim();   // **B)** → B)
+    let h = a.head.replace(/[*_`]/g, '').trim();   // **B)** → B)
     if (/^nothing to read\b/i.test(h)) return null;
-    let m;
     // B) …, C. …, (D) …, 3) …: the option mark, then a separator that is followed by a space or ends the line —
-    // so "B-cell lymphoma" and "7.4" are not options
-    if ((m = /^\(?([A-Ha-h]|\d{1,2})(?:\)|\s*[.:\-–—])(?=\s|$)\s*(.*)$/.exec(h))) return { key: m[1].toUpperCase(), rest: m[2].trim() };
+    // so "B-cell lymphoma" and "7.4" are not options; a bare letter ("C", "(C)") is one
+    const opt = (s) => { const m = /^\(?([A-Ha-h]|\d{1,2})(?:\)|\s*[.:\-–—→])(?=\s|$)\s*(.*)$/.exec(s) || /^\(?([A-Ha-h])\)?$/.exec(s); return m ? { key: m[1].toUpperCase(), rest: (m[2] || '').trim() } : null; };
+    h = h.replace(/^(?:the\s+)?(?:option|answer|choice)\s*(?:is\s*)?[:\-–—]?\s*(?=\(?[A-Ha-h\d])/i, '');   // "Option C: …", "Answer: B) …"
+    let r = opt(h);
+    if (!r) {   // "Q1: C) …", "Question 3 — B. …", "#4 D) …": the question's label in front of the option
+      const s = h.replace(/^(?:q(?:uestion)?\s*#?\s*\d{1,3}|#\s*\d{1,3})\s*[:.)\-–—→]*\s*/i, '');
+      if (s !== h) r = opt(s);
+    }
+    if (r && /^\d+$/.test(r.key)) { const inner = opt(r.rest); if (inner && /^[A-H]$/.test(inner.key)) r = inner; }   // "1. C) …": the number is the question's
+    if (r) return r;
+    let m;
     if ((m = /^(yes|no|true|false)\b[\s,.:;—–-]*(.*)$/i.exec(h))) return { key: m[1][0].toUpperCase() + m[1].slice(1).toLowerCase(), rest: m[2].trim() };
     if (h.length <= 24 && /^[-+−]?\d[\d.,]*(?:\s?(?:×\s?10\^?-?\d+)?\s?[a-zA-Zµ%°/]{0,12})?$/.test(h)) return { key: h, rest: '' };   // 42 mmol/L, 3.5 %
+    if (loose) {
+      if ((m = /^([B-Hb-h]|[Aa](?=\s+[A-Z]))\s+(\S.*)$/.exec(h))) return { key: m[1].toUpperCase(), rest: m[2].trim() };   // "C Water treatment…" (not "A feasibility study…")
+      return { key: '', rest: h };   // the option text alone, or a fill-in-the-blank answer: big all the same
+    }
     return null;
   }
-  const isVerdictText = (text) => !!verdictOf(splitAnswer(text || ''));
-  function renderAnswer(text, streaming) {
+  const isVerdictText = (text, loose) => !!verdictOf(splitAnswer(text || ''), loose);
+  function renderAnswer(text, streaming, choice) {
     const a = splitAnswer(text);
     const { head, body, story } = a;
     const cursor = streaming ? '<span class="cursor" aria-hidden="true"></span>' : '';
     if (!head) return md(text) + cursor;
-    const v = verdictOf(a);
+    const v = verdictOf(a, choice);
     const big = v
-      ? '<div class="big-answer verdict"><span class="verdict-key">' + esc(v.key) + '</span>' + (v.rest ? '<span class="verdict-text" style="font-size:' + Math.max(30, headlineSize(v.rest)) + 'px">' + esc(v.rest) + '</span>' : '') + (body || story ? '' : cursor) + '</div>'
+      ? '<div class="big-answer verdict">' + (v.key ? '<span class="verdict-key">' + esc(v.key) + '</span>' : '') + (v.rest ? '<span class="verdict-text" style="font-size:' + Math.max(v.key ? 30 : 40, headlineSize(v.rest)) + 'px">' + esc(v.rest) + '</span>' : '') + (body || story ? '' : cursor) + '</div>'
       : '<div class="big-answer" style="font-size:' + headlineSize(head) + 'px">' + esc(head) + (body || story ? '' : cursor) + '</div>';
     const tag = story ? '<div class="story-tag">Storyline · ' + esc(story) + '</div>' : '';
     return big + tag + (body ? md(body) + cursor : (story ? cursor : ''));

@@ -69,7 +69,7 @@ const DESCRIBE = { desk: 'ANSWER: An empty desk\n\nA grey surface, nothing to re
       return new MediaStream(tracks);
     };
   });
-  DESCRIBE.mcq = 'ANSWER: C) Pneumonia\n\nThe findings fit a lobar pneumonia.';
+  DESCRIBE.mcq = 'ANSWER: Q1: C) Pneumonia\n\nThe findings fit a lobar pneumonia.';   // the question's label in front, as models write it
 
   let scene = 'desk', card1Looks = 0, lockedRole = '';
   const main = [], roleBodies = [], looks = [];
@@ -80,11 +80,11 @@ const DESCRIBE = { desk: 'ANSWER: An empty desk\n\nA grey surface, nothing to re
       let answer;
       if (/SAME or DIFFERENT/.test(ut)) answer = 'DIFFERENT';                                   // the page check (not expected with these distinct pictures)
       else if (/Answer about the SECOND photo/.test(ut)) {                                       // the pairwise look, lines locked
-        answer = scene === 'desk' ? 'NONE' : scene === 'mcq' ? 'OTHER' : CARDS[scene].role === lockedRole ? 'SAME' : CARDS[scene].line.replace(/^CARD/, 'NEW');
+        answer = scene === 'desk' ? 'NONE' : scene === 'mcq' ? 'CHOICE' : CARDS[scene].role === lockedRole ? 'SAME' : CARDS[scene].line.replace(/^CARD/, 'NEW');
         looks.push({ scene, kind: 'pair', answer });
       } else {                                                                                   // the single look, nothing locked
         if (scene === 'card1') card1Looks++;
-        answer = (scene === 'desk' || scene === 'mcq') ? 'NONE' : (scene === 'card1' && card1Looks === 1) ? 'NONE' : CARDS[scene].line;   // card 1 first caught out of focus
+        answer = scene === 'desk' ? 'NONE' : scene === 'mcq' ? 'CHOICE' : (scene === 'card1' && card1Looks === 1) ? 'NONE' : CARDS[scene].line;   // card 1 first caught out of focus
         looks.push({ scene, kind: 'single', answer });
       }
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ content: [{ type: 'text', text: answer }], usage: { input_tokens: 1500, output_tokens: 20 } }) });
@@ -146,7 +146,7 @@ const DESCRIBE = { desk: 'ANSWER: An empty desk\n\nA grey surface, nothing to re
   assert(main.join() === 'normal:desk,normal:card1,role:Patient,role:Doctor,normal:mcq', '7. a question while lines were locked: answered by the usual full request (' + main.join() + ')');
   s = await shown();
   assert(/Pneumonia/.test(s) && !/what to look out for/.test(s), '7. the answer is on screen, the Doctor\'s lines are gone');
-  assert(/a different task/.test(await page.evaluate(() => document.getElementById('answerMeta').textContent)), '7. the meta line says why');
+  assert(/a question with options/.test(await page.evaluate(() => document.getElementById('answerMeta').textContent)), '7. the meta line says why');
   // a multiple-choice answer is a VERDICT: the option letter huge and bold in the answer panel, the feed closed —
   // whereas the Doctor's lines a moment ago were in the word-by-word feed
   const verdict = await page.evaluate(() => {
@@ -288,7 +288,7 @@ const DESCRIBE = { desk: 'ANSWER: An empty desk\n\nA grey surface, nothing to re
     const look = (ut) => {
       const paired = /Answer about the SECOND photo/.test(ut), taskStyle = paired && /whose finished text the user is reading now/.test(ut);
       if (h.scene === 'desk') return 'NONE';
-      if (h.scene === 'mcq') return paired ? 'OTHER' : 'NONE';
+      if (h.scene === 'mcq') return 'CHOICE';
       if (h.scene === 'notes' || h.scene === 'notes2') return taskStyle ? 'MORE' : 'NOTES | Mrs Priya Sharma';
       if (h.scene === 'task') return taskStyle ? 'SAME' : 'WRITE | a letter of referral to Dr Smith';
       return 'NONE';
@@ -304,7 +304,7 @@ const DESCRIBE = { desk: 'ANSWER: An empty desk\n\nA grey surface, nothing to re
       }
       const images = body.messages[0].content.filter((c) => c.type === 'image').length;
       h.main.push(h.scene + ':' + images + 'img' + (/WRITING TASK/.test(ut) ? '+write' : ''));
-      const text = /WRITING TASK/.test(ut) || h.scene === 'task' ? LETTER : h.scene === 'mcq' ? 'ANSWER: C) Pneumonia\n\nThe findings fit a lobar pneumonia.' : /^notes/.test(h.scene) ? 'ANSWER: Case notes — Mrs Priya Sharma\n\nCase notes for a 60-year-old with type 2 diabetes.' : 'ANSWER: An empty desk\n\nA grey surface, nothing to read.';
+      const text = /WRITING TASK/.test(ut) || h.scene === 'task' ? LETTER : h.scene === 'mcq' ? 'ANSWER: Lobar pneumonia\n\nThe findings fit a lobar pneumonia.' : /^notes/.test(h.scene) ? 'ANSWER: Case notes — Mrs Priya Sharma\n\nCase notes for a 60-year-old with type 2 diabetes.' : 'ANSWER: An empty desk\n\nA grey surface, nothing to read.';
       return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse(text) });
     });
     h.shown = () => p.evaluate(() => (document.getElementById('answerBody') || {}).textContent || '');
@@ -359,7 +359,13 @@ const DESCRIBE = { desk: 'ANSWER: An empty desk\n\nA grey surface, nothing to re
     await h.p.waitForTimeout(9000);
     assert(h.main.join() === 'desk:1img,task:4img+write,mcq:5img', '3e. a multiple-choice item: answered as usual (' + h.main.join() + ')');
     s3 = await h.shown();
-    assert(/Pneumonia/.test(s3) && !/Dear Dr Smith/.test(s3), '3e. the answer is on screen, the letter is gone');
+    assert(/pneumonia/i.test(s3) && !/Dear Dr Smith/.test(s3), '3e. the answer is on screen, the letter is gone');
+    const v3 = await h.p.evaluate(() => {
+      const t = document.querySelector('#answerBody .big-answer.verdict .verdict-text'), k = document.querySelector('#answerBody .verdict-key');
+      const reader = document.getElementById('reader');
+      return { text: t && t.textContent, px: t && parseFloat(getComputedStyle(t).fontSize), key: k && k.textContent, feedOpen: !!reader && reader.classList.contains('open') && reader.classList.contains('feed'), panelHidden: getComputedStyle(document.querySelector('.answer')).visibility === 'hidden' };
+    });
+    assert(v3.text === 'Lobar pneumonia' && !v3.key && v3.px >= 40 && !v3.feedOpen && !v3.panelHidden, '3e. the page was judged a question with options, so even an answer line with no option mark is shown big in the panel, no feed (' + JSON.stringify(v3) + ')');
     assert(h.errors.length === 0, 'part 3: no page errors' + (h.errors.length ? ': ' + h.errors.join(' | ') : ''));
     console.log('part 3 looks:', looksOf(h));
     await h.b.close();
@@ -380,7 +386,7 @@ const DESCRIBE = { desk: 'ANSWER: An empty desk\n\nA grey surface, nothing to re
     await h.p.waitForTimeout(2500);
     assert(h.main.length === 2, '4b. two notes pages in quick succession: gathered, no request yet (' + h.main.join() + ')');
     assert(/Dear Dr Smith/.test(await h.shown()), '4b. the letter still on screen meanwhile');
-    assert(/more of the task collected \(2 pages\)/i.test(await h.status()), '4b. the status line says so (' + await h.status() + ')');
+    assert(/more of the task collected \(2 pages\)|More of the task in view/i.test(await h.status()), '4b. the status line says so (' + await h.status() + ')');
     await h.p.waitForTimeout(9000);
     assert(h.main.join() === 'desk:1img,task:2img+write,notes2:4img+write', '4c. then the letter written again ONCE, with the instructions and both pages among the frames, told it is more of the task (' + h.main.join() + ')');
     assert(/Dear Dr Smith/.test(await h.shown()), '4c. the rewritten letter is on screen');

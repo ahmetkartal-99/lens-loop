@@ -47,11 +47,15 @@ const cases = [
   ['TASK | a discharge summary for Mr Jones', false, 'none'],
   ['WRITE', false, 'write a writing task'],
   ['NOTES', false, 'notes case notes'],
+  ['CHOICE', false, 'choice'],
+  ['CHOICE', true, 'choice'],
+  ['**CHOICE** — a multiple-choice question.', true, 'choice'],
+  ['{"choice": true}', false, 'choice'],
 ];
 let bad = 0;
 for (const [t, paired, want] of cases) {
   const r = parseRoleLook(t, paired);
-  const got = r.card ? 'card ' + r.card.role : r.write ? 'write ' + r.write : r.notes ? 'notes ' + r.notes : r.same ? 'same' : r.more ? 'more' : r.newTask ? 'newTask ' + r.newTask : r.other ? 'other' : 'none';
+  const got = r.card ? 'card ' + r.card.role : r.write ? 'write ' + r.write : r.notes ? 'notes ' + r.notes : r.choice ? 'choice' : r.same ? 'same' : r.more ? 'more' : r.newTask ? 'newTask ' + r.newTask : r.other ? 'other' : 'none';
   if (got !== want) { bad++; console.error('FAIL:', JSON.stringify(t), '->', got, '(wanted', want + ')'); } else console.log('ok:', JSON.stringify(t).slice(0, 70), '->', got);
 }
 const full = parseRoleLook('CARD | Patient | Medical ward in a hospital | Explain that you are very worried', false).card;

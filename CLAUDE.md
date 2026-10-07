@@ -121,12 +121,23 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     the foot of Settings. A declined motion permission shows a banner instead of silently leaving text unturned.
 12. **Answer panel.** "ANSWER:" headline, storyline tag, cost/latency readouts (cached tokens counted), history
     of 40, copy, Read button, settings sheet, intro text, privacy/terms pages, PWA icons. **A verdict stays in the
-    panel, big and bold, and never opens the feed** (`verdictOf`, `isVerdictText`, `showVerdictPanel`; `.big-answer
-    .verdict`, `.verdict-key` 104 px in the accent colour, `.verdict-text`): the letter of a multiple-choice option
-    ("B) …", "C.", "(D)", "3)"), Yes/No/True/False, or a bare value with units — never an answer with a ROLE:/TASK:
-    line, nor a title that merely starts with "A " or "B-". `displayAnswer`, `streamToPanel` and `showRecalled` route
-    on it; a feed open over the panel is closed first. Text to read aloud (role lines, a letter, a description) keeps
-    the feed. `test/verdict.test.js` fixes the boundary.
+    panel, big and bold, and never opens the feed** (`verdictOf(a, loose)`, `isVerdictText`, `showVerdictPanel`;
+    `.big-answer.verdict`, `.verdict-key` 104 px in the accent colour, `.verdict-text`): the letter of a
+    multiple-choice option ("B) …", "C.", "(D)", "3)", a bare "C"), Yes/No/True/False, or a bare value with units —
+    the question's label in front is stripped ("Q1: C) …", "Question 3 — B.", "#4 D)", "1. C)", "Option C:", "The
+    answer is B)") — never an answer with a ROLE:/TASK: line, nor a title that merely starts with "A " or "B-".
+    **Two layers, so it does not hinge on the model's wording**: the quick look judges the PAGE (`CHOICE` — a
+    question with lettered/numbered options, any subject, true/false, fill-in-the-blank → `frame.choice`, meta line
+    "a question with options"; with a lock it is a different task and the lock lets go), and with `frame.choice` the
+    verdict is `loose`: "C Water…" is option C and even an answer line with no option mark is shown big (no key,
+    ≥40 px). The rules tell the model the ANSWER line begins with the option itself (no "Q1:", "Option", "Answer")
+    and that the explanation never narrates the frames. `displayAnswer`, `streamToPanel`, `showRecalled` and
+    `renderCurrent` route on it; a feed open over the panel is closed first. Text to read aloud (role lines, a
+    letter, a description) keeps the feed. `test/verdict.test.js` fixes the boundary, `role-cards.e2e.js` steps 7
+    and 3e check the rendered panel.
+13a. **Status notices hold.** `setStatus` stamps `statusAt`; the 250 ms ticker leaves a fresh `armed` notice alone
+    for `NOTICE_HOLD_MS` = 2.5 s (`noticeHolding`), so "Moving on", "Keeping the Patient lines", "Case notes
+    collected (2 pages)" are readable instead of being overwritten by the session line on the next tick.
 13. **Tasks: role-play cards and writing tasks** — automatic, nothing to switch on (`S.roleAuto`, default on;
     `S.sceneCharacter` = optional voice notes). The author's spec: a SPEAKING role-play card (a SETTING, a role —
     DOCTOR, PATIENT, CARER… — and a TASK list) is answered IN that role — the lines that carry out the tasks, for him
