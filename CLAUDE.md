@@ -171,6 +171,57 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     the rules, counterparts, messages, clock and the spoken ways in and out; `role-cards.e2e.js` part 5 runs a whole
     role play against the fake endpoint (eager send, fold-in, waiting words, the model's end, a second go, "Lens, next",
     the saved transcript, the camera waiting and resuming).
+14. **The screen in the frame, whatever the angle** (the author's spec: "regardless of how acute the angle … it should
+    always read the entire screen"). Every capture (`captureFrame`) finds the bright rectangle of the laptop screen
+    (or page) in a 192-px grey copy of the sensor frame — `screenQuad`: Otsu's split between the room and the screen,
+    which must be BRIGHT (mean ≥ 90) and far brighter than the room (≥ 45 apart; two shades of a dark desk are not a
+    screen), the largest bright region, its four corners as the diagonal extremes, `fill` (a rectangle ≈ 1), `cut`
+    (which frame edges it runs into), `scattered` + `union` (a dark-themed page's several white boxes) — then
+    `screenFind` adds a margin and `rectify` STRAIGHTENS it with a homography on the GPU (`glInit`, Heckbert
+    square-to-quad, `RECT_MAX` 3200 px long side; an axis-aligned crop without WebGL) at the sensor's resolution.
+    What goes to Claude is that straightened screen: the overview at `S.imgSize` plus up to 2×2 overlapping closer
+    tiles when it holds more pixels than one picture carries (`tilePlan`: `TILE_MIN` 1900, `TILE_SIDE` 1500, 6 %
+    overlap; `frameImages` labels them "The same picture in N closer tiles…"), so small print is read at the pixels
+    the camera has. The frame also carries `docSig` (the straightened picture's own fingerprint, stricter than the
+    hand-drifting frame's: `docChanged`, so a changed question in an unchanged layout is caught) and `leftSig` (the
+    left 55 %: a tab's panel, see 15). `screenNote` puts "screen straightened · 2 tiles · 1.8×" / "screen cut off on
+    the right" on the meta line. `S.screenRead` (default on) switches it. `test/screen.test.js` fixes the geometry.
+14a. **Auto-zoom** (`autoZoom`, after every capture, `S.autoZoom` default on, `zoomCaps` from the track): a screen
+    filling < 55 % of the frame is zoomed IN on first and that capture dropped ("Zooming in on the screen"), the
+    zoomed one taken ~1.3 s later (`bumpSnap`); the factor (≤ 2, towards 82 % fill) is CAPPED by the nearest frame
+    edge's headroom (`boxFrac`: the lens zooms about the centre, so a screen off to one side would run out of the
+    frame first) — never past the edge. A screen with an edge outside the frame is NOT answered: the zoom goes
+    straight OUT to the lens's widest (one move; the edge-aware zoom-in then lands the fit in one more), then the
+    ULTRA-WIDE lens is switched to when the phone has one (`wideLens`, by label), then a banner asks to move the
+    phone back (`moveBack`, once per 20 s); only after three judged captures with nothing left to try does a cut
+    frame go as it is, the model told (`frame.cutNote`). Captures while the lens settles (2.5 s after a move) are
+    "adjusting", never judged. After three captures with nothing screen-like the lens returns to the chosen zoom
+    (`baseZoom`); the camera setup leaves a lens already at the wanted zoom alone. `test/screen.e2e.js` runs the
+    whole thing against a 2560×1440 canvas camera whose tracks report a zoom range and an ultra-wide device.
+14b. **A capture every 10 s at all times** (`INTERVAL` = 10, applied on every open like the model and the effort;
+    the Settings field is read-only and says so) — a change in the picture still brings one sooner.
+15. **A question over tabbed sources** (the author's spec: the sources in tabs — "Mall Information / Building Plan /
+    Companies" — the question beside them; wait until every tab was tapped; several questions over the same tabs
+    handled without re-tapping). The quick look's single and paired verdicts gain `TABS | <names in order; separated
+    by ;> | <selected tab> | <first eight words of the question, or none>` (`tabsLine`, `tabsOf`, `parseRoleLook`).
+    `tabsSeen` keeps ONE `tabSet` { key = the normalised names, frames: name → the newest capture of that tab,
+    question { text, frame, answered } } (`TABS_MAX_AGE` 20 min): a tab is collected as the user taps it (kept as it
+    was unless its panel moved — `panelMoved` on `leftSig` — so the bundle's bytes stay the same from question to
+    question; a tab whose panel looks like OTHER contents — `panelChanged` — starts the set afresh), a tab is not a
+    document page (`forgetFrame`), the status line and `taskNote` say "Tabs: Mall Information ✓ · Building Plan ·
+    Companies — tap Building Plan, Companies (or say "Lens, answer")", the screen keeps what it had. Once the
+    question is in view AND every named tab is in hand → `tabsAnswer`: ONE request (`send` with `frame.tabs`) that
+    opens with "SOURCE TABS — … Each tab as the user showed it:" and every tab's pictures labelled `Tab "…":` in
+    order, the LAST picture of the bundle cache-marked, then the current view named with its tab, no document
+    scaffolding, the prompt saying to use all the tabs; the answer is `frame.fresh` (never memory) and
+    `frame.choice` (shown big in the panel — several parts "1: Yes | 2: No | 3: Yes" each big, in order:
+    `verdictOne`/`verdictOf` parts), locked as `roleLock.kind === 'tabs'` (the desk, the same question, another of
+    its tabs change nothing; the paired look's SAME/OTHER/TABS verdicts decide). A further question beside the SAME
+    tabs (`sameQuestion` on the first words, ≥ 60 % of the words shared = the same) is answered AT ONCE with the
+    tabs in hand — the bundle byte-identical, so the prompt cache serves it. "Lens, answer" (`parseCommand` kind
+    `answer`) answers with the tabs in hand, the request naming the tab not shown. `test/tabs.e2e.js` runs desk →
+    tab 1 + question → tab 2 → tab 3 (one request) → desk (kept) → question 2 (at once, same bytes) → a new set →
+    "Lens, answer".
 13. **Tasks: role-play cards and writing tasks** — automatic, nothing to switch on (`S.roleAuto`, default on;
     `S.sceneCharacter` = optional voice notes). The author's spec: a SPEAKING role-play card (a SETTING, a role —
     DOCTOR, PATIENT, CARER… — and a TASK list) brings its briefing and then a live role play (13b; the role answer's
@@ -215,8 +266,9 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
 
 - `node --check` on the script body, then `node test/live-prompt.test.js` (prompt assembly, no browser) and
   `node test/role-parse.test.js` (the role-card verdict read however a model writes it), `node test/verdict.test.js`
-  (which answers are shown big in the panel, which go to the feed) and `node test/convo.test.js` (the live role
-  play's rules, who plays whom, the clock, "I'm ready" / "Lens, next").
+  (which answers are shown big in the panel, which go to the feed), `node test/convo.test.js` (the live role
+  play's rules, who plays whom, the clock, "I'm ready" / "Lens, next") and `node test/screen.test.js` (the screen
+  finder's geometry: corners however the screen is turned, cut edges, scattered pieces, the homography, the tiles).
 - `node test/session.e2e.js`, `node test/drive-renewal.e2e.js`, `node test/fresh-build.e2e.js`,
   `node test/memory-voice.e2e.js`, `node test/drive-helper.e2e.js`, `node test/drive-expired-open.e2e.js` (the app
   opened hours later: a silent renewal, retries on a backoff, a dead token in Google's real shape, and the banner only
@@ -224,7 +276,10 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
   against an in-memory Drive), `node test/role-cards.e2e.js` (desk → a role card caught blurred then legible → desk →
   the same card → a different card → desk, against a controlled camera: the card's briefing appears, stays locked,
   changes only for a different card; writing tasks over pages; and part 5, a whole live role play by voice),
-  `node test/latency.e2e.js` (audio cadence and
+  `node test/screen.e2e.js` (a 2560×1440 canvas camera with a zoom range and an ultra-wide device: the desk as it
+  is, a small screen zoomed in on, an angled screen straightened with two tiles, a cut-off screen zoomed out and the
+  wide lens), `node test/tabs.e2e.js` (a question over three tabs: collected tab by tab, one request with the
+  bundle, a second question at once from the same bytes, "Lens, answer"), `node test/latency.e2e.js` (audio cadence and
   highlight reaction time), `node test/document.e2e.js` (a document page by page, the desk, a new subject) and
   `node test/hour-session.e2e.js` (an hour of dictation compressed into half a
   minute through the real ElevenLabs engine path with the socket mocked: draft, prompt, audio parts, saved

@@ -267,6 +267,12 @@
   .big-answer.verdict { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 18px; }
   .verdict-key { font-size: 104px; line-height: .95; font-weight: 900; color: var(--accent); letter-spacing: -.02em; }
   .verdict-text { font-weight: 800; line-height: 1.08; flex: 1 1 60%; min-width: 0; }
+  /* several parts (three Yes/No statements, two blanks): each part a column — its label small, its answer big — in order */
+  .big-answer.verdict.parts { align-items: flex-start; gap: 10px 22px; }
+  .verdict-part { display: flex; flex-direction: column; align-items: flex-start; min-width: 72px; max-width: 100%; }
+  .verdict-part .verdict-key { font-size: 72px; line-height: 1; }
+  .verdict-part .verdict-text { flex: none; max-width: 100%; }
+  .verdict-label { font-family: var(--mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 2px; }
   .answer-head {
     display: flex; align-items: center; gap: 10px;
     padding: 9px 14px;
@@ -573,8 +579,8 @@
 
     <div class="row">
       <div class="field">
-        <label for="interval">Capture every (seconds)</label>
-        <input type="number" id="interval" min="5" max="600" step="1" inputmode="numeric">
+        <label for="interval">Capture every (seconds) — fixed at the top of the script</label>
+        <input type="number" id="interval" min="5" max="600" step="1" inputmode="numeric" readonly>
       </div>
       <div class="field">
         <label for="busy">If Claude is still busy</label>
@@ -660,6 +666,9 @@
     <label class="check"><input type="checkbox" id="saveKey"> Remember the API key on this phone</label>
     <label class="check"><input type="checkbox" id="rotateText"> Turn the answer text to match how the phone is tilted (camera view stays put)</label>
     <label class="check"><input type="checkbox" id="uprightPhoto"> Send the photo upright when the phone is tilted</label>
+    <label class="check"><input type="checkbox" id="screenRead"> Read the whole screen: find the laptop screen (or page) in the frame, straighten it, send closer tiles for small print</label>
+    <label class="check"><input type="checkbox" id="autoZoom"> Auto-zoom: zoom in until the screen fills the frame, out when an edge is cut off (the wide lens if need be)</label>
+    <div class="hint" style="margin:-6px 0 12px">A screen with an edge outside the frame is not answered until it is whole in view — the zoom goes out first, then a banner asks you to move back. The meta line under an answer says how the picture was taken ("screen straightened · 4 tiles · 1.8×").</div>
 
     <div class="field">
       <label for="driveHelper">Drive helper (keeps the Drive sign-in alive for as long as a session runs)</label>
@@ -786,6 +795,8 @@
     'the very first line is exactly "ANSWER: " followed by the answer and nothing else on that line. ' +
     'For a multiple-choice question — any subject, any format: lettered or numbered options, a quiz, an exam item, a practice test — that is the letter or number of the correct option plus its text, for example "ANSWER: C) $2000"; the line begins with the option itself, never with the question number, "Q1:", "Option" or "Answer". ' +
     'For a calculation it is the final value with units. For a yes/no question it is Yes or No plus a few words. ' +
+    'For a question with SEVERAL PARTS — several statements each wanting Yes/No or True/False, several blanks or drop-down menus, a two-part table with one choice per column — the ANSWER line gives every part in order, separated by " | ", each as "<part>: <answer>": for example "ANSWER: 1: Yes | 2: No | 3: Yes" (the statements in the order shown) or "ANSWER: first blank: 118 | second blank: 1"; the explanation then takes the parts in the same order. ' +
+    'When SOURCE TABS are given with the frame, the question refers to all of them: answer from the tabs, never from the current frame alone. ' +
     'If the photo contains no question, that line is a short title of what is in the frame (at most six words). ' +
     'Then a blank line, then a brief explanation — of the answer itself, never of the photo: do not say what was blurred or is now legible, whether it is the same page as before, or what the earlier frames showed (the FRAMES line is for that). Never put anything before the ANSWER line. ' +
     'When the photo shows nothing worth answering — an empty desk or floor, a wall, a blur, the camera on the move, nothing to read and no question — the first line is exactly "ANSWER: nothing to read" and the explanation is one short line, so what was on screen before can stay. ' +
@@ -854,10 +865,13 @@
   // 'low', 'medium', 'high', 'xhigh', 'max'. Model IDs: 'claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5'.
   const MODEL = 'claude-fable-5-1';
   const EFFORT = 'max';
+  // A capture every INTERVAL seconds at all times while the session runs (a change in the picture brings one sooner):
+  // a tab tapped, a page turned, a question scrolled into view is never missed. Applied on every open, like the two above.
+  const INTERVAL = 10;
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-07 14:10';
+  const BUILD = '2026-10-14 18:30';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -891,6 +905,8 @@
     saveKey: true,
     rotateText: true,
     uprightPhoto: true,
+    screenRead: true,   // the laptop screen (or page) found in the frame, straightened at the sensor's resolution, closer tiles for small print
+    autoZoom: true,     // the lens zoomed so the screen fills the frame; out (then the wide lens) when an edge is cut off
     sttLang: '',
     sttTerms: '',   // the personal glossary, comma-separated
     useStories: true,
@@ -929,6 +945,7 @@
         }
         if (s.v !== saved.v) s.migrated = true;
       }
+      s.interval = INTERVAL;   // the capture cadence, fixed at the top of the script like the model and the effort
       s.model = MODEL;   // model and effort always start from the two lines at the top of the script;
       s.effort = EFFORT; // a change in the settings sheet lasts until the page is closed
     } catch (e) { /* storage unavailable */ }
@@ -1094,19 +1111,83 @@
     }
     zoomRow.hidden = false;
     const want = S.zoom === 'min' ? caps.zoom.min : clamp(+S.zoom || 1, caps.zoom.min, caps.zoom.max);
-    await applyZoom(want);
+    if (Math.abs(zoomNow() - want) > 0.01) await applyZoom(want);
+    else { zoomCur = want; for (const chip of zoomRow.children) chip.classList.toggle('on', Math.abs(+chip.dataset.zoom - want) < 0.05); }
   }
-  async function applyZoom(z) {
+  let zoomCur = null;   // the zoom last applied (the track's own reading when it gives one)
+  function zoomNow() {
     const track = stream && stream.getVideoTracks()[0];
-    if (!track || !zoomCaps) return;
+    if (!track || !zoomCaps) return 1;
+    try { const st = track.getSettings(); if (typeof st.zoom === 'number') return st.zoom; } catch (e) {}
+    return zoomCur != null ? zoomCur : 1;
+  }
+  async function applyZoom(z, quiet) {
+    const track = stream && stream.getVideoTracks()[0];
+    if (!track || !zoomCaps) return false;
     try {
       await track.applyConstraints({ advanced: [{ zoom: z }] });
     } catch (e) {
-      try { await track.applyConstraints({ zoom: z }); } catch (e2) { showBanner('This camera did not accept the zoom change: ' + (e2.message || e2)); return; }
+      try { await track.applyConstraints({ zoom: z }); } catch (e2) { if (!quiet) showBanner('This camera did not accept the zoom change: ' + (e2.message || e2)); return false; }
     }
     let current = z;
     try { const s = track.getSettings(); if (typeof s.zoom === 'number') current = s.zoom; } catch (e) { /* keep requested value */ }
+    zoomCur = current;
     for (const chip of zoomRow.children) chip.classList.toggle('on', Math.abs(+chip.dataset.zoom - current) < 0.05);
+    return true;
+  }
+
+  // ---------- auto-zoom: the screen fills the frame ----------
+  // After each capture the lens is zoomed so the screen (or page) fills most of the frame: in when it is small (a
+  // capture that would be too small to read is dropped and the zoomed one taken a moment later), out when an edge
+  // of it is outside the frame — down to the lens's widest, then over to the ultra-wide lens when the phone has one,
+  // and failing that a banner asks for the phone to be moved back — and back to the chosen zoom once nothing
+  // screen-like has been in view for a while. Decided at once; the lens moves while the next capture is awaited.
+  let zoomAdjustAt = 0, noScreenRuns = 0, wideTried = false, moveBackAt = 0, cutStreak = 0;
+  const baseZoom = () => !zoomCaps ? 1 : S.zoom === 'min' ? zoomCaps.min : clamp(+S.zoom || 1, zoomCaps.min, zoomCaps.max);
+  function autoZoom(sc) {
+    if (S.autoZoom === false || !running || !stream) return false;
+    const now = Date.now(), cur = zoomNow();
+    if (!sc || !sc.found) {
+      noScreenRuns++;
+      if (zoomCaps && noScreenRuns >= 3 && Math.abs(cur - baseZoom()) > 0.05 && now - zoomAdjustAt > 2500) { zoomAdjustAt = now; applyZoom(baseZoom(), true).then(bumpSnap); }
+      return false;
+    }
+    noScreenRuns = 0;
+    if (now - zoomAdjustAt < 2500) return true;   // the lens is still settling after a move: this capture is not the one to judge
+    if (sc.cut.length) {
+      // straight out to the widest (one move), then the edge-aware zoom-in above lands on the fit (one more at most)
+      if (zoomCaps && cur > zoomCaps.min + 0.05) { zoomAdjustAt = now; applyZoom(zoomCaps.min, true).then(bumpSnap); return true; }
+      if (!wideTried) { wideTried = true; zoomAdjustAt = now; wideLens().then((ok) => { if (!ok) moveBack(sc); }); return true; }
+      moveBack(sc);
+      return false;
+    }
+    if (!zoomCaps) return false;
+    const fill = Math.max(sc.widthFrac, sc.heightFrac);
+    if (fill < 0.55 && cur < zoomCaps.max - 0.05) {
+      // the lens zooms about the frame's centre: a screen off to one side reaches the edge before it fills the frame,
+      // so the factor is capped by the headroom of its nearest edge (with a little to spare), never past it
+      let factor = Math.min(2, 0.82 / fill);
+      if (sc.boxFrac) { const [x0, y0, x1, y1] = sc.boxFrac; for (const off of [x1 - 0.5, 0.5 - x0, y1 - 0.5, 0.5 - y0]) if (off > 0.02) factor = Math.min(factor, 0.92 * 0.5 / off); }
+      if (factor < 1.08) return false;   // already as close to the edge as it can be: this is the picture
+      zoomAdjustAt = now; applyZoom(Math.min(zoomCaps.max, cur * factor), true).then(bumpSnap); return true;
+    }
+    return false;
+  }
+  function moveBack(sc) {
+    if (Date.now() - moveBackAt < 20000) return;
+    moveBackAt = Date.now();
+    showBanner('The screen is cut off on the ' + sc.cut.join(' and ') + ' — move the phone back a little, or turn it, so the whole screen is in view.', 'note');
+  }
+  // the lens has moved: the next capture is new whatever the fingerprints say, and comes soon
+  function bumpSnap() { lastSig = null; prevSig = null; retryFrame = true; setTimeout(() => { if (running && !active.length) snap('zoom'); }, 1300); }
+  async function wideLens() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return false;
+    let devices = []; try { devices = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput'); } catch (e) { return false; }
+    const cur = stream && stream.getVideoTracks()[0]; let curId = ''; try { curId = (cur && cur.getSettings() || {}).deviceId || ''; } catch (e) {}
+    const wide = devices.find((d) => /ultra\s*-?\s*wide|0[.,]5\s*x/i.test(d.label || '') && d.deviceId !== curId);
+    if (!wide) return false;
+    S.deviceId = wide.deviceId;   // for this session; the saved choice stands next time
+    try { await openCamera(false); setStatus('armed', 'Switched to the wide lens so the whole screen fits'); bumpSnap(); return true; } catch (e) { return false; }
   }
 
   // Fill the camera picker with every lens the phone reports (labels appear once permission was given).
@@ -1142,29 +1223,234 @@
     $('vfPlaceholder').hidden = false;
     $('zoomRow').hidden = true;
   }
+  // ---------- the screen in the frame ----------
+  // The phone is pointed at a laptop screen (or a page) from wherever the user sits — off to one side, from above,
+  // close or far, at any angle. Every capture finds the bright rectangle of the screen in the frame, straightens it
+  // (a homography on the GPU, at the full resolution of the sensor) and sends THAT: an overview, and closer tiles
+  // when the sensor holds more detail than one picture carries, so small print is read at the pixels the camera
+  // actually has. A screen with an edge outside the frame is not answered: the zoom goes out (autoZoom) and the
+  // status says which edge. When nothing screen-like is found, the frame goes as it is.
+  // The geometry, on a small grey copy of the frame (pure, unit-tested): the largest bright region — its four
+  // corners (the extreme points along the diagonals, which are a rectangle's corners however it is turned or
+  // foreshortened), how much of its own quadrilateral it fills (a rectangle ≈ 1), whether it runs into the frame's
+  // edges, and the extent of all sizable bright regions (a dark-themed screen shows as several white boxes).
+  function screenQuad(lum, W, H) {
+    const n = W * H;
+    const hist = new Uint32Array(256); for (let i = 0; i < n; i++) hist[lum[i]]++;
+    let sum = 0; for (let i = 0; i < 256; i++) sum += i * hist[i];
+    let sumB = 0, wB = 0, best = 0, thr = 128, meanDark = 0, meanBright = 0;   // Otsu: the split between the dark room and the bright screen
+    for (let t = 0; t < 256; t++) { wB += hist[t]; if (!wB) continue; const wF = n - wB; if (!wF) break; sumB += t * hist[t]; const mB = sumB / wB, mF = (sum - sumB) / wF; const v = wB * wF * (mB - mF) * (mB - mF); if (v > best) { best = v; thr = t; meanDark = mB; meanBright = mF; } }
+    // a screen is BRIGHT, and much brighter than the room: two shades of a dark desk (a lighter band on the floor, a
+    // shadow) split just as neatly by Otsu, and are not a screen
+    if (meanBright < 90 || meanBright - meanDark < 45) return null;
+    thr = Math.max(thr, 40);   // a dark room's grey is never "bright"
+    const mask = new Uint8Array(n); let bright = 0;
+    for (let i = 0; i < n; i++) if (lum[i] > thr) { mask[i] = 1; bright++; }
+    if (bright < n * 0.03 || bright > n * 0.985) return null;   // nothing bright, or the whole frame: nothing to crop
+    const comp = new Int32Array(n).fill(-1), stack = new Int32Array(n);
+    let k = 0, bestK = -1, bestArea = 0; const areas = [], boxes = [];
+    for (let st = 0; st < n; st++) {
+      if (!mask[st] || comp[st] >= 0) continue;
+      let top = 0; stack[top++] = st; comp[st] = k; let area = 0, x0 = W, x1 = 0, y0 = H, y1 = 0;
+      while (top) {
+        const q = stack[--top], x = q % W, y = (q - x) / W; area++;
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+        if (x > 0 && mask[q - 1] && comp[q - 1] < 0) { comp[q - 1] = k; stack[top++] = q - 1; }
+        if (x < W - 1 && mask[q + 1] && comp[q + 1] < 0) { comp[q + 1] = k; stack[top++] = q + 1; }
+        if (y > 0 && mask[q - W] && comp[q - W] < 0) { comp[q - W] = k; stack[top++] = q - W; }
+        if (y < H - 1 && mask[q + W] && comp[q + W] < 0) { comp[q + W] = k; stack[top++] = q + W; }
+      }
+      areas.push(area); boxes.push([x0, y0, x1, y1]); if (area > bestArea) { bestArea = area; bestK = k; } k++;
+    }
+    if (bestArea < n * 0.04) return null;   // a lamp, a reflection: not a screen to read
+    let tl = -1, tr = -1, br = -1, bl = -1, vTl = Infinity, vTr = -Infinity, vBr = -Infinity, vBl = Infinity;
+    const edge = { left: 0, right: 0, top: 0, bottom: 0 };
+    for (let q = 0; q < n; q++) {
+      if (comp[q] !== bestK) continue;
+      const x = q % W, y = (q - x) / W;
+      if (x + y < vTl) { vTl = x + y; tl = q; } if (x - y > vTr) { vTr = x - y; tr = q; } if (x + y > vBr) { vBr = x + y; br = q; } if (x - y < vBl) { vBl = x - y; bl = q; }
+      if (x === 0) edge.left++; if (x === W - 1) edge.right++; if (y === 0) edge.top++; if (y === H - 1) edge.bottom++;
+    }
+    const pt = (q) => [q % W, Math.floor(q / W)];
+    const quad = [pt(tl), pt(tr), pt(br), pt(bl)];
+    const cross = (a, b) => a[0] * b[1] - b[0] * a[1];
+    const polyArea = Math.abs(cross(quad[0], quad[1]) + cross(quad[1], quad[2]) + cross(quad[2], quad[3]) + cross(quad[3], quad[0])) / 2;
+    const fill = polyArea > 0 ? bestArea / polyArea : 0;
+    const cut = [];
+    if (edge.left >= H * 0.2) cut.push('left'); if (edge.right >= H * 0.2) cut.push('right'); if (edge.top >= W * 0.2) cut.push('top'); if (edge.bottom >= W * 0.2) cut.push('bottom');
+    const b0 = boxes[bestK]; let ux0 = b0[0], uy0 = b0[1], ux1 = b0[2], uy1 = b0[3], scattered = false;
+    for (let i = 0; i < areas.length; i++) {   // a lamp or a window at the frame's edge is not the screen being cut: only the largest region says that
+      if (i === bestK || areas[i] < n * 0.01) continue;
+      scattered = true; const b = boxes[i];
+      if (b[0] < ux0) ux0 = b[0]; if (b[1] < uy0) uy0 = b[1]; if (b[2] > ux1) ux1 = b[2]; if (b[3] > uy1) uy1 = b[3];
+    }
+    return { quad, fill, cut, coverage: bestArea / n, box: b0, union: [ux0, uy0, ux1, uy1], scattered, thr };
+  }
+  // The map from the straightened picture's unit square (u,v in 0..1, origin top-left) to the frame (x,y in the
+  // same units): a projective transform fixed by the four corners TL, TR, BR, BL (Heckbert's square-to-quad).
+  function homography(quad) {
+    const [[x0, y0], [x1, y1], [x2, y2], [x3, y3]] = quad;
+    const dx1 = x1 - x2, dx2 = x3 - x2, dx3 = x0 - x1 + x2 - x3, dy1 = y1 - y2, dy2 = y3 - y2, dy3 = y0 - y1 + y2 - y3;
+    let a, b, c, d, e, f, g, h;
+    if (Math.abs(dx3) < 1e-9 && Math.abs(dy3) < 1e-9) { a = x1 - x0; b = x2 - x1; c = x0; d = y1 - y0; e = y2 - y1; f = y0; g = 0; h = 0; }
+    else {
+      const det = dx1 * dy2 - dx2 * dy1;
+      g = (dx3 * dy2 - dx2 * dy3) / det; h = (dx1 * dy3 - dx3 * dy1) / det;
+      a = x1 - x0 + g * x1; b = x3 - x0 + h * x3; c = x0; d = y1 - y0 + g * y1; e = y3 - y0 + h * y3; f = y0;
+    }
+    return [a, b, c, d, e, f, g, h, 1];   // row-major: x' = (a u + b v + c) / (g u + h v + 1), y' = (d u + e v + f) / (…)
+  }
+  const mapUV = (M, u, v) => { const w = M[6] * u + M[7] * v + M[8]; return [(M[0] * u + M[1] * v + M[2]) / w, (M[3] * u + M[4] * v + M[5]) / w]; };
+  // The closer tiles of a straightened screen: only when it holds more pixels than one picture carries, up to 2×2,
+  // each a little wider than its share so that a line of text on the seam is whole in one of them.
+  const TILE_MIN = 1900, TILE_SIDE = 1500, TILE_OVERLAP = 0.06;
+  function tilePlan(w, h) {
+    if (Math.max(w, h) < TILE_MIN) return [];
+    const cols = Math.min(2, Math.ceil(w / TILE_SIDE)), rows = Math.min(2, Math.ceil(h / TILE_SIDE));
+    if (cols * rows < 2) return [];
+    const tw = w / cols, th = h / rows, ox = tw * TILE_OVERLAP, oy = th * TILE_OVERLAP, out = [];
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const x = Math.max(0, c * tw - ox), y = Math.max(0, r * th - oy);
+      out.push({ c, r, cols, rows, x, y, w: Math.min(w, (c + 1) * tw + ox) - x, h: Math.min(h, (r + 1) * th + oy) - y });
+    }
+    return out;
+  }
+  const lookCanvas = document.createElement('canvas'), lctx = lookCanvas.getContext('2d', { willReadFrequently: true });
+  // The screen (or page) in a frame, in frame pixels: { quad, cut, coverage, widthFrac, heightFrac, scattered } or null.
+  function screenFind(src) {
+    const W = 192, H = Math.max(8, Math.round(src.height * W / src.width));
+    lookCanvas.width = W; lookCanvas.height = H;
+    lctx.drawImage(src, 0, 0, W, H);
+    const d = lctx.getImageData(0, 0, W, H).data, lum = new Uint8Array(W * H);
+    for (let i = 0; i < lum.length; i++) lum[i] = (d[i * 4] * 3 + d[i * 4 + 1] * 6 + d[i * 4 + 2]) / 10;
+    const q = screenQuad(lum, W, H);
+    if (!q) return null;
+    const sx = src.width / W, sy = src.height / H, m = 1.6;   // a margin of cells, so the screen's own edge is kept
+    // a clean rectangle (turned or foreshortened) is straightened; bright content in several pieces, or a region that
+    // is not a rectangle (a page with a dark figure in one corner), is cropped to the box around all of it instead
+    const straight = !q.scattered && q.fill >= 0.8 && q.fill <= 1.25;
+    let quad;
+    if (!straight) { const u = q.union; quad = [[u[0] - m, u[1] - m], [u[2] + 1 + m, u[1] - m], [u[2] + 1 + m, u[3] + 1 + m], [u[0] - m, u[3] + 1 + m]]; }
+    else {
+      const cx = q.quad.reduce((t, p) => t + p[0], 0) / 4 + 0.5, cy = q.quad.reduce((t, p) => t + p[1], 0) / 4 + 0.5;
+      quad = q.quad.map(([x, y]) => { const dx = x + 0.5 - cx, dy = y + 0.5 - cy, l = Math.hypot(dx, dy) || 1; return [x + 0.5 + dx / l * m, y + 0.5 + dy / l * m]; });
+    }
+    quad = quad.map(([x, y]) => [clamp(x * sx, 0, src.width), clamp(y * sy, 0, src.height)]);
+    const box = straight ? q.box : q.union;
+    return { quad, straight, cut: q.cut, coverage: q.coverage, fill: q.fill, scattered: q.scattered, widthFrac: (box[2] - box[0] + 1) / W, heightFrac: (box[3] - box[1] + 1) / H,
+      boxFrac: [box[0] / W, box[1] / H, (box[2] + 1) / W, (box[3] + 1) / H] };   // where it sits in the frame (fractions), for the zoom
+  }
+  // Straightening on the GPU: the frame as a texture, one quad drawn with the homography in the fragment shader.
+  let gl = null, glCanvas = null, glH = null, glFailed = false;
+  function glInit() {
+    if (gl) return true;
+    if (glFailed) return false;
+    try {
+      glCanvas = document.createElement('canvas');
+      gl = glCanvas.getContext('webgl', { preserveDrawingBuffer: true, premultipliedAlpha: false, antialias: false, depth: false, stencil: false });
+      if (!gl) throw new Error('no webgl');
+      const mk = (type, src) => { const sh = gl.createShader(type); gl.shaderSource(sh, src); gl.compileShader(sh); if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh)); return sh; };
+      const prog = gl.createProgram();
+      gl.attachShader(prog, mk(gl.VERTEX_SHADER, 'attribute vec2 p; varying vec2 v; void main() { v = p; gl_Position = vec4(p.x * 2.0 - 1.0, 1.0 - p.y * 2.0, 0.0, 1.0); }'));
+      gl.attachShader(prog, mk(gl.FRAGMENT_SHADER, 'precision highp float; uniform sampler2D t; uniform mat3 h; varying vec2 v; void main() { vec3 s = h * vec3(v, 1.0); gl_FragColor = texture2D(t, s.xy / s.z); }'));
+      gl.linkProgram(prog); if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+      gl.useProgram(prog);
+      const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1]), gl.STATIC_DRAW);
+      const loc = gl.getAttribLocation(prog, 'p'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+      const tex = gl.createTexture(); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.uniform1i(gl.getUniformLocation(prog, 't'), 0);
+      glH = gl.getUniformLocation(prog, 'h');
+      return true;
+    } catch (e) { glFailed = true; gl = null; return false; }
+  }
+  const RECT_MAX = 3200;   // the straightened picture's long side, at most (the sensor rarely holds more)
+  // The straightened screen as a canvas (the GL canvas itself), or an axis-aligned crop when there is no WebGL.
+  function rectify(src, quad) {
+    const len = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
+    let w = Math.round(Math.max(len(quad[0], quad[1]), len(quad[3], quad[2]))), h = Math.round(Math.max(len(quad[0], quad[3]), len(quad[1], quad[2])));
+    if (w < 64 || h < 64) return null;
+    const k = Math.min(1, RECT_MAX / Math.max(w, h)); w = Math.round(w * k); h = Math.round(h * k);
+    if (glInit()) {
+      const maxT = gl.getParameter(gl.MAX_TEXTURE_SIZE), maxR = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE);
+      if (src.width <= maxT && src.height <= maxT && w <= maxR && h <= maxR) {
+        try {
+          glCanvas.width = w; glCanvas.height = h;
+          gl.viewport(0, 0, w, h);
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
+          const M = homography(quad.map(([x, y]) => [x / src.width, y / src.height]));
+          gl.uniformMatrix3fv(glH, false, new Float32Array([M[0], M[3], M[6], M[1], M[4], M[7], M[2], M[5], M[8]]));   // column-major
+          gl.drawArrays(gl.TRIANGLES, 0, 6);
+          return glCanvas;
+        } catch (e) { glFailed = true; gl = null; }
+      }
+    }
+    const x0 = Math.min(...quad.map((p) => p[0])), y0 = Math.min(...quad.map((p) => p[1])), x1 = Math.max(...quad.map((p) => p[0])), y1 = Math.max(...quad.map((p) => p[1]));
+    const c = document.createElement('canvas'); c.width = Math.round(x1 - x0); c.height = Math.round(y1 - y0);
+    c.getContext('2d').drawImage(src, x0, y0, x1 - x0, y1 - y0, 0, 0, c.width, c.height);
+    return c;
+  }
+  const rawCanvas = document.createElement('canvas'), rctx = rawCanvas.getContext('2d'), tileCanvas = document.createElement('canvas'), tlctx = tileCanvas.getContext('2d');
+  // A frame for Claude: { b64 (the overview, long side S.imgSize), tiles [{ b64, c, r, cols, rows }], thumb, sig (of
+  // the raw frame, for the "same picture" checks), screen: { found, cut, zoom, tiles, widthFrac } }.
   function captureFrame() {
     const vw = video.videoWidth, vh = video.videoHeight;
     if (!vw || !vh) throw new Error('The camera has not delivered a frame yet.');
-    const scale = Math.min(1, S.imgSize / Math.max(vw, vh));
-    const w = Math.round(vw * scale), h = Math.round(vh * scale);
     // When the page is locked to portrait and the phone is physically sideways, the frame holds the
     // scene rotated; turn it back upright so the photo Claude sees is oriented like the room.
     const rot = S.uprightPhoto ? -contentRotation() : 0;
     const swap = rot === 90 || rot === -90;
-    canvas.width = swap ? h : w; canvas.height = swap ? w : h;
-    ctx.save();
-    ctx.translate(canvas.width / 2, canvas.height / 2);
-    ctx.rotate(rot * Math.PI / 180);
-    ctx.drawImage(video, -w / 2, -h / 2, w, h);
-    ctx.restore();
+    rawCanvas.width = swap ? vh : vw; rawCanvas.height = swap ? vw : vh;   // the whole frame at the sensor's resolution
+    rctx.save(); rctx.translate(rawCanvas.width / 2, rawCanvas.height / 2); rctx.rotate(rot * Math.PI / 180); rctx.drawImage(video, -vw / 2, -vh / 2, vw, vh); rctx.restore();
+    let look = null, src = rawCanvas;
+    if (S.screenRead !== false) {
+      try { look = screenFind(rawCanvas); } catch (e) { look = null; }
+      if (look && !look.cut.length) { const r = rectify(rawCanvas, look.quad); if (r) src = r; else look = null; }
+    }
+    const scale = Math.min(1, S.imgSize / Math.max(src.width, src.height));
+    canvas.width = Math.round(src.width * scale); canvas.height = Math.round(src.height * scale);
+    ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
     const cw = canvas.width, ch = canvas.height;
     const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
     const tw = 160, th = Math.max(1, Math.round(ch * tw / cw));
     thumbCanvas.width = tw; thumbCanvas.height = th;
     tctx.drawImage(canvas, 0, 0, tw, th);
     const thumb = thumbCanvas.toDataURL('image/jpeg', 0.6);
+    const tiles = [];
+    if (S.screenRead !== false) for (const t of tilePlan(src.width, src.height)) {
+      const k = Math.min(1, S.imgSize / Math.max(t.w, t.h));
+      tileCanvas.width = Math.round(t.w * k); tileCanvas.height = Math.round(t.h * k);
+      tlctx.drawImage(src, t.x, t.y, t.w, t.h, 0, 0, tileCanvas.width, tileCanvas.height);
+      const u = tileCanvas.toDataURL('image/jpeg', 0.85);
+      tiles.push({ b64: u.slice(u.indexOf(',') + 1), c: t.c, r: t.r, cols: t.cols, rows: t.rows });
+    }
     let sig = null; try { sig = frameSignature(); } catch (e) {}
-    return { b64: dataUrl.slice(dataUrl.indexOf(',') + 1), thumb, w: cw, h: ch, sig };
+    // the picture's own fingerprint — of the straightened screen, which does not drift with the hand — finer than
+    // the frame's: a question that changed while the page's layout stayed shows here and not in the frame's
+    let docSig = null;
+    try { sigCanvas.width = 32; sigCanvas.height = 24; sctx.drawImage(canvas, 0, 0, 32, 24); const dd = sctx.getImageData(0, 0, 32, 24).data; docSig = new Uint8Array(32 * 24); for (let i = 0; i < docSig.length; i++) docSig[i] = (dd[i * 4] * 3 + dd[i * 4 + 1] * 6 + dd[i * 4 + 2]) / 10; } catch (e) {}
+    // the left-hand part of the picture on its own (the sources panel of a tabbed question): a tab whose panel changed
+    let leftSig = null;
+    try { sigCanvas.width = 48; sigCanvas.height = 36; sctx.drawImage(canvas, 0, 0, Math.max(1, Math.round(cw * 0.55)), ch, 0, 0, 48, 36); const ld = sctx.getImageData(0, 0, 48, 36).data; leftSig = new Uint8Array(48 * 36); for (let i = 0; i < leftSig.length; i++) leftSig[i] = (ld[i * 4] * 3 + ld[i * 4 + 1] * 6 + ld[i * 4 + 2]) / 10; } catch (e) {}
+    const screen = { found: !!look, cut: look ? look.cut : [], straightened: !!look && look.straight && src !== rawCanvas, cropped: !!look && src !== rawCanvas, tiles: tiles.length, widthFrac: look ? look.widthFrac : 0, heightFrac: look ? look.heightFrac : 0, boxFrac: look ? look.boxFrac : null, zoom: zoomNow(), w: src.width, h: src.height };
+    return { b64: dataUrl.slice(dataUrl.indexOf(',') + 1), thumb, w: cw, h: ch, sig, docSig, leftSig, tiles, screen };
+  }
+  const tabsNameOf = (f) => (f && f.tab) || '?';
+  // What the meta line says about the picture: "screen straightened · 4 tiles · 1.8×", "screen cut off on the right".
+  const screenNote = (f) => !f || !f.screen ? '' : f.screen.cut.length ? 'screen cut off on the ' + f.screen.cut.join(' and ')
+    : (f.screen.straightened ? 'screen straightened' : f.screen.cropped ? 'screen cropped' : f.screen.found ? 'screen' : '') + (f.screen.tiles ? (f.screen.found ? ' · ' : '') + f.screen.tiles + ' tiles' : '') + (f.screen.zoom && Math.abs(f.screen.zoom - 1) > 0.05 ? ' · ' + fmtZoom(f.screen.zoom) : '');
+  // The frame's images for a request: the overview, then the closer tiles, labelled.
+  function frameImages(f, label) {
+    const out = [];
+    if (label) out.push({ type: 'text', text: label });
+    out.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: f.b64 } });
+    if (f.tiles && f.tiles.length) {
+      out.push({ type: 'text', text: 'The same picture in ' + f.tiles.length + ' closer tiles (overlapping; left to right, then top to bottom) for small print:' });
+      for (const t of f.tiles) out.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: t.b64 } });
+    }
+    return out;
   }
 
   // ---------- wake lock ----------
@@ -1255,7 +1541,7 @@
     active = [];
     heldByVoice = false;
     if (convoActive()) endConvo('session stopped');
-    roleLock = null; roleRelook = null; clearMaterial();   // the session ends: no role lines or collected pages held over
+    roleLock = null; roleRelook = null; clearMaterial(); tabSet = null;   // the session ends: no role lines, collected pages or tabs held over
     if (listening) stopStory(true);   // the recording ends with the session and is saved
     stopCamera();
     if (!listening) releaseWake();
@@ -1311,22 +1597,36 @@
   // Two pages of text are nearly the same grey on average, so the mean is joined by the share of cells that
   // changed a lot: a page turn moves lines of text, which flips many cells, while a hand's drift barely flips any.
   function sigFrac(a, b) { if (!a || !b || a.length !== b.length) return 1; let n = 0; for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > 20) n++; return n / a.length; }
+  const sigFracT = (a, b, t) => { if (!a || !b || a.length !== b.length) return 1; let n = 0; for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > t) n++; return n / a.length; };
+  // the same page by its own fingerprint (the straightened screen's): stricter, since that picture does not drift
+  // with the hand — a question that changed while the layout stayed is caught here (both frames must have one)
+  const docChanged = (f, g) => !!(f && g && f.docSig && g.docSig) && (sigDiff(f.docSig, g.docSig) >= 3 || sigFracT(f.docSig, g.docSig, 12) >= 0.04);
   const sameScene = (a, b) => sigDiff(a, b) < 7 && sigFrac(a, b) < 0.12;     // the same picture: nothing new, a memory match
   const nearScene = (a, b) => sigDiff(a, b) < 12 && sigFrac(a, b) < 0.18;    // the picture the text on screen is about, drifting
   // --- snap cache: a picture that already has an answer gets it back from memory instead of a new request ---
   // Entries remember the mode they were made in (Scene mode or not): a card described in the normal mode must not
   // come back as its "answer" in Scene mode, nor a scene's lines in the normal mode.
   const snapCache = [];  // { sig, text, readPos, scene } — last 20
-  function cacheFind(sig, scene) { if (!sig) return null; for (const c of snapCache) { if (!!c.scene === !!scene && sameScene(sig, c.sig)) return c; } return null; }
-  function cacheHit(sig, isRole) { return cacheFind(sig, isRole); }
-  function cacheStore(sig, text, scene) { if (!sig || !text) return; const existing = cacheFind(sig, scene); if (existing) { existing.text = text; return; } snapCache.push({ sig: new Uint8Array(sig), text, readPos: 0, scene: !!scene }); if (snapCache.length > 20) snapCache.shift(); }
+  function cacheFind(sig, scene, docSig) { if (!sig) return null; for (const c of snapCache) { if (!!c.scene === !!scene && sameScene(sig, c.sig) && !docChanged({ docSig }, c)) return c; } return null; }
+  function cacheHit(sig, isRole, docSig) { return cacheFind(sig, isRole, docSig); }
+  function cacheStore(sig, text, scene, docSig) { if (!sig || !text) return; const existing = cacheFind(sig, scene, docSig); if (existing) { existing.text = text; return; } snapCache.push({ sig: new Uint8Array(sig), docSig: docSig ? new Uint8Array(docSig) : null, text, readPos: 0, scene: !!scene }); if (snapCache.length > 20) snapCache.shift(); }
 
   function snap(source) {
     if (convoActive() && source !== 'button') { skippedSince = frameNo; return; }   // a role play is running: the camera waits
-    // while you speak, and for a quiet spell after, the text on screen stays: nothing new is generated or shown
-    if (source !== 'button' && holdingForSpeech()) { heldSnap = true; if (!active.length) setStatus('armed', heldByVoice ? 'Holding this text — say "Lens, next" to move on' : 'Holding the text while you speak'); return; }
+    // (while you speak the capture still happens — a tab, a page of notes is collected — only a new answer waits for
+    // the quiet spell: see decideRole)
     let frame;
     try { frame = captureFrame(); } catch (e) { showBanner(e.message); return; }
+    // the whole screen, or nothing: a screen with an edge outside the frame is not answered — the zoom goes out first
+    // (and in on a screen too small in the frame to read, the small capture dropped for the zoomed one)
+    if (source !== 'button') {
+      const adjusting = autoZoom(frame.screen);
+      if (frame.screen && frame.screen.cut.length) {
+        cutStreak++;
+        if (adjusting || cutStreak < 3) { setStatus('armed', 'The screen is cut off on the ' + frame.screen.cut.join(' and ') + (adjusting ? ' — zooming out' : ' — move the phone back a little')); skippedSince = frameNo; return; }
+        frame.cutNote = true;   // three captures running: it goes as it is, the model told
+      } else { cutStreak = 0; if (adjusting) { setStatus('armed', 'Zooming in on the screen'); skippedSince = frameNo; return; } }
+    }
     const sig = frame.sig;
     // Is this a new picture? The reference is the picture the text on screen is about while the panel is open,
     // else the last frame sent. Identical by the numbers: nothing new. A hand-held drift of the shown picture:
@@ -1340,7 +1640,7 @@
     let ref = null;
     if (source !== 'button' && S.skipStill !== false && !retryFrame && sig && known.length) {
       for (const f of known) {
-        if (sameScene(sig, f.sig) || (loose(f) && nearScene(sig, f.sig))) {
+        if ((sameScene(sig, f.sig) || (loose(f) && nearScene(sig, f.sig))) && !docChanged(frame, f)) {
           if (roleRelookDue(sig)) { roleRelookGo(frame, source); return; }   // a card caught out of focus a moment ago: one more look
           skippedSince = frameNo; return;
         }
@@ -1358,6 +1658,14 @@
     }
     snapGo(frame, source);
   }
+  // while you speak, and for a quiet spell after, the text on screen stays: a new answer waits (the held snap runs
+  // once the quiet spell is over); collecting — a tab, a page of notes — goes on meanwhile
+  function speechHeld(source) {
+    if (source === 'button' || !holdingForSpeech()) return false;
+    heldSnap = true;
+    if (!active.length) setStatus('armed', heldByVoice ? 'Holding this text — say "Lens, next" to move on' : 'Holding the text while you speak');
+    return true;
+  }
   function snapGo(frame, source) {
     if (!running && source !== 'button') return;
     const sig = frame.sig;
@@ -1372,13 +1680,14 @@
       return;
     }
     if (roleLock) { skippedSince = frameNo; return; }   // lines locked and no look possible: they stay
+    if (speechHeld(source)) return;
     snapProceed(frame, source, false);
   }
   function snapProceed(frame, source, isRole) {
     // memory first: a picture seen before gets the text it got then, with no request — from the same kind of answer.
     // Not for a writing task's piece (frame.fresh): it is written from the pages in hand now, never replayed.
-    const hit = frame.fresh ? null : recall(frame.sig || lastSig, '', isRole);
-    if (hit) { showRecalled(frame, hit); if (isRole) roleLock = { kind: 'role', card: frame.role, frame, reqId: 0, text: hit.text, failed: false, seen: [] }; return; }
+    const hit = frame.fresh ? null : recall(frame.sig || lastSig, '', isRole, frame.docSig);
+    if (hit) { showRecalled(frame, hit); if (isRole) roleLock = { kind: 'role', card: frame.role, frame, reqId: 0, text: hit.text, failed: false, seen: [] }; else if (frame.tabs && roleLock && roleLock.kind === 'tabs') roleLock.text = hit.text; return; }
     skippedSince = -1;
     frameNo += 1;
     frame.no = frameNo;
@@ -1625,7 +1934,10 @@
       'PATIENT, CARER, NURSE, PARENT, RELATIVE, PHARMACIST — often headed "Roleplayer Card" or "Candidate Card") and lists a TASK or tasks for that role to do in the conversation';
     const notCard = 'A WRITING task is NOT a role-play card: instructions to write a letter, referral, discharge summary, email or report ("Writing Task", "write a letter of referral to Dr …"), ' +
       'and the case notes that go with one (PATIENT DETAILS, history, O/E, pathology, dated entries) — nor is a reading passage, a multiple-choice item or an exam question.';
-    const taskLock = !!(lockedFrame && roleLock && roleLock.kind === 'task');
+    const taskLock = !!(lockedFrame && roleLock && roleLock.kind === 'task'), tabsLock = !!(lockedFrame && roleLock && roleLock.kind === 'tabs');
+    // a question over tabbed sources (a multi-source reasoning item: the sources in tabs, the question beside them): every tab is needed
+    const tabsLine = 'TABS | <the tab names in order, separated by ;> | <the selected tab> | <the first eight words of the question beside or below the tabs, or none> — if it shows a panel with two or more TABS (labelled sections of source material such as "Mall Information; Building Plan; Companies", "Email 1; Email 2; Email 3", "Article; Table; Graph" — one selected, the others selectable)' +
+      (tabsLock ? ' with a DIFFERENT question than the first photo\'s, or a different set of tabs' : ', with or without a question beside it') + '; this comes before CHOICE';
     // the two halves of a writing task, which often span several pages: the material, and the instructions
     const notesLine = 'NOTES | <the patient or subject, a few words> — if it is a page of case notes or other material for a writing task (PATIENT DETAILS, social or medical history, medications, O/E, pathology results, dated clinical entries, a discharge plan) with no writing instructions on it';
     const writeLine = 'WRITE | <what is to be written, up to ten words> — if it is the page carrying the INSTRUCTIONS of a writing task ("Writing Task", "Using the information in the case notes, write a letter of referral to Dr …", "In your answer…", a word count)';
@@ -1633,6 +1945,7 @@
     const choiceLine = 'CHOICE — if it shows a question with lettered or numbered answer options (multiple choice, any subject — an exam item, a quiz, a practice test, true/false), or a fill-in-the-blank or short-answer item';
     const content = lockedFrame ? [
       { type: 'text', text: taskLock ? 'First photo — the page that set the task whose finished text the user is reading now (a writing task; its case notes or further pages may be elsewhere):'
+        : tabsLock ? 'First photo — the question over tabbed sources the user is working on now (its answer is on screen):'
         : 'First photo — the role-play card the user is practising now (its briefing is on screen, or the role play is running):' },
       { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: lockedFrame.b64 } },
       { type: 'text', text: 'Second photo — what the phone camera sees now:' },
@@ -1643,9 +1956,13 @@
             'MORE — if it is another page of the SAME task (the same patient or subject) carrying information the first photo does not show: its case notes, patient details, further instructions;\n' +
             'TASK | <what is to be written> — if it is the instructions page of a DIFFERENT writing task (another patient, another letter or report);\n' +
             notesLine + ' for a DIFFERENT patient or subject than the first photo\'s;\n'
+          : tabsLock
+          ? 'SAME — if it shows the same tabbed panel with the SAME question as the first (whichever tab is selected), merely moved, tilted, cropped or lit differently;\n' +
+            writeLine + ';\n' + notesLine + ';\n'
           : 'SAME — if it shows the same role-play card as the first (same role, same tasks), merely moved, tilted, cropped, lit or photographed differently;\n' +
             writeLine + ';\n' + notesLine + ';\n') +
-        'NEW | <the role, one or two words> | <the setting> | <the first ten words of the first task> — if it shows a ' + (taskLock ? '' : 'DIFFERENT, ') + 'legible ' + ask + ';\n' +
+        tabsLine + ';\n' +
+        'NEW | <the role, one or two words> | <the setting> | <the first ten words of the first task> — if it shows a ' + (taskLock || tabsLock ? '' : 'DIFFERENT, ') + 'legible ' + ask + ';\n' +
         choiceLine + ';\n' +
         'OTHER — if it shows something else that asks for an answer: an open question, a problem to work, an exercise, a page of text to read;\n' +
         'NONE — if it shows nothing to answer (a desk, a hand, a wall, a blur, the back of a page, or a page too blurred or cut off to read).\n' + notCard } ]
@@ -1653,7 +1970,7 @@
       { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: frame.b64 } },
       { type: 'text', text: 'What does this phone photo show? Answer on one line and nothing else, with one of:\n' +
         'CARD | <the role, one or two words> | <the setting> | <the first ten words of the first task> — if it shows ' + ask + ' and its role and tasks can be read (if two cards are visible, take the one that is fully legible or larger);\n' +
-        writeLine + ';\n' + notesLine + ';\n' + choiceLine + ';\n' +
+        writeLine + ';\n' + notesLine + ';\n' + tabsLine + ';\n' + choiceLine + ';\n' +
         'NONE — anything else: an open question, an exercise, a reading passage, a desk, a hand, a blur, or a page too blurred or cut off to read.\n' + notCard } ];
     const body = { model: PAGE_CHECK_MODEL, max_tokens: 80, messages: [{ role: 'user', content }] };
     const res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': S.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify(body) });
@@ -1672,6 +1989,7 @@
       try {
         const j = JSON.parse(jm[0]);
         if (j && typeof j === 'object') {
+          if (Array.isArray(j.tabs) && j.tabs.length >= 2) return { tabs: tabsOf(j.tabs.map(clean), clean(j.active), clean(j.question)) };
           if (j.role && j.card !== false) return { card: { role: clean(j.role), setting: clean(j.setting), task: clean(j.task) } };
           if (typeof j.write === 'string') return { write: clean(j.write) || 'a writing task' };
           if (typeof j.notes === 'string') return { notes: clean(j.notes) || 'case notes' };
@@ -1683,6 +2001,12 @@
           if (j.card === false || j.none === true) return { none: true };
         }
       } catch (e) {}
+    }
+    const tabLine = t.split('\n').find((l) => /^\W*TABS\b[*_]*\s*\|/i.test(l));
+    if (tabLine) {
+      const parts = tabLine.slice(tabLine.search(/\bTABS\b/i)).split('|').map(clean);
+      const names = (parts[1] || '').split(/\s*;\s*|\s*,\s*(?=[A-Z0-9])/).map(clean).filter(Boolean);
+      if (names.length >= 2) return { tabs: tabsOf(names, parts[2] || '', parts.slice(3).join(' | ')) };
     }
     const line = t.split('\n').find((l) => /\b(?:CARD|NEW)\b[*_]*\s*\|/i.test(l));
     if (line) {
@@ -1712,30 +2036,39 @@
     if (/^\W*NOTES\b/i.test(t)) return { notes: 'case notes' };
     return { none: true };
   }
+  // the TABS verdict's fields, tidied: the selected tab matched to a name, "none" for no question
+  function tabsOf(names, active, question) {
+    const norm = (x) => String(x || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+    const a = norm(active);
+    const sel = names.find((n) => norm(n) === a) || names.find((n) => a && (norm(n).includes(a) || a.includes(norm(n)))) || '';
+    const q = /^(?:none|no question|n\/a|-+)?\.?$/i.test(String(question || '').trim()) ? '' : String(question || '').trim();
+    return { names, active: sel, question: q };
+  }
   // The decision for a new picture once the quick look is back. Whatever it says, a locked card's lines stay unless
   // the picture is a DIFFERENT role card.
   // What is locked on screen, in words: "the Patient briefing" (or "role play") or "the referral letter text".
-  const lockName = () => !roleLock ? '' : roleLock.kind === 'task' ? 'the ' + roleLock.card.role + ' text' : convoActive() ? 'the ' + roleLock.card.role + ' role play' : 'the ' + roleLock.card.role + ' briefing';
+  const lockName = () => !roleLock ? '' : roleLock.kind === 'task' ? 'the ' + roleLock.card.role + ' text' : roleLock.kind === 'tabs' ? 'the tabbed-sources answer' : convoActive() ? 'the ' + roleLock.card.role + ' role play' : 'the ' + roleLock.card.role + ' briefing';
   function decideRole(frame, source, r) {
     if (!running && source !== 'button') return;
     frame.roleLook = !r ? 'look failed' : r.card ? 'card:' + r.card.role : r.write ? 'writing task: ' + r.write : r.notes ? 'case notes: ' + r.notes
-      : r.choice ? 'a question with options'
+      : r.tabs ? 'tabbed sources' : r.choice ? 'a question with options'
       : r.same ? (roleLock && roleLock.kind === 'task' ? 'same task' : 'same card')
       : r.more ? 'more of the same task' : r.newTask ? 'a different writing task' : r.other ? 'a different task' : 'no role card seen';   // shown in the meta line
-    // speech began while the look was out: nothing new while you talk — the held snap runs once the quiet spell is over
-    if (source !== 'button' && holdingForSpeech()) { heldSnap = true; return; }
-    if (r && r.card) { roleRelook = null; frame.role = r.card; snapProceed(frame, source, true); return; }   // a (new) role card: its lines
+    // a new answer waits while you talk (the held snap runs once the quiet spell is over); collecting goes on
+    const go = (f, isRole) => { if (!speechHeld(source)) snapProceed(f, source, isRole); };
+    if (r && r.tabs) { roleRelook = null; tabsSeen(frame, r.tabs, source); return; }   // a question over tabbed sources: the tab is collected; answered once every tab is in hand
+    if (r && r.card) { roleRelook = null; frame.role = r.card; go(frame, true); return; }   // a (new) role card: its briefing
     if (r && r.notes) { roleRelook = null; collectPage(frame, r.notes, source); return; }   // a page of case notes: collected, nothing else changes
     // a question with options (any subject): the usual answer, shown big in the panel whatever its wording; any locked text has had its turn
-    if (r && r.choice) { roleRelook = null; frame.choice = true; if (roleLock) { roleLock = null; roleKept = null; } snapProceed(frame, source, false); return; }
+    if (r && r.choice) { roleRelook = null; frame.choice = true; if (roleLock) { roleLock = null; roleKept = null; } go(frame, false); return; }
     if (r && (r.write || r.newTask)) {   // the writing instructions: the piece, written from the pages collected so far
       roleRelook = null; roleLock = null; roleKept = null; clearTimeout(roleMoreTimer); roleMoreTimer = 0; roleMorePending = null;
       frame.write = r.write || r.newTask; frame.fresh = true;
-      snapProceed(frame, source, false); return;
+      go(frame, false); return;
     }
     if (r && r.same && roleLock) {
       if (!roleLock.text && roleLock.failed) {   // its text never came: ask again, the same way
-        if (roleLock.kind === 'task') { roleLock = null; snapProceed(frame, source, false); } else { frame.role = roleLock.card; snapProceed(frame, source, true); }
+        if (roleLock.kind === 'task') { roleLock = null; go(frame, false); } else { frame.role = roleLock.card; go(frame, true); }
         return;
       }
       roleKept = frame; skippedSince = frameNo; setStatus(active.length ? 'thinking' : 'armed', 'Keeping ' + lockName()); return;
@@ -1749,10 +2082,76 @@
       return;
     }
     // a different task in view (a question, a multiple-choice item): the locked text has had its turn
-    if (r && r.other && roleLock) { roleLock = null; roleKept = null; snapProceed(frame, source, false); return; }
+    if (r && r.other && roleLock) { roleLock = null; roleKept = null; go(frame, false); return; }
     if (roleLock) { roleKept = frame; skippedSince = frameNo; if (!active.length) setStatus('armed', 'Keeping ' + lockName() + ' — show another task to change it'); return; }
     if (r && r.none && frame.sig) roleRelook = { sig: frame.sig, at: Date.now(), n: 0 };
-    snapProceed(frame, source, false);   // not a role card, nothing locked: the usual answer
+    go(frame, false);   // not a role card, nothing locked: the usual answer
+  }
+  // ----- a question over tabbed sources (multi-source reasoning: the sources in tabs, the question beside them) -----
+  // The quick look names the tabs, the selected one and the question's first words. Each tab is COLLECTED as the
+  // user taps it (the newest view of a tab is the one kept); the status line says which tabs are still to be
+  // tapped; the question is answered ONCE every tab is in hand — one request carrying every tab (cache-marked, so
+  // the bundle is read from the cache for the next question) and the current view with the question. A further
+  // question beside the same tabs is answered at once from the tabs in hand, no re-tapping; a tab whose own panel
+  // looks changed (the left-hand fingerprint) starts the set afresh. "Lens, answer" answers with the tabs in hand.
+  let tabSet = null;   // { key, names, frames: { name → frame }, question: { text, frame, answered }, at }
+  const TABS_MAX_AGE = 20 * 60 * 1000;
+  const normName = (x) => String(x || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const tabKey = (names) => names.map(normName).join('|');
+  // the same question, as the quick look wrote its first words twice (a word or two may differ between looks)
+  function sameQuestion(a, b) {
+    const A = new Set(normName(a).split(' ').filter((w) => w.length > 2)), B = new Set(normName(b).split(' ').filter((w) => w.length > 2));
+    if (!A.size || !B.size) return normName(a) === normName(b);
+    let n = 0; for (const w of A) if (B.has(w)) n++;
+    return n / Math.min(A.size, B.size) >= 0.6;
+  }
+  const panelChanged = (a, b) => !!(a && b && a.leftSig && b.leftSig) && (sigDiff(a.leftSig, b.leftSig) > 25 || sigFrac(a.leftSig, b.leftSig) > 0.45);   // other contents under the same tab name: a new set
+  const panelMoved = (a, b) => !!(a && b && a.leftSig && b.leftSig) && (sigDiff(a.leftSig, b.leftSig) > 8 || sigFrac(a.leftSig, b.leftSig) > 0.15);      // the same tab scrolled or shown better: worth keeping anew
+  function tabsSeen(frame, t, source) {
+    const names = t.names, key = tabKey(names);
+    if (!tabSet || tabSet.key !== key || Date.now() - tabSet.at > TABS_MAX_AGE) { tabSet = { key, names, frames: {}, question: null, at: Date.now() }; if (roleLock && roleLock.kind === 'tabs') { roleLock = null; roleKept = null; } }
+    tabSet.at = Date.now();
+    if (!frame.at) { frameNo += 1; frame.no = frameNo; frame.at = new Date(); frame.tag = fmtF(frameNo); frameCounter.textContent = frame.tag; }
+    forgetFrame(frame);   // a tab is not a page of a document
+    const active = t.active;
+    frame.tab = active;
+    if (active) {
+      const was = tabSet.frames[active];
+      if (was && panelChanged(was, frame)) { tabSet.frames = {}; tabSet.question = null; if (roleLock && roleLock.kind === 'tabs') { roleLock = null; roleKept = null; } }   // the same tab names, other contents: a new set
+      // a tab seen again is kept as it was unless its panel looks different (scrolled, better lit): the bundle then
+      // stays the same bytes from question to question, which is what lets the cache serve it
+      if (!tabSet.frames[active] || panelMoved(tabSet.frames[active], frame)) tabSet.frames[active] = frame;
+    }
+    lastShot.src = frame.thumb; lastShot.hidden = false;
+    flash.classList.remove('on'); void flash.offsetWidth; flash.classList.add('on');
+    if (t.question) {
+      if (!tabSet.question || !sameQuestion(t.question, tabSet.question.text)) tabSet.question = { text: t.question, frame, answered: false };
+      else tabSet.question.frame = frame;
+    }
+    const missing = names.filter((n) => !tabSet.frames[n]);
+    frame.roleLook = 'tabs: ' + names.map((n) => n + (tabSet.frames[n] ? ' ✓' : ' —')).join(', ') + (t.question ? ' · question "' + t.question + '"' : ' · no question in view');
+    skippedSince = frameNo;
+    if (tabSet.question && !tabSet.question.answered && !missing.length) { tabsAnswer(source); return; }
+    if (!active.length) setStatus('armed', tabsStatus());
+  }
+  function tabsStatus() {
+    if (!tabSet) return '';
+    const missing = tabSet.names.filter((n) => !tabSet.frames[n]);
+    const have = tabSet.names.map((n) => n + (tabSet.frames[n] ? ' ✓' : '')).join(' · ');
+    if (tabSet.question && !tabSet.question.answered) return 'Tabs: ' + have + (missing.length ? ' — tap ' + missing.join(', ') + ' (or say "Lens, answer")' : '');
+    if (missing.length) return 'Tabs: ' + have + ' — tap ' + missing.join(', ') + (tabSet.question ? '' : ' · no question in view yet');
+    return 'Tabs: ' + have + ' — all in hand' + (tabSet.question ? '' : ' · show the question');
+  }
+  // the answer: one request with every tab in hand and the current view with the question; locked on screen like any
+  // other task's text (the desk, the same question, another of its tabs change nothing)
+  function tabsAnswer(source) {
+    if (!tabSet || !tabSet.question || tabSet.question.answered) return;
+    const q = tabSet.question; q.answered = true;
+    const f = q.frame;
+    f.tabs = { names: tabSet.names.slice(), frames: tabSet.names.map((n) => tabSet.frames[n]).filter(Boolean), missing: tabSet.names.filter((n) => !tabSet.frames[n]), question: q.text };
+    f.fresh = true; f.choice = true;   // always written afresh from the tabs; its answer shown big in the panel
+    roleLock = { kind: 'tabs', card: { role: 'tabs', setting: '', task: q.text }, frame: f, reqId: 0, text: '', failed: false, seen: f.tabs.frames.concat([f]) }; roleKept = null; roleRelook = null;
+    snapProceed(f, source, false);
   }
   // A picture just judged "no card" that the camera stays on is looked at twice more, a few seconds apart: a card
   // first caught out of focus or in glare becomes legible without the picture changing enough to count as new.
@@ -1762,7 +2161,7 @@
     roleCheckBusy = true; roleRelook.n += 1; roleRelook.at = Date.now();
     roleCardCheck(frame, null).then((r) => {
       if (!(r && r.card) || (!running && source !== 'button')) return;
-      if (source !== 'button' && holdingForSpeech()) { heldSnap = true; return; }   // nothing new while you talk
+      if (speechHeld(source)) return;   // nothing new while you talk
       roleRelook = null; frame.role = r.card; snapProceed(frame, source, true);
     })
       .catch(() => {}).finally(() => { roleCheckBusy = false; });
@@ -1781,7 +2180,7 @@
     lastGoodText = hit.text; showingTranscript = false; renderLiveStrip(); shownSig = frame.sig || null; shownFrame = frame.b64 ? frame : null;
     const { head, body } = splitAnswer(hit.text);
     answerBody.innerHTML = renderAnswer(hit.text, false, frame.choice); answerBody.classList.remove('stale');
-    answerMeta.textContent = frame.tag + ' · ' + fmtTime(frame.at) + ' · ' + sourceLabel(hit.from) + (frame.roleLook ? ' · ' + frame.roleLook : '');
+    answerMeta.textContent = frame.tag + ' · ' + fmtTime(frame.at) + ' · ' + sourceLabel(hit.from) + (frame.roleLook ? ' · ' + frame.roleLook : '') + (screenNote(frame) ? ' · ' + screenNote(frame) : '');
     copyBtn.hidden = false; $('readBtn').hidden = false;
     setStatus(running ? 'done' : 'idle', 'From memory for ' + frame.tag);
     if (isVerdictText(hit.text, frame.choice) || (splitAnswer(hit.text).role && S.roleAuto !== false)) showVerdictPanel();   // a remembered verdict or briefing: the panel, no feed
@@ -1823,14 +2222,15 @@
   // covers texts that belong to no storyline for the length of the session.
   const sigToB64 = (sig) => { let t = ''; for (let i = 0; i < sig.length; i++) t += String.fromCharCode(sig[i]); return btoa(t); };
   const sigCache = new Map();   // note id → fingerprint bytes
-  function noteSig(v) {
-    if (!v.sig) return null;
-    let u = sigCache.get(v.id);
-    if (!u) { try { const b = atob(v.sig); u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); } catch (e) { return null; } sigCache.set(v.id, u); }
+  function noteSig(v, which) {
+    const raw = which === 'dsig' ? v.dsig : v.sig, key = which === 'dsig' ? v.id + ':d' : v.id;
+    if (!raw) return null;
+    let u = sigCache.get(key);
+    if (!u) { try { const b = atob(raw); u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); } catch (e) { return null; } sigCache.set(key, u); }
     return u;
   }
   const normQ = (q) => (q || '').toLowerCase().replace(/[^\p{L}\p{N} ]/gu, '').replace(/\s+/g, ' ').trim();
-  function memoryHit(sig, question, isRole) {
+  function memoryHit(sig, question, isRole, docSig) {
     const q = normQ(question);
     let best = null;
     const pool = listening && story ? stories.concat([story]) : stories;
@@ -1841,7 +2241,7 @@
         if (!!v.scene !== !!isRole) continue;   // a role card's lines only for a role card, a description only for anything else
         if (!isRole && !v.rv && S.roleAuto !== false) continue;   // a note from before the role rule might be a card described: looked at afresh once, then remembered anew
         const vs = noteSig(v);
-        if (sig && vs) { if (!sameScene(sig, vs)) continue; }
+        if (sig && vs) { if (!sameScene(sig, vs) || docChanged({ docSig }, { docSig: noteSig(v, 'dsig') })) continue; }
         else if (sig || vs) continue;   // a picture on one side only
         if (!best || v.at > best.v.at) best = { v, st };
       }
@@ -1849,9 +2249,9 @@
     return best ? { text: best.v.text, from: best.st.driveId ? 'drive' : 'phone' } : null;
   }
   const nothingToRead = (text) => /^nothing to read\b/i.test(splitAnswer(text || '').head);
-  function recall(sig, question, isRole) {
-    let m = memoryHit(sig, question, isRole); if (m && nothingToRead(m.text)) m = null;
-    let c = !question ? cacheHit(sig, isRole) : null; if (c && nothingToRead(c.text)) c = null;
+  function recall(sig, question, isRole, docSig) {
+    let m = memoryHit(sig, question, isRole, docSig); if (m && nothingToRead(m.text)) m = null;
+    let c = !question ? cacheHit(sig, isRole, docSig) : null; if (c && nothingToRead(c.text)) c = null;
     if (m) return { text: m.text, from: m.from, readPos: (c && c.text === m.text) ? c.readPos : 0 };
     return c ? { text: c.text, from: 'phone', readPos: c.readPos } : null;
   }
@@ -1884,6 +2284,7 @@
       scene,   // a role card's lines: memory replays them only for a role card
     };
     if (scene) { roleLock = { kind: 'role', card: frame.role, frame, reqId: req.id, text: '', failed: false, seen: [] }; roleKept = null; }   // locked from the moment they are asked for
+    if (frame.tabs && roleLock && roleLock.kind === 'tabs' && roleLock.frame === frame) roleLock.reqId = req.id;
     active.push(req);
     current = req;
     hideBanner();
@@ -1900,9 +2301,16 @@
     // would otherwise keep the frames from being cached), then the current frame and the question.
     // A role card is read on its own: no earlier frames merged in (they would blend the patient card with the
     // doctor card and tip the model into describing the "document" instead of speaking one role).
-    const earlier = scene ? [] : docFramesFor(frame);
+    const earlier = scene || frame.tabs ? [] : docFramesFor(frame);   // a role card and a tabbed question are read with their own pictures only
     req.seenFrames = earlier.concat([frame]).filter((f) => f.sig);   // the pages this answer is made from (a writing task's lock keeps them)
     const content = [];
+    if (frame.tabs) {
+      const tb = frame.tabs;
+      content.push({ type: 'text', text: `SOURCE TABS — the question on the screen refers to a panel with ${tb.names.length} tabs (${tb.names.join('; ')}). Each tab as the user showed it:` });
+      tb.frames.forEach((tf) => content.push(...frameImages(tf, `Tab "${tf.tab}":`)));
+      for (let i = content.length - 1; i >= 0; i--) if (content[i].type === 'image') { content[i].cache_control = { type: 'ephemeral' }; break; }   // the bundle is the same bytes question after question: read from the cache
+      if (tb.missing.length) content.push({ type: 'text', text: 'Not shown (the user chose to go ahead without): ' + tb.missing.map((n) => '"' + n + '"').join(', ') + ' — answer from the tabs given and say in one line what those tabs might change.' });
+    }
     if (earlier.length) {
       content.push({ type: 'text', text: `EARLIER FRAMES — ${earlier.length} picture${earlier.length === 1 ? '' : 's'} the camera took in the last ${DOC_FRAMES_MINUTES} minutes, oldest first, each labelled. If the current frame continues what (some of) these show — the next page of the same document or instructions, a passage the current questions refer to, the same sketch or board — read them together as one and answer about the whole; a document that runs over several frames is one document, in this order. Pictures that have nothing to do with the current frame can be ignored.` });
       earlier.forEach((f, i) => {
@@ -1912,13 +2320,18 @@
     }
     const sys = buildSystem(prefer, scene);
     if (sys.tail) content.push({ type: 'text', text: sys.tail });
-    if (frame.b64) { content.push({ type: 'text', text: earlier.length ? `CURRENT FRAME (${frame.tag}), the one to answer:` : `The frame (${frame.tag}):` }); content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: frame.b64 } }); }
+    if (frame.b64) {
+      content.push(...frameImages(frame, frame.tabs ? `CURRENT FRAME (${frame.tag}) — the question, with tab "${frame.tab || tabsNameOf(frame)}" selected:` : earlier.length ? `CURRENT FRAME (${frame.tag}), the one to answer:` : `The frame (${frame.tag}):`));
+      if (frame.cutNote) content.push({ type: 'text', text: 'Note: the ' + frame.screen.cut.join(' and ') + ' edge of the screen may lie outside the photo; answer from what is visible and say in one line if something needed is missing.' });
+    }
     if (frame.question) {
       content.push({ type: 'text', text: 'Spoken question from the user: ' + frame.question + (frame.b64 ? '\n\nA frame from the camera is attached in case the question refers to it.' : '') });
     } else {
       content.push({ type: 'text', text: scene
         ? SCENE_PROMPT + '\n\nThis card was read as: ROLE ' + frame.role.role + (frame.role.setting ? ' — SETTING ' + frame.role.setting : '') + '. In the practice you will play the ' + frame.role.role + '; the user plays the other party.'
-        : (S.prompt || DEFAULT_PROMPT) + (frame.writeMore
+        : (S.prompt || DEFAULT_PROMPT) + (frame.tabs
+          ? '\n\nThe question beside the tabs refers to the SOURCE TABS above: use ALL of them. For each part of the question (each statement, blank or row) give its answer on the ANSWER line as the rules say, then the reasoning per part, citing the tab it rests on.'
+          : '') + (frame.writeMore
           ? '\n\nThe current frame is a further page (case notes or more instructions) of the WRITING TASK whose instructions are among the earlier frames (' + frame.write + '). Write the finished piece again in full now, from all the pages, as the rules say: "ANSWER: " title, "TASK: " name, a blank line, the piece.'
           : frame.write
           ? '\n\nThe current frame carries the instructions of a WRITING TASK (' + frame.write + '); the case notes it refers to are among the earlier frames. Write the finished piece now, as the rules say: "ANSWER: " title, "TASK: " name, a blank line, the piece.'
@@ -2030,7 +2443,7 @@
     sessionCost += req.cost;
     refreshReadouts();
     // a role card's lines: the lock holds them; if they never came, the same card in view asks again
-    if (req.scene && roleLock && roleLock.reqId === req.id) {
+    if ((req.scene || req.frame.tabs) && roleLock && roleLock.reqId === req.id) {
       const ok = !req.error && req.text && !/^nothing to read\b/i.test(splitAnswer(req.text).head);
       if (ok) roleLock.text = req.text; else roleLock.failed = true;
     }
@@ -2070,7 +2483,7 @@
     failStreak = 0;
     const a = splitAnswer(req.text || '');
     const nothing = !req.frame.question && /^nothing to read\b/i.test(a.head);   // never remembered: it is not an answer
-    if (req.text && !nothing) { try { cacheStore(req.frame.sig || lastSig, req.text, req.scene); } catch (e) {} }
+    if (req.text && !nothing) { try { cacheStore(req.frame.sig || lastSig, req.text, req.scene, req.frame.docSig); } catch (e) {} }
     if (req.text && !nothing && S.useStories) recordVisual(req);   // every answer is kept with its storyline, photo or not
     if (req === current) {
       if (!req.frame.question && /^nothing to read\b/i.test(a.head) && lastGoodText) {
@@ -2098,6 +2511,7 @@
     const inAll = req.inTok + (req.cacheW || 0) + (req.cacheR || 0);
     const bits = [req.frame.tag, fmtTime(req.frame.at), `${secs(took)}`, `${inAll}${req.cacheR ? ' (' + req.cacheR + ' cached)' : ''}→${req.outTok} tok`, `$${req.cost.toFixed(3)}`, sourceLabel(from)];
     if (req.frame.roleLook) bits.push(req.frame.roleLook);   // what the role-card look made of the picture
+    if (screenNote(req.frame)) bits.push(screenNote(req.frame));   // how the picture was taken: straightened, tiles, zoom
     answerMeta.textContent = bits.join(' · ');
     answerBody.innerHTML = renderAnswer(req.text || '(no text in the reply)', false, req.frame.choice);
     answerBody.classList.remove('stale');
@@ -2266,8 +2680,21 @@
   // the answer line matters less — "C Water treatment facility bond" or the bare option text is shown big all the same.
   function verdictOf(a, loose) {
     if (!a || !a.head || a.role || a.task) return null;
-    let h = a.head.replace(/[*_`]/g, '').trim();   // **B)** → B)
+    const h = a.head.replace(/[*_`]/g, '').trim();   // **B)** → B)
     if (/^nothing to read\b/i.test(h)) return null;
+    // several parts — "1: Yes | 2: No | 3: Yes", "first blank: 118 | second blank: 1" — each shown big, in order;
+    // a labelled part takes any wording (the option's text alone), an unlabelled one must be a verdict in itself
+    if (/\s\|\s/.test(h)) {
+      const parts = h.split(/\s*\|\s*/).map((p) => {
+        const m = /^([^:]{1,40}?)\s*:\s*(.+)$/.exec(p);
+        const one = verdictOne(m ? m[2].trim() : p, m ? true : loose);
+        return one ? { label: m ? m[1].trim() : '', key: one.key, rest: one.rest } : null;
+      });
+      if (parts.length >= 2 && parts.every(Boolean)) return { parts };
+    }
+    return verdictOne(h, loose);
+  }
+  function verdictOne(h, loose) {
     // B) …, C. …, (D) …, 3) …: the option mark, then a separator that is followed by a space or ends the line —
     // so "B-cell lymphoma" and "7.4" are not options; a bare letter ("C", "(C)") is one
     const opt = (s) => { const m = /^\(?([A-Ha-h]|\d{1,2})(?:\)|\s*[.:\-–—→])(?=\s|$)\s*(.*)$/.exec(s) || /^\(?([A-Ha-h])\)?$/.exec(s); return m ? { key: m[1].toUpperCase(), rest: (m[2] || '').trim() } : null; };
@@ -2289,13 +2716,17 @@
     return null;
   }
   const isVerdictText = (text, loose) => !!verdictOf(splitAnswer(text || ''), loose);
+  const partHtml = (p) => '<span class="verdict-part">' + (p.label ? '<span class="verdict-label">' + esc(p.label) + '</span>' : '') + (p.key ? '<span class="verdict-key">' + esc(p.key) + '</span>' : '') +
+    (p.rest ? '<span class="verdict-text" style="font-size:' + (p.key ? 22 : Math.max(26, Math.min(36, headlineSize(p.rest)))) + 'px">' + esc(p.rest) + '</span>' : '') + '</span>';
   function renderAnswer(text, streaming, choice) {
     const a = splitAnswer(text);
     const { head, body, story } = a;
     const cursor = streaming ? '<span class="cursor" aria-hidden="true"></span>' : '';
     if (!head) return md(text) + cursor;
     const v = verdictOf(a, choice);
-    const big = v
+    const big = v && v.parts
+      ? '<div class="big-answer verdict parts">' + v.parts.map(partHtml).join('') + (body || story ? '' : cursor) + '</div>'
+      : v
       ? '<div class="big-answer verdict">' + (v.key ? '<span class="verdict-key">' + esc(v.key) + '</span>' : '') + (v.rest ? '<span class="verdict-text" style="font-size:' + Math.max(v.key ? 30 : 40, headlineSize(v.rest)) + 'px">' + esc(v.rest) + '</span>' : '') + (body || story ? '' : cursor) + '</div>'
       : '<div class="big-answer" style="font-size:' + headlineSize(head) + 'px">' + esc(head) + (body || story ? '' : cursor) + '</div>';
     const tag = story ? '<div class="story-tag">Storyline · ' + esc(story) + '</div>' : '';
@@ -2371,6 +2802,8 @@
     $('saveKey').checked = !!S.saveKey;
     $('rotateText').checked = !!S.rotateText;
     $('uprightPhoto').checked = !!S.uprightPhoto;
+    $('screenRead').checked = S.screenRead !== false;
+    $('autoZoom').checked = S.autoZoom !== false;
     $('driveHelper').value = S.driveHelper || '';
     $('sttLang').value = S.sttLang || '';
     $('sttTerms').value = S.sttTerms || '';
@@ -2428,6 +2861,8 @@
     S.saveKey = $('saveKey').checked;
     S.rotateText = $('rotateText').checked;
     S.uprightPhoto = $('uprightPhoto').checked;
+    S.screenRead = $('screenRead').checked;
+    S.autoZoom = $('autoZoom').checked;
     S.driveHelper = $('driveHelper').value.trim().replace(/\/+$/, '');
     S.sttLang = $('sttLang').value;
     S.sttTerms = $('sttTerms').value.trim();
@@ -3060,6 +3495,7 @@
     if (!rest) return { kind: 'await' };
     if (/^(?:i'?m\s+|i\s+am\s+)?ready\b/.test(low) || /^(?:start|begin)\s+(?:the\s+)?role\s*-?\s*play\b/.test(low)) return { kind: 'ready' };
     if (/^(?:end|stop|finish|quit)\s+(?:the\s+)?role\s*-?\s*play\b/.test(low)) return { kind: 'endplay' };
+    if (/^(?:answer(?:\s+(?:now|it|anyway))?|go\s+ahead|just\s+answer)$/.test(low)) return { kind: 'answer' };
     if (/^(?:start\s+(?:a\s+)?)?(?:new|next|another|fresh)\s+(?:storyline|story\s*line|chapter|story|session|recording)\b/.test(low)) return { kind: 'new' };
     if (/^(?:stop|end|finish|close)\b(?:\s+(?:the\s+)?(?:recording|listening|session|storyline|everything))?$/.test(low) || /^(?:that'?s\s+all|i'?m\s+done|we'?re\s+done)\b/.test(low)) return { kind: 'stop' };
     if (/^(?:take|snap|grab)\s+(?:a\s+)?(?:picture|photo|frame|shot|snapshot)\b/.test(low) || /^(?:look\s+at|read|check|see)\s+(?:this|that|the\s+note|my\s+notes?|the\s+page|the\s+sketch)\b/.test(low)) return { kind: 'snap', text: rest };
@@ -3089,6 +3525,11 @@
     }
     if (cmd && cmd.kind === 'ready') { if (roleLock && roleLock.kind === 'role' && roleLock.text) startConvo(); else showBanner('Show a role card first — then say "I\'m ready".', 'note'); return; }
     if (cmd && cmd.kind === 'endplay') return;
+    if (cmd && cmd.kind === 'answer') {   // a question over tabs, with tabs still to tap: answered with the tabs in hand
+      if (tabSet && tabSet.question && !tabSet.question.answered) tabsAnswer('voice');
+      else setStatus('armed', tabSet ? 'Nothing waiting — ' + tabsStatus() : 'Nothing waiting to be answered');
+      return;
+    }
     if (!cmd && awaitingQuestion && Date.now() - awaitingQuestion < 12000) { awaitingQuestion = 0; sendQuestion(text.trim().replace(/[.!?]+$/, '')); return; }
     if (!cmd) { story.finals.push({ t: Math.round((Date.now() - story.startedAt) / 1000), text }); saveDraft(); return; }
     awaitingQuestion = 0;
@@ -3165,6 +3606,7 @@
     const n = roleMaterial.length;
     if (n && roleMorePending) return ` · more of the task collected (${n} page${n === 1 ? '' : 's'}) — written again shortly`;
     if (n) return ` · case notes collected (${n} page${n === 1 ? '' : 's'}) — show the writing task page`;
+    if (tabSet && tabSet.names.some((t) => !tabSet.frames[t]) && (!roleLock || roleLock.kind === 'tabs')) return ' · ' + tabsStatus().replace(/^Tabs: /, 'tabs: ');
     if (roleLock) return ' · keeping ' + lockName();
     return '';
   }
@@ -3286,7 +3728,7 @@
     if (!target) return;
     const note = { id: 'vf_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), at: req.frame.at.getTime(), tag: req.frame.tag, question: req.frame.question || '',
       caption: (head || '').slice(0, 200) + (body ? ' — ' + body.replace(/\s+/g, ' ').slice(0, 300) : ''),
-      sig: req.frame.sig ? sigToB64(req.frame.sig) : '', text: (req.text || '').slice(0, 6000) };   // the memory: picture fingerprint + the whole text
+      sig: req.frame.sig ? sigToB64(req.frame.sig) : '', dsig: req.frame.docSig ? sigToB64(req.frame.docSig) : '', text: (req.text || '').slice(0, 6000) };   // the memory: picture fingerprints + the whole text
     note.rv = 1;   // answered with the role-card rule in force (see memoryHit)
     if (req.scene) note.scene = true;   // a role card's lines: replayed from memory only for a role card
     target.visuals = (target.visuals || []).concat([note]);
@@ -3534,11 +3976,11 @@
     roleLock = null; roleRelook = null; clearMaterial();   // an explicit spoken question: its answer shows, the locked text is let go
     const frame = { no: askNo, tag: 'Q-' + String(askNo).padStart(3, '0'), at: new Date(), thumb: MIC_THUMB, question: q, b64: null };
     if ((withFrame || S.askWithFrame) && stream && video.videoWidth) {
-      try { const f = captureFrame(); frame.b64 = f.b64; frame.thumb = f.thumb; frame.sig = f.sig; if (S.skipStill !== false && f.sig) lastSig = f.sig; } catch (e) { /* no frame, text only */ }
+      try { const f = captureFrame(); frame.b64 = f.b64; frame.tiles = f.tiles; frame.screen = f.screen; frame.thumb = f.thumb; frame.sig = f.sig; frame.docSig = f.docSig; if (S.skipStill !== false && f.sig) lastSig = f.sig; } catch (e) { /* no frame, text only */ }
     }
     showingTranscript = false;
     setPanel(true);
-    const hit = recall(frame.sig || null, q);   // the same question about the same picture (or none) was answered before
+    const hit = recall(frame.sig || null, q, false, frame.docSig);   // the same question about the same picture (or none) was answered before
     if (hit) { showRecalled(frame, hit); return; }
     send(frame);
   }

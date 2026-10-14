@@ -115,8 +115,9 @@ const sse = (text) => {
   assert(prevFrozen.every((t, i) => nowFrozen[i] === t), 'frozen chunks of the previous request are a byte-identical prefix of this one');
   // retry: after two 529s there must have been more requests than the failures
   assert(bodies.length > nReq + 2, 'frames were sent again after the failures (' + (bodies.length - nReq) + ' more requests)');
-  // while the dictation ran (first 5 s) and for quietSec after, no camera text was generated
-  const during = at.filter((t) => t > 800 && t < 8500).length;
+  // while the dictation ran (first 5 s) and for quietSec after, no camera text was generated (the start frame goes
+  // out before the first word is heard — within the first second and a half, with the screen finder's work)
+  const during = at.filter((t) => t > 1500 && t < 8500).length;
   assert(during === 0, 'no camera request while speaking or in the quiet spell after (' + during + ' in that window; requests at ' + at.map((t) => Math.round(t / 100) / 10).join(', ') + ' s)');
   assert(at.filter((t) => t >= 8500).length >= 2, 'camera requests resumed after the quiet spell');
   console.log(process.exitCode ? 'E2E FAILED' : 'E2E PASSED');

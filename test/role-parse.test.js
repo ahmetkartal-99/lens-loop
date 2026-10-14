@@ -2,7 +2,7 @@
 // the quick look's answer must be read however a model writes it. Run: node test/role-parse.test.js
 const fs = require('fs');
 const html = fs.readFileSync(require('path').join(__dirname, '..', 'index.html'), 'utf8');
-const a = html.indexOf('  function parseRoleLook('), b = html.indexOf('  // The decision for a new picture once the quick look is back.');
+const a = html.indexOf('  function parseRoleLook('), b = html.indexOf('  // The decision for a new picture once the quick look is back.');   // takes tabsOf with it
 if (a < 0 || b < 0) throw new Error('could not locate parseRoleLook');
 const parseRoleLook = new Function(html.slice(a, b) + '; return parseRoleLook;')();
 const cases = [
@@ -51,11 +51,18 @@ const cases = [
   ['CHOICE', true, 'choice'],
   ['**CHOICE** — a multiple-choice question.', true, 'choice'],
   ['{"choice": true}', false, 'choice'],
+  // a question over tabbed sources: the tab names, the selected one, the question's first words
+  ['TABS | Mall Information; Building Plan; Companies | Building Plan | For each of the following situations, select Yes', false, 'tabs Mall Information;Building Plan;Companies @Building Plan ?For each of the following situations, select Yes'],
+  ['**TABS** | Email 1; Email 2; Email 3 | Email 1 | none', false, 'tabs Email 1;Email 2;Email 3 @Email 1 ?'],
+  ['TABS | Article, Table, Graph | table | Which of the following', true, 'tabs Article;Table;Graph @Table ?Which of the following'],
+  ['TABS | Mall Information; Building Plan; Companies | Companies | no question', true, 'tabs Mall Information;Building Plan;Companies @Companies ?'],
+  ['{"tabs": ["Mall Information", "Building Plan", "Companies"], "active": "Companies", "question": "For each of the following"}', false, 'tabs Mall Information;Building Plan;Companies @Companies ?For each of the following'],
+  ['TABS | Only One Tab | Only One Tab | q', false, 'none'],   // two tabs at least
 ];
 let bad = 0;
 for (const [t, paired, want] of cases) {
   const r = parseRoleLook(t, paired);
-  const got = r.card ? 'card ' + r.card.role : r.write ? 'write ' + r.write : r.notes ? 'notes ' + r.notes : r.choice ? 'choice' : r.same ? 'same' : r.more ? 'more' : r.newTask ? 'newTask ' + r.newTask : r.other ? 'other' : 'none';
+  const got = r.tabs ? 'tabs ' + r.tabs.names.join(';') + ' @' + r.tabs.active + ' ?' + r.tabs.question : r.card ? 'card ' + r.card.role : r.write ? 'write ' + r.write : r.notes ? 'notes ' + r.notes : r.choice ? 'choice' : r.same ? 'same' : r.more ? 'more' : r.newTask ? 'newTask ' + r.newTask : r.other ? 'other' : 'none';
   if (got !== want) { bad++; console.error('FAIL:', JSON.stringify(t), '->', got, '(wanted', want + ')'); } else console.log('ok:', JSON.stringify(t).slice(0, 70), '->', got);
 }
 const full = parseRoleLook('CARD | Patient | Medical ward in a hospital | Explain that you are very worried', false).card;

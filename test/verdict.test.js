@@ -59,5 +59,17 @@ const loose = [
 ];
 for (const [t, key, rest] of loose) { const r = vl(t); assert(r && r.key === key && r.rest === rest, 'loose: ' + JSON.stringify(t.split('\n')[0]) + ' -> ' + JSON.stringify(r)); }
 assert(!vl('ANSWER: Worried about going home\nROLE: Patient\n\nDoctor…'), 'loose: never role lines');
+
+// several parts: each shown big in order — labelled parts take any wording, unlabelled ones must be verdicts themselves
+const parts = (text, loose) => { const r = verdictOf(splitAnswer(text), loose); return r && r.parts ? r.parts.map((p) => [p.label, p.key, p.rest].join('/')) : null; };
+assert(JSON.stringify(parts('ANSWER: 1: Yes | 2: No | 3: Yes\n\nJeans for All…')) === JSON.stringify(['1/Yes/', '2/No/', '3/Yes/']), 'parts: three Yes/No statements');
+assert(JSON.stringify(parts('ANSWER: first blank: 118 | second blank: 1')) === JSON.stringify(['first blank/118/', 'second blank/1/']), 'parts: two blanks with values');
+assert(JSON.stringify(parts('ANSWER: Statement 1: True | Statement 2: False')) === JSON.stringify(['Statement 1/True/', 'Statement 2/False/']), 'parts: true/false');
+assert(JSON.stringify(parts('ANSWER: Column A: Jeans for All | Column B: Tax Guys')) === JSON.stringify(['Column A//Jeans for All', 'Column B//Tax Guys']), 'parts: a two-part table, the choices as text');
+assert(JSON.stringify(parts('ANSWER: 1: B) 121 | 2: D) 27')) === JSON.stringify(['1/B/121', '2/D/27']), 'parts: lettered options per part');
+assert(JSON.stringify(parts('ANSWER: Yes | No | Yes', true)) === JSON.stringify(['/Yes/', '/No/', '/Yes/']), 'parts: bare Yes/No parts');
+assert(parts('ANSWER: Pros | Cons\n\nA title with a bar in it.') === null && !v('ANSWER: Pros | Cons\n\n…'), 'not parts: a title with a bar, unlabelled plain words');
+assert(parts('ANSWER: Mall Information | Building Plan') === null, 'not parts: tab names are not verdicts');
+assert(JSON.stringify(parts('ANSWER: **1: Yes** | **2: No**')) === JSON.stringify(['1/Yes/', '2/No/']), 'parts: bold stripped');
 assert(!vl('ANSWER: nothing to read\n\nAn empty desk.'), 'loose: never "nothing to read"');
 console.log(process.exitCode ? 'VERDICT FAILED' : 'ALL TESTS PASSED');
