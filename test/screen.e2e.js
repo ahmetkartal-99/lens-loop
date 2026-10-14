@@ -45,13 +45,13 @@ function jpegSize(b64) {
   const ctx = await browser.newContext({ viewport: { width: 420, height: 860 } });
   const page = await ctx.newPage();
   const errors = []; page.on('pageerror', (e) => errors.push(String(e)));
-  await ctx.addInitScript(() => {
+  const initCamera = () => {
     localStorage.setItem('lensloop.settings', JSON.stringify({ v: 3, interval: 5, saveKey: true, saveAudio: false, key: 'sk-ant-test-0000', quietSec: 2, sttEngine: 'phone' }));
     class HushSR { start() {} stop() { this.onend && this.onend(); } abort() { this.stop(); } }
     window.webkitSpeechRecognition = HushSR; window.SpeechRecognition = HushSR;
     // the camera: a dark desk with a bright screen drawn as a quadrilateral, scaled about the frame's centre by the
     // zoom the page asks for (and by a half on the "ultra wide" lens), with dark lines of "text" inside it
-    window.__scene = 'desk'; window.__zoom = 1; window.__device = 'main'; window.__zoomCalls = [];
+    window.__scene = 'desk'; window.__zoom = 1; window.__device = 'main'; window.__zoomCalls = []; window.__zoomStuck = localStorage.getItem('zoomStuck') === '1';
     const W = 2560, H = 1440;
     const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
     const QUADS = {
@@ -84,20 +84,22 @@ function jpegSize(b64) {
           const t = t0.clone();
           t.getCapabilities = () => ({ zoom: { min: 1, max: 5, step: 0.1 }, deviceId: window.__device });
           t.getSettings = () => ({ zoom: window.__zoom, deviceId: window.__device, width: 2560, height: 1440 });
-          t.applyConstraints = async (cc) => { const z = (cc.advanced && cc.advanced[0] && cc.advanced[0].zoom) || cc.zoom; if (typeof z === 'number') { window.__zoom = z; window.__zoomCalls.push(Math.round(z * 100) / 100); } };
+          t.applyConstraints = async (cc) => { const z = (cc.advanced && cc.advanced[0] && cc.advanced[0].zoom) || cc.zoom; if (typeof z === 'number') { window.__zoomCalls.push(Math.round(z * 100) / 100); if (!window.__zoomStuck) window.__zoom = z; } };   // a stuck lens: the call is accepted, nothing moves
           tracks.push(t);
         }
       }
       if (c && c.audio) { const ac = new AudioContext(); tracks.push(...ac.createMediaStreamDestination().stream.getAudioTracks()); }
       return new MediaStream(tracks);
     };
-  });
-  let scene = 'desk';
+  };
+  await ctx.addInitScript(initCamera);
+  let scene = 'desk', looks = 0;
   const main = [];
   const fulfil = (route, opts) => route.fulfill(opts).catch(() => {});
   await page.route('https://api.anthropic.com/v1/messages', async (route) => {
     const body = JSON.parse(route.request().postData());
     if (/haiku/.test(body.model)) {
+      looks++;
       const ut = textOf(body.messages[0].content);
       const answer = /SAME or DIFFERENT/.test(ut) ? 'DIFFERENT' : scene === 'desk' ? 'NONE' : 'CHOICE';
       return fulfil(route, { status: 200, contentType: 'application/json', body: JSON.stringify({ content: [{ type: 'text', text: answer }], usage: { input_tokens: 1500, output_tokens: 20 } }) });
@@ -138,6 +140,19 @@ function jpegSize(b64) {
   let im = imagesOf(main[1].body);
   assert(im[0] && Math.abs(im[0].w / im[0].h - 1.5) < 0.06 && im[0].w >= 1400 && im[0].w <= 1568, '1. the picture is the screen itself — 3:2, at the pixels the sensor has (' + JSON.stringify(im[0]) + ')');
   assert(/screen (straightened|cropped) · 2×/.test(await meta()), '1. the meta line says how the picture was taken (' + await meta() + ')');
+  // the lens moved for this answer: that must not leave the "same picture" skip switched off — a still screen costs
+  // no further look and no further answer over the next ticks
+  const looks1 = looks, main1 = main.length;
+  await page.waitForTimeout(11000);
+  assert(looks === looks1 && main.length === main1, '1. the same screen, still, over the next 11 s: no quick look, no answer (' + (looks - looks1) + ' looks, ' + (main.length - main1) + ' answers)');
+  // back to the desk: after a few captures with nothing screen-like the lens returns to 1× — and that move, whose
+  // capture ends in a memory hit (the desk was answered before), must not leave the skip off either
+  await go('desk');
+  await page.waitForTimeout(24000);   // two captures with nothing screen-like (10 s apart), then the move
+  assert((await zoomCalls()).slice(-1)[0] === 1, '1b. the desk: the lens went back to 1× (' + (await zoomCalls()).join() + ')');
+  assert(main.filter((m) => m.scene === 'desk').length === 1, '1b. the desk is answered from memory, not again (' + main.map((m) => m.scene).join() + ')');
+  const d1b = imagesOf(main[0].body);
+  assert(d1b.length === 1, '1b. a desk goes as one picture, no closer tiles (' + d1b.length + ' images)');
 
   // 2. the screen seen from the side, most of the frame: straightened and sent with closer tiles; the zoom goes back
   await go('angled');
@@ -166,6 +181,72 @@ function jpegSize(b64) {
 
   assert(errors.length === 0, 'no page errors' + (errors.length ? ': ' + errors.join(' | ') : ''));
   console.log('zoom calls:', (await zoomCalls()).join(', '));
-  await browser.close(); server.close();
+  await browser.close();
+
+  // 4. a lens that reports a zoom range but ignores every zoom change (seen on some phones): the small screen must
+  // still be answered — after two moves that moved nothing the auto-zoom gives up for the session — not waited on
+  // for ever with "Zooming in on the screen"
+  const b4 = await chromium.launch();
+  const ctx4 = await b4.newContext({ viewport: { width: 420, height: 860 } });
+  await ctx4.addInitScript(() => { localStorage.setItem('zoomStuck', '1'); });
+  await ctx4.addInitScript(initCamera);
+  const p4 = await ctx4.newPage();
+  const errors4 = []; p4.on('pageerror', (e) => errors4.push(String(e)));
+  scene = 'small';
+  const main4 = [];
+  await p4.route('https://api.anthropic.com/v1/messages', async (route) => {
+    const body = JSON.parse(route.request().postData());
+    if (/haiku/.test(body.model)) return fulfil(route, { status: 200, contentType: 'application/json', body: JSON.stringify({ content: [{ type: 'text', text: 'CHOICE' }], usage: { input_tokens: 1500, output_tokens: 20 } }) });
+    main4.push({ at: Date.now(), zoom: await p4.evaluate(() => window.__zoom), body });
+    return fulfil(route, { status: 200, contentType: 'text/event-stream', body: sse('ANSWER: B) 42\n\nFrom the second line.') });
+  });
+  await p4.goto(`http://127.0.0.1:${port}/index.html#key=sk-ant-test-0000`);
+  await p4.evaluate(() => { window.__scene = 'small'; });
+  await p4.waitForTimeout(800);
+  await p4.click('#startBtn');
+  await p4.waitForTimeout(16000);
+  const zc4 = await p4.evaluate(() => window.__zoomCalls.slice());
+  assert(zc4.length >= 2 && zc4.length <= 4, '4. a stuck lens: a move or two tried, then left alone (' + zc4.join() + ')');
+  assert(main4.length >= 1 && main4[0].zoom === 1, '4. the small screen was answered all the same, at the zoom the camera has (' + main4.length + ' answers)');
+  const im4 = main4.length ? imagesOf(main4[0].body)[0] : null;
+  assert(im4 && Math.abs(im4.w / im4.h - 1.5) < 0.08 && im4.w < 1000, '4. … as the straightened screen, small as the camera has it (' + JSON.stringify(im4) + ')');
+  assert(errors4.length === 0, '4. no page errors' + (errors4.length ? ': ' + errors4.join(' | ') : ''));
+  await b4.close();
+
+  // 5. a zoom move must not switch the "same picture" skip off for good. A role card on the screen: its briefing is
+  // locked; the desk then brings the lens back to 1×, and that capture ends in "keeping the briefing" — no request.
+  // From then on the still desk must cost nothing: no quick look on any later tick.
+  const b5 = await chromium.launch();
+  const ctx5 = await b5.newContext({ viewport: { width: 420, height: 860 } });
+  await ctx5.addInitScript(initCamera);
+  const p5 = await ctx5.newPage();
+  const errors5 = []; p5.on('pageerror', (e) => errors5.push(String(e)));
+  let scene5 = 'small', looks5 = 0; const main5 = [];
+  await p5.route('https://api.anthropic.com/v1/messages', async (route) => {
+    const body = JSON.parse(route.request().postData());
+    if (/haiku/.test(body.model)) {
+      looks5++;
+      const ut = textOf(body.messages[0].content);
+      const answer = /SAME or DIFFERENT/.test(ut) ? 'DIFFERENT' : scene5 === 'small' ? (/Answer about the SECOND photo/.test(ut) ? 'SAME' : 'CARD | Patient | Medical ward in a hospital | Explain that you are very worried about going home') : 'NONE';
+      return fulfil(route, { status: 200, contentType: 'application/json', body: JSON.stringify({ content: [{ type: 'text', text: answer }], usage: { input_tokens: 1500, output_tokens: 20 } }) });
+    }
+    main5.push({ scene: scene5, zoom: await p5.evaluate(() => window.__zoom) });
+    return fulfil(route, { status: 200, contentType: 'text/event-stream', body: sse('ANSWER: Worried about going home\nROLE: Patient\n\n**Setting:** Medical ward.\n**Your role:** the doctor.\n**Background:** Admitted with pneumonia.\n**Tasks:**\n- Explain that you are worried\n- Ask what to look out for\n\n*Say "I\'m ready" to begin — I will be the Patient.*') });
+  });
+  await p5.goto(`http://127.0.0.1:${port}/index.html#key=sk-ant-test-0000`);
+  await p5.evaluate(() => { window.__scene = 'small'; });
+  await p5.waitForTimeout(800);
+  await p5.click('#startBtn');
+  await p5.waitForTimeout(9000);
+  assert(main5.length === 1 && main5[0].zoom === 2 && /I will be the Patient/.test(await p5.evaluate(() => document.getElementById('answerBody').textContent)), '5. the role card on the screen: zoomed in on, its briefing locked (' + JSON.stringify(main5) + ')');
+  scene5 = 'desk'; await p5.evaluate(() => { window.__scene = 'desk'; });
+  await p5.waitForTimeout(26000);   // two screen-less captures, the move back to 1×, the capture after it ("keeping the briefing")
+  assert((await p5.evaluate(() => window.__zoomCalls.slice(-1)[0])) === 1, '5. the desk: the lens went back to 1× (' + (await p5.evaluate(() => window.__zoomCalls.join())) + ')');
+  assert(/I will be the Patient/.test(await p5.evaluate(() => document.getElementById('answerBody').textContent)), '5. the briefing is still on screen');
+  const looks5b = looks5, main5b = main5.length;
+  await p5.waitForTimeout(21000);
+  assert(looks5 === looks5b && main5.length === main5b, '5. the still desk over the next 21 s: no quick look, no request (' + (looks5 - looks5b) + ' looks, ' + (main5.length - main5b) + ' requests)');
+  assert(errors5.length === 0, '5. no page errors' + (errors5.length ? ': ' + errors5.join(' | ') : ''));
+  await b5.close(); server.close();
   console.log(process.exitCode ? 'SCREEN E2E FAILED' : 'SCREEN E2E PASSED');
 })().catch((e) => { console.error(e); process.exit(1); });

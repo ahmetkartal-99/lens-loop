@@ -871,7 +871,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-14 18:30';
+  const BUILD = '2026-10-14 19:20';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -1143,20 +1143,22 @@
   // and failing that a banner asks for the phone to be moved back — and back to the chosen zoom once nothing
   // screen-like has been in view for a while. Decided at once; the lens moves while the next capture is awaited.
   let zoomAdjustAt = 0, noScreenRuns = 0, wideTried = false, moveBackAt = 0, cutStreak = 0;
+  let zoomBumped = false;   // the lens just moved: the next capture is new whatever the fingerprints say (consumed by snap)
+  let zoomStuck = 0, zoomDead = false, mainDevice = null;   // a lens that ignores zoom changes is left alone for the session
   const baseZoom = () => !zoomCaps ? 1 : S.zoom === 'min' ? zoomCaps.min : clamp(+S.zoom || 1, zoomCaps.min, zoomCaps.max);
   function autoZoom(sc) {
-    if (S.autoZoom === false || !running || !stream) return false;
+    if (S.autoZoom === false || zoomDead || !running || !stream) return false;
     const now = Date.now(), cur = zoomNow();
     if (!sc || !sc.found) {
       noScreenRuns++;
-      if (zoomCaps && noScreenRuns >= 3 && Math.abs(cur - baseZoom()) > 0.05 && now - zoomAdjustAt > 2500) { zoomAdjustAt = now; applyZoom(baseZoom(), true).then(bumpSnap); }
+      if (zoomCaps && noScreenRuns >= 2 && Math.abs(cur - baseZoom()) > 0.05 && now - zoomAdjustAt > 2500) { zoomAdjustAt = now; zoomTo(baseZoom()); }
       return false;
     }
     noScreenRuns = 0;
     if (now - zoomAdjustAt < 2500) return true;   // the lens is still settling after a move: this capture is not the one to judge
     if (sc.cut.length) {
       // straight out to the widest (one move), then the edge-aware zoom-in above lands on the fit (one more at most)
-      if (zoomCaps && cur > zoomCaps.min + 0.05) { zoomAdjustAt = now; applyZoom(zoomCaps.min, true).then(bumpSnap); return true; }
+      if (zoomCaps && cur > zoomCaps.min + 0.05) { zoomAdjustAt = now; zoomTo(zoomCaps.min); return true; }
       if (!wideTried) { wideTried = true; zoomAdjustAt = now; wideLens().then((ok) => { if (!ok) moveBack(sc); }); return true; }
       moveBack(sc);
       return false;
@@ -1169,7 +1171,7 @@
       let factor = Math.min(2, 0.82 / fill);
       if (sc.boxFrac) { const [x0, y0, x1, y1] = sc.boxFrac; for (const off of [x1 - 0.5, 0.5 - x0, y1 - 0.5, 0.5 - y0]) if (off > 0.02) factor = Math.min(factor, 0.92 * 0.5 / off); }
       if (factor < 1.08) return false;   // already as close to the edge as it can be: this is the picture
-      zoomAdjustAt = now; applyZoom(Math.min(zoomCaps.max, cur * factor), true).then(bumpSnap); return true;
+      zoomAdjustAt = now; zoomTo(Math.min(zoomCaps.max, cur * factor)); return true;
     }
     return false;
   }
@@ -1179,13 +1181,24 @@
     showBanner('The screen is cut off on the ' + sc.cut.join(' and ') + ' — move the phone back a little, or turn it, so the whole screen is in view.', 'note');
   }
   // the lens has moved: the next capture is new whatever the fingerprints say, and comes soon
-  function bumpSnap() { lastSig = null; prevSig = null; retryFrame = true; setTimeout(() => { if (running && !active.length) snap('zoom'); }, 1300); }
+  function bumpSnap() { lastSig = null; prevSig = null; zoomBumped = true; setTimeout(() => { if (running && !active.length) snap('zoom'); }, 1300); }
+  // a zoom move for the auto-zoom: a lens that refuses or ignores two moves (a zoom range reported, nothing happens)
+  // is left alone from then on — the screen is answered as the camera shows it rather than waited on for ever
+  async function zoomTo(z) {
+    const before = zoomNow();
+    const ok = await applyZoom(z, true);
+    const moved = Math.abs(zoomNow() - before) > 0.01 || Math.abs(z - before) < 0.05;
+    if (!ok || !moved) { if (++zoomStuck >= 2 && !zoomDead) { zoomDead = true; setStatus('armed', 'This camera does not zoom — the picture is read as the camera shows it'); } }
+    else zoomStuck = 0;
+    bumpSnap();
+  }
   async function wideLens() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return false;
     let devices = []; try { devices = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput'); } catch (e) { return false; }
     const cur = stream && stream.getVideoTracks()[0]; let curId = ''; try { curId = (cur && cur.getSettings() || {}).deviceId || ''; } catch (e) {}
     const wide = devices.find((d) => /ultra\s*-?\s*wide|0[.,]5\s*x/i.test(d.label || '') && d.deviceId !== curId);
     if (!wide) return false;
+    if (mainDevice == null) mainDevice = S.deviceId || '';   // the chosen lens, back when the session ends
     S.deviceId = wide.deviceId;   // for this session; the saved choice stands next time
     try { await openCamera(false); setStatus('armed', 'Switched to the wide lens so the whole screen fits'); bumpSnap(); return true; } catch (e) { return false; }
   }
@@ -1278,13 +1291,13 @@
     const fill = polyArea > 0 ? bestArea / polyArea : 0;
     const cut = [];
     if (edge.left >= H * 0.2) cut.push('left'); if (edge.right >= H * 0.2) cut.push('right'); if (edge.top >= W * 0.2) cut.push('top'); if (edge.bottom >= W * 0.2) cut.push('bottom');
-    const b0 = boxes[bestK]; let ux0 = b0[0], uy0 = b0[1], ux1 = b0[2], uy1 = b0[3], scattered = false;
+    const b0 = boxes[bestK]; let ux0 = b0[0], uy0 = b0[1], ux1 = b0[2], uy1 = b0[3], scattered = false, otherMax = 0;
     for (let i = 0; i < areas.length; i++) {   // a lamp or a window at the frame's edge is not the screen being cut: only the largest region says that
       if (i === bestK || areas[i] < n * 0.01) continue;
-      scattered = true; const b = boxes[i];
+      scattered = true; otherMax = Math.max(otherMax, areas[i]); const b = boxes[i];
       if (b[0] < ux0) ux0 = b[0]; if (b[1] < uy0) uy0 = b[1]; if (b[2] > ux1) ux1 = b[2]; if (b[3] > uy1) uy1 = b[3];
     }
-    return { quad, fill, cut, coverage: bestArea / n, box: b0, union: [ux0, uy0, ux1, uy1], scattered, thr };
+    return { quad, fill, cut, coverage: bestArea / n, box: b0, union: [ux0, uy0, ux1, uy1], scattered, otherFrac: otherMax / bestArea, thr };
   }
   // The map from the straightened picture's unit square (u,v in 0..1, origin top-left) to the frame (x,y in the
   // same units): a projective transform fixed by the four corners TL, TR, BR, BL (Heckbert's square-to-quad).
@@ -1328,7 +1341,9 @@
     const sx = src.width / W, sy = src.height / H, m = 1.6;   // a margin of cells, so the screen's own edge is kept
     // a clean rectangle (turned or foreshortened) is straightened; bright content in several pieces, or a region that
     // is not a rectangle (a page with a dark figure in one corner), is cropped to the box around all of it instead
-    const straight = !q.scattered && q.fill >= 0.8 && q.fill <= 1.25;
+    // (other bright pieces matter only when they are of a size with the largest — the boxes of a dark-themed page;
+    // a lamp or a reflection a quarter of its size or less is simply left out of the picture)
+    const straight = q.fill >= 0.8 && q.fill <= 1.25 && (!q.scattered || q.otherFrac < 0.25);
     let quad;
     if (!straight) { const u = q.union; quad = [[u[0] - m, u[1] - m], [u[2] + 1 + m, u[1] - m], [u[2] + 1 + m, u[3] + 1 + m], [u[0] - m, u[3] + 1 + m]]; }
     else {
@@ -1419,7 +1434,7 @@
     tctx.drawImage(canvas, 0, 0, tw, th);
     const thumb = thumbCanvas.toDataURL('image/jpeg', 0.6);
     const tiles = [];
-    if (S.screenRead !== false) for (const t of tilePlan(src.width, src.height)) {
+    if (S.screenRead !== false && look) for (const t of tilePlan(src.width, src.height)) {   // closer tiles of a screen or page; a desk, a hand, a blur go as one picture
       const k = Math.min(1, S.imgSize / Math.max(t.w, t.h));
       tileCanvas.width = Math.round(t.w * k); tileCanvas.height = Math.round(t.h * k);
       tlctx.drawImage(src, t.x, t.y, t.w, t.h, 0, 0, tileCanvas.width, tileCanvas.height);
@@ -1430,7 +1445,7 @@
     // the picture's own fingerprint — of the straightened screen, which does not drift with the hand — finer than
     // the frame's: a question that changed while the page's layout stayed shows here and not in the frame's
     let docSig = null;
-    try { sigCanvas.width = 32; sigCanvas.height = 24; sctx.drawImage(canvas, 0, 0, 32, 24); const dd = sctx.getImageData(0, 0, 32, 24).data; docSig = new Uint8Array(32 * 24); for (let i = 0; i < docSig.length; i++) docSig[i] = (dd[i * 4] * 3 + dd[i * 4 + 1] * 6 + dd[i * 4 + 2]) / 10; } catch (e) {}
+    if (look && src !== rawCanvas) try { sigCanvas.width = 32; sigCanvas.height = 24; sctx.drawImage(canvas, 0, 0, 32, 24); const dd = sctx.getImageData(0, 0, 32, 24).data; docSig = new Uint8Array(32 * 24); for (let i = 0; i < docSig.length; i++) docSig[i] = (dd[i * 4] * 3 + dd[i * 4 + 1] * 6 + dd[i * 4 + 2]) / 10; } catch (e) {}
     // the left-hand part of the picture on its own (the sources panel of a tabbed question): a tab whose panel changed
     let leftSig = null;
     try { sigCanvas.width = 48; sigCanvas.height = 36; sctx.drawImage(canvas, 0, 0, Math.max(1, Math.round(cw * 0.55)), ch, 0, 0, 48, 36); const ld = sctx.getImageData(0, 0, 48, 36).data; leftSig = new Uint8Array(48 * 36); for (let i = 0; i < leftSig.length; i++) leftSig[i] = (ld[i * 4] * 3 + ld[i * 4 + 1] * 6 + ld[i * 4 + 2]) / 10; } catch (e) {}
@@ -1525,6 +1540,7 @@
     keepAwake();
     lastSig = null; prevSig = null;
     retryFrame = false; failStreak = 0;
+    zoomAdjustAt = 0; noScreenRuns = 0; wideTried = false; cutStreak = 0; zoomBumped = false; zoomStuck = 0; zoomDead = false;   // the auto-zoom starts afresh
     tick();
     clearInterval(watchTimer); watchTimer = setInterval(watchFrame, 500);
     camMutedSince = 0; camFailAt = 0; camFails = 0;
@@ -1542,6 +1558,7 @@
     heldByVoice = false;
     if (convoActive()) endConvo('session stopped');
     roleLock = null; roleRelook = null; clearMaterial(); tabSet = null;   // the session ends: no role lines, collected pages or tabs held over
+    if (mainDevice != null) { S.deviceId = mainDevice; mainDevice = null; }   // the wide lens was borrowed for a cut-off screen: the chosen lens is back
     if (listening) stopStory(true);   // the recording ends with the session and is saved
     stopCamera();
     if (!listening) releaseWake();
@@ -1638,7 +1655,8 @@
     const known = [reader.open ? shownFrame : null, nothingFrame, lastSentFrame, roleLock ? roleKept : null].concat(seen).filter((f) => f && f.sig);
     const loose = (f) => f === shownFrame || f === nothingFrame || f === roleKept || seen.includes(f);   // drift of these is still the same picture
     let ref = null;
-    if (source !== 'button' && S.skipStill !== false && !retryFrame && sig && known.length) {
+    const bumped = zoomBumped; zoomBumped = false;   // one capture after a zoom move is new whatever the fingerprints say
+    if (source !== 'button' && S.skipStill !== false && !retryFrame && !bumped && sig && known.length) {
       for (const f of known) {
         if ((sameScene(sig, f.sig) || (loose(f) && nearScene(sig, f.sig))) && !docChanged(frame, f)) {
           if (roleRelookDue(sig)) { roleRelookGo(frame, source); return; }   // a card caught out of focus a moment ago: one more look
@@ -1936,7 +1954,7 @@
       'and the case notes that go with one (PATIENT DETAILS, history, O/E, pathology, dated entries) — nor is a reading passage, a multiple-choice item or an exam question.';
     const taskLock = !!(lockedFrame && roleLock && roleLock.kind === 'task'), tabsLock = !!(lockedFrame && roleLock && roleLock.kind === 'tabs');
     // a question over tabbed sources (a multi-source reasoning item: the sources in tabs, the question beside them): every tab is needed
-    const tabsLine = 'TABS | <the tab names in order, separated by ;> | <the selected tab> | <the first eight words of the question beside or below the tabs, or none> — if it shows a panel with two or more TABS (labelled sections of source material such as "Mall Information; Building Plan; Companies", "Email 1; Email 2; Email 3", "Article; Table; Graph" — one selected, the others selectable)' +
+    const tabsLine = 'TABS | <the tab names in order, separated by ;> | <the selected tab> | <the question beside or below the tabs: its first eight words, then " / " and the first six words of its first statement, option, row or blank — or none> — if it shows a panel with two or more TABS (labelled sections of source material such as "Mall Information; Building Plan; Companies", "Email 1; Email 2; Email 3", "Article; Table; Graph" — one selected, the others selectable)' +
       (tabsLock ? ' with a DIFFERENT question than the first photo\'s, or a different set of tabs' : ', with or without a question beside it') + '; this comes before CHOICE';
     // the two halves of a writing task, which often span several pages: the material, and the instructions
     const notesLine = 'NOTES | <the patient or subject, a few words> — if it is a page of case notes or other material for a writing task (PATIENT DETAILS, social or medical history, medications, O/E, pathology results, dated clinical entries, a discharge plan) with no writing instructions on it';
@@ -2098,12 +2116,19 @@
   const TABS_MAX_AGE = 20 * 60 * 1000;
   const normName = (x) => String(x || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
   const tabKey = (names) => names.map(normName).join('|');
-  // the same question, as the quick look wrote its first words twice (a word or two may differ between looks)
+  // the same question, as the quick look wrote it twice (a word or two may differ between looks). The look gives
+  // the stem's first words and the first statement after " / ": items in a set often share the stem word for word
+  // ("For each of the following situations, select Yes…"), so when both looks give a statement, THAT must match too
   function sameQuestion(a, b) {
-    const A = new Set(normName(a).split(' ').filter((w) => w.length > 2)), B = new Set(normName(b).split(' ').filter((w) => w.length > 2));
-    if (!A.size || !B.size) return normName(a) === normName(b);
-    let n = 0; for (const w of A) if (B.has(w)) n++;
-    return n / Math.min(A.size, B.size) >= 0.6;
+    const share = (x, y) => {
+      const A = new Set(normName(x).split(' ').filter((w) => w.length > 2)), B = new Set(normName(y).split(' ').filter((w) => w.length > 2));
+      if (!A.size || !B.size) return normName(x) === normName(y) ? 1 : 0;
+      let n = 0; for (const w of A) if (B.has(w)) n++;
+      return n / Math.min(A.size, B.size);
+    };
+    const [sa, ta] = String(a || '').split(/\s+\/\s+/), [sb, tb] = String(b || '').split(/\s+\/\s+/);
+    if (ta && tb) return share(sa, sb) >= 0.6 && share(ta, tb) >= 0.6;
+    return share(a, b) >= 0.75;
   }
   const panelChanged = (a, b) => !!(a && b && a.leftSig && b.leftSig) && (sigDiff(a.leftSig, b.leftSig) > 25 || sigFrac(a.leftSig, b.leftSig) > 0.45);   // other contents under the same tab name: a new set
   const panelMoved = (a, b) => !!(a && b && a.leftSig && b.leftSig) && (sigDiff(a.leftSig, b.leftSig) > 8 || sigFrac(a.leftSig, b.leftSig) > 0.15);      // the same tab scrolled or shown better: worth keeping anew
@@ -2173,6 +2198,7 @@
   const apiSource = (text) => { const st = splitAnswer(text || '').story; return !st ? 'api' : /^current session/i.test(st) ? 'api-live' : 'api-story'; };
   // A text found in memory is shown exactly like a fresh one, with its source in the bracket.
   function showRecalled(frame, hit) {
+    if (frame.b64 && frame.sig) lastSentFrame = frame;   // the picture the text on screen is about: known, so the camera resting on it costs no further look
     if (reader.open && readerEl.classList.contains('feed') && lastGoodText === hit.text) return;   // already on screen
     if (!frame.tag) { frameNo += 1; frame.no = frameNo; frame.at = new Date(); frame.tag = fmtF(frameNo); frameCounter.textContent = frame.tag; }
     lastShot.src = frame.thumb; lastShot.hidden = false;

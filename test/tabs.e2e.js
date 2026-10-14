@@ -30,7 +30,8 @@ const sysText = (sys) => (Array.isArray(sys) ? sys.map((b) => b.text).join('\n')
 const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode = 1; } else console.log('ok:', m); };
 
 const TABS = ['Mall Information', 'Building Plan', 'Companies'];
-const Q1 = 'For each of the following situations, select Yes', Q2 = 'Which of the following stores could be';
+// the two questions share their stem word for word, as items in a set do; the quick look's " / " statement tells them apart
+const Q1 = 'For each of the following situations, select Yes / Jeans for All is purchased by The', Q2 = 'For each of the following situations, select Yes / Mini Sweet Treats moves into annex 2';
 // what the quick look says for each scene: the tab selected and the question in view
 const LOOK = {
   q1a: `TABS | Mall Information; Building Plan; Companies | Mall Information | ${Q1}`,

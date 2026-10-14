@@ -183,8 +183,13 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     tiles when it holds more pixels than one picture carries (`tilePlan`: `TILE_MIN` 1900, `TILE_SIDE` 1500, 6 %
     overlap; `frameImages` labels them "The same picture in N closer tiles…"), so small print is read at the pixels
     the camera has. The frame also carries `docSig` (the straightened picture's own fingerprint, stricter than the
-    hand-drifting frame's: `docChanged`, so a changed question in an unchanged layout is caught) and `leftSig` (the
-    left 55 %: a tab's panel, see 15). `screenNote` puts "screen straightened · 2 tiles · 1.8×" / "screen cut off on
+    hand-drifting frame's: `docChanged`, so a changed question in an unchanged layout is caught — made ONLY when a
+    screen was found and straightened/cropped, since on a raw hand-held frame it would defeat the drift tolerance)
+    and `leftSig` (the left 55 %: a tab's panel, see 15; always made). Closer tiles are made only when a screen or
+    page was found: a desk, a hand, a blur go as one picture. Other bright pieces (`scattered`, `otherFrac`) stop
+    the straightening only when they are of a size with the largest (≥ 25 %: the boxes of a dark-themed page →
+    the union crop); a lamp or reflection is simply left out. A picture answered FROM MEMORY becomes a known
+    picture too (`showRecalled` sets `lastSentFrame`), so the camera resting on it costs no further look. `screenNote` puts "screen straightened · 2 tiles · 1.8×" / "screen cut off on
     the right" on the meta line. `S.screenRead` (default on) switches it. `test/screen.test.js` fixes the geometry.
 14a. **Auto-zoom** (`autoZoom`, after every capture, `S.autoZoom` default on, `zoomCaps` from the track): a screen
     filling < 55 % of the frame is zoomed IN on first and that capture dropped ("Zooming in on the screen"), the
@@ -195,9 +200,18 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     ULTRA-WIDE lens is switched to when the phone has one (`wideLens`, by label), then a banner asks to move the
     phone back (`moveBack`, once per 20 s); only after three judged captures with nothing left to try does a cut
     frame go as it is, the model told (`frame.cutNote`). Captures while the lens settles (2.5 s after a move) are
-    "adjusting", never judged. After three captures with nothing screen-like the lens returns to the chosen zoom
-    (`baseZoom`); the camera setup leaves a lens already at the wanted zoom alone. `test/screen.e2e.js` runs the
-    whole thing against a 2560×1440 canvas camera whose tracks report a zoom range and an ultra-wide device.
+    "adjusting", never judged. After two captures with nothing screen-like the lens returns to the chosen zoom
+    (`baseZoom`); the camera setup leaves a lens already at the wanted zoom alone. Every auto move goes through
+    `zoomTo`: a lens that refuses or ignores two moves (a zoom range reported, nothing happens — seen on some
+    phones) sets `zoomDead` and the auto-zoom stands down for the session with a status line, so the screen is
+    answered as the camera has it rather than waited on for ever. A move makes exactly ONE capture new
+    (`zoomBumped`, consumed by `snap`) — never the retry flag, which would switch the "same picture" skip off until
+    the next request and cost a quick look every tick on a still, locked picture. The lens borrowed by `wideLens`
+    is given back at Stop (`mainDevice`); `start` resets the auto-zoom state. `test/screen.e2e.js` runs the whole
+    thing against a 2560×1440 canvas camera whose tracks report a zoom range and an ultra-wide device: parts 1–3
+    the zoom in / out / wide lens, 1b the return to 1× and a desk answered from memory as one picture, 4 a stuck
+    lens, 5 a role card locked and the desk still costing nothing after a move (a mutation check showed the old
+    flag fails it).
 14b. **A capture every 10 s at all times** (`INTERVAL` = 10, applied on every open like the model and the effort;
     the Settings field is read-only and says so) — a change in the picture still brings one sooner.
 15. **A question over tabbed sources** (the author's spec: the sources in tabs — "Mall Information / Building Plan /
@@ -217,8 +231,12 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     `frame.choice` (shown big in the panel — several parts "1: Yes | 2: No | 3: Yes" each big, in order:
     `verdictOne`/`verdictOf` parts), locked as `roleLock.kind === 'tabs'` (the desk, the same question, another of
     its tabs change nothing; the paired look's SAME/OTHER/TABS verdicts decide). A further question beside the SAME
-    tabs (`sameQuestion` on the first words, ≥ 60 % of the words shared = the same) is answered AT ONCE with the
-    tabs in hand — the bundle byte-identical, so the prompt cache serves it. "Lens, answer" (`parseCommand` kind
+    tabs is answered AT ONCE with the tabs in hand — the bundle byte-identical, so the prompt cache serves it.
+    **Items in a set open with the same stem word for word** ("For each of the following situations, select Yes…"),
+    so the quick look gives the question as its first eight words, then " / " and the first six words of its first
+    statement/option/row, and `sameQuestion` requires BOTH halves to match (≥ 60 % of the words each) when both
+    looks gave a statement, ≥ 75 % of the first words otherwise — `test/tabs.test.js` fixes this and the TABS
+    verdict's forms. "Lens, answer" (`parseCommand` kind
     `answer`) answers with the tabs in hand, the request naming the tab not shown. `test/tabs.e2e.js` runs desk →
     tab 1 + question → tab 2 → tab 3 (one request) → desk (kept) → question 2 (at once, same bytes) → a new set →
     "Lens, answer".
@@ -267,8 +285,10 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
 - `node --check` on the script body, then `node test/live-prompt.test.js` (prompt assembly, no browser) and
   `node test/role-parse.test.js` (the role-card verdict read however a model writes it), `node test/verdict.test.js`
   (which answers are shown big in the panel, which go to the feed), `node test/convo.test.js` (the live role
-  play's rules, who plays whom, the clock, "I'm ready" / "Lens, next") and `node test/screen.test.js` (the screen
-  finder's geometry: corners however the screen is turned, cut edges, scattered pieces, the homography, the tiles).
+  play's rules, who plays whom, the clock, "I'm ready" / "Lens, next"), `node test/screen.test.js` (the screen
+  finder's geometry: corners however the screen is turned, cut edges, scattered pieces, a lamp vs boxes of a size,
+  two shades of desk, the homography, the tiles) and `node test/tabs.test.js` (the TABS verdict in every form, the
+  selected tab, the same question vs another with the same stem).
 - `node test/session.e2e.js`, `node test/drive-renewal.e2e.js`, `node test/fresh-build.e2e.js`,
   `node test/memory-voice.e2e.js`, `node test/drive-helper.e2e.js`, `node test/drive-expired-open.e2e.js` (the app
   opened hours later: a silent renewal, retries on a backoff, a dead token in Google's real shape, and the banner only

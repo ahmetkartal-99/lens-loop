@@ -67,6 +67,17 @@ const near = (p, q, tol) => Math.abs(p[0] - q[0]) <= tol && Math.abs(p[1] - q[1]
 {
   const r = screenQuad(frame([{ pts: [[40, 30], [150, 30], [150, 110], [40, 110]] }, { pts: [[0, 0], [14, 0], [14, 30], [0, 30]], v: 250 }]), W, H);
   assert(r && near(r.quad[0], [40, 30], 1) && r.scattered && !r.cut.length, 'a lamp at the frame\'s edge: the screen is the screen, nothing cut (' + JSON.stringify(r && r.cut) + ')');
+  assert(r && r.otherFrac < 0.25, 'a lamp is small beside the screen (otherFrac ' + (r && r.otherFrac.toFixed(2)) + '): the screen is still straightened, the lamp left out');
+  const two = screenQuad(frame([{ pts: [[20, 20], [90, 20], [90, 70], [20, 70]] }, { pts: [[110, 60], [170, 60], [170, 120], [110, 120]] }]), W, H);
+  assert(two && two.otherFrac >= 0.25, 'two boxes of a size (otherFrac ' + (two && two.otherFrac.toFixed(2)) + '): taken together, the box around both');
+}
+// 6b. two shades of a dark desk (a lighter band on the floor) are not a screen: a screen is bright and far brighter than the room
+{
+  const lum = frame([]);
+  for (let y = 120; y < H; y++) for (let x = 0; x < W; x++) lum[y * W + x] = 48 + Math.round(rnd() * 6);
+  assert(screenQuad(lum, W, H) === null, 'a lighter band of desk is not a screen');
+  const dim = frame([{ pts: [[40, 30], [150, 30], [150, 110], [40, 110]], v: 70 }]);
+  assert(screenQuad(dim, W, H) === null, 'a faintly lighter rectangle (lum ~80 in a room of ~44) is not a screen either');
 }
 // 7. the tile plan: closer tiles only when the picture holds more than one carries, 2×2 at most, overlapping
 {
