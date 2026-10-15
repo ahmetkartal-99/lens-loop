@@ -807,9 +807,9 @@
     'For a calculation it is the final value with units. For a yes/no question it is Yes or No plus a few words. ' +
     'For a question with SEVERAL PARTS — several statements each wanting Yes/No or True/False, several blanks or drop-down menus, a two-part table with one choice per column — the ANSWER line gives every part in order, separated by " | ", each as "<part>: <answer>": for example "ANSWER: 1: Yes | 2: No | 3: Yes" (the statements in the order shown) or "ANSWER: first blank: 118 | second blank: 1"; the explanation then takes the parts in the same order. ' +
     'When SOURCE TABS are given with the frame, the question refers to all of them: answer from the tabs, never from the current frame alone. ' +
-    'If the photo contains no question, that line is a short title of what is in the frame (at most six words). ' +
+    'If the photo contains no question but something worth describing, that line is a short title of what is in the frame (at most six words). ' +
     'Then a blank line, then a brief explanation — of the answer itself, never of the photo: do not say what was blurred or is now legible, whether it is the same page as before, or what the earlier frames showed (the FRAMES line is for that). Never put anything before the ANSWER line. ' +
-    'When the photo shows nothing worth answering — an empty desk or floor, a wall, a blur, the camera on the move, nothing to read and no question — the first line is exactly "ANSWER: nothing to read" and the explanation is one short line, so what was on screen before can stay. ' +
+    'When the photo shows nothing worth answering — an empty desk or floor, a wall, a blank or empty screen, a frame that is blurred, out of focus, washed out, overexposed or too dark to read, the camera on the move, glare, a moiré with no legible text — the first line is exactly "ANSWER: nothing to read" (never a title that describes the blur, the glare or the lack of text) and the explanation is one short line, so what was on screen before can stay. ' +
     'The user is waiting hands-free and reads the reply as it arrives, so reason no longer than the question needs: a plain photo or a simple question gets a quick, direct reply; keep the deepest deliberation for problems that call for it. ' +
     'TWO KINDS OF TASK are never described but DONE. ' +
     '(1) A SPEAKING ROLE-PLAY CARD — a card or page that gives a SETTING, names a role for the reader to play in a conversation (DOCTOR, PATIENT, CARER, NURSE, CANDIDATE…) and lists a TASK or tasks for that role: do not describe it, summarise it or read it back. ' +
@@ -881,7 +881,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-15 04:05';
+  const BUILD = '2026-10-15 08:15';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -1011,6 +1011,18 @@
   let current = null;     // the request whose text the panel shows
   let pending = null;     // newest frame waiting (busy = latest)
   let lastGoodText = '';  // last completed answer, kept visible while the next one thinks
+  // An answer on screen is KEPT for a moment: once a verdict (a multiple-choice letter, Yes/No, a value) is shown, no
+  // capture replaces it for ANSWER_HOLD_MS, however the picture moves meanwhile — the hand drifting, the zoom
+  // settling, a frame caught blurred — so an answer never flickers between readings of the same question; the next
+  // look comes when the hold is over (a spoken question, and the Snap button, go through hold or no hold)
+  const ANSWER_HOLD_MS = 10000;
+  let answerHeldUntil = 0, shownMeta = '', shownAt = 0;   // shownMeta: the meta line of the text on screen, put back when a reply turns out to be no answer; shownAt: when it went up
+  const answerHeld = () => Date.now() < answerHeldUntil;
+  function holdAnswer(text, choice) {
+    if (!text || !verdictOf(splitAnswer(text), choice)) return;
+    answerHeldUntil = Date.now() + ANSWER_HOLD_MS;
+    if (running) reschedule();   // the next look is the hold's end
+  }
   let sessionCost = 0;
   let wakeLock = null;
   const history = [];
@@ -1250,8 +1262,13 @@
     if (sc.cut.length) {
       if (ink) {
         if (ink.edge.length) return cur <= caps.min + 0.02 ? { zoom: null, why: 'widest' } : { zoom: Math.max(caps.min, cur * FRAME_OUT), why: 'text' };   // the print runs to the edge: one step out, then look again
-        const fill = Math.max(ink.w, ink.h);
-        return fill < FRAME_LOW && cur < caps.max - 0.02 ? stepIn(ink.box, fill) : null;   // the print whole in view: this is the picture (closer where it can)
+        const fill = Math.max(ink.w, ink.h), [bx0, by0, bx1, by1] = ink.box, central = Math.abs((bx0 + bx1) / 2 - 0.5) <= 0.25 && Math.abs((by0 + by1) / 2 - 0.5) <= 0.25;
+        // the print whole in view: this is the picture — closer only toward print near the middle (the lens zooms
+        // about the middle: print off at a side would be pushed out), with room to spare, and not right after a
+        // step out from it
+        if (ink.noIn || !ink.strong || !central || fill >= FRAME_LOW || cur >= caps.max - 0.02) return null;   // a speck of print is kept in view, never closed in on
+        const m = stepIn(ink.box, fill);
+        return m ? { zoom: Math.min(m.zoom, cur * Math.max(1, (m.zoom / cur) * 0.9)), why: 'in' } : null;
       }
       return cur <= caps.min + 0.02 ? { zoom: null, why: 'widest' } : { zoom: Math.max(caps.min, cur * FRAME_OUT), why: 'out' };
     }
@@ -1260,12 +1277,12 @@
     if (fill > FRAME_HIGH && cur > caps.min + 0.02) return { zoom: Math.max(caps.min, cur * 0.9), why: 'room' };   // a little room round it
     return null;
   }
-  let frameLoopTimer = null, frameMissing = 0, frameMoveAt = 0, frameMoves = 0, frameMovesAt = 0, frameHoldUntil = 0;
+  let frameLoopTimer = null, frameMissing = 0, frameMoveAt = 0, frameMoves = 0, frameMovesAt = 0, frameHoldUntil = 0, frameInHoldUntil = 0;
   let frameSettleNeeded = false, frameUnsettledSince = 0, frameStableRuns = 0, frameDeferSince = 0, liveLook = null;
   const frameLoopLive = () => !!(running && stream && zoomCaps && !zoomDead && S.autoZoom !== false && S.screenRead !== false);
   function frameLoopStart() {
     frameLoopStop();
-    frameMissing = 0; frameMoveAt = 0; frameMoves = 0; frameMovesAt = 0; frameHoldUntil = 0; frameSettleNeeded = false; frameUnsettledSince = 0; frameStableRuns = 0; frameDeferSince = 0;
+    frameMissing = 0; frameMoveAt = 0; frameMoves = 0; frameMovesAt = 0; frameHoldUntil = 0; frameInHoldUntil = 0; frameSettleNeeded = false; frameUnsettledSince = 0; frameStableRuns = 0; frameDeferSince = 0;
     frameLoopTimer = setTimeout(frameLoopTick, 250);
   }
   function frameLoopStop() { clearTimeout(frameLoopTimer); frameLoopTimer = null; liveLook = null; overlayDraw(null); }
@@ -1284,13 +1301,14 @@
         frameMissing = liveLook.found || black ? 0 : frameMissing + 1;
         // the screen cut off: where the print sits decides (a screen larger than the view is framed by its text)
         if (liveLook.found && liveLook.cut.length) {
-          let ib = null; try { ib = inkBox(video, video.videoWidth, video.videoHeight); } catch (e) { ib = null; }
-          if (ib) { const vw = video.videoWidth, vh = video.videoHeight; liveLook.ink = { box: [ib.x / vw, ib.y / vh, (ib.x + ib.w) / vw, (ib.y + ib.h) / vh], w: ib.w / vw, h: ib.h / vh, edge: ib.edge, px: ib }; }
+          let ib = null; try { ib = inkBox(video, video.videoWidth, video.videoHeight); liveLook.inkLooked = true; } catch (e) { ib = null; }
+          if (ib) { const vw = video.videoWidth, vh = video.videoHeight; liveLook.ink = { box: [ib.x / vw, ib.y / vh, (ib.x + ib.w) / vw, (ib.y + ib.h) / vh], w: ib.w / vw, h: ib.h / vh, edge: ib.edge, strong: ib.strong, px: ib, noIn: now < frameInHoldUntil }; }
         }
         if (liveLook.found && !liveLook.cut.length && banner.dataset.action === 'framing') hideBanner();   // the whole screen is in view again
         if (frameLoopLive() && now >= frameHoldUntil && now - frameMoveAt >= FRAME_HOLD) {
           const cur = zoomNow(), mv = framingMove(liveLook, cur, zoomCaps, baseZoom(), frameMissing, liveLook.ink || null);
           if (mv && mv.zoom != null && Math.abs(mv.zoom - cur) > 0.02) {
+            if (mv.why === 'text') frameInHoldUntil = now + 8000;   // stepped out from print at the edge: no stepping in on it again for a while
             if (frameBudget(now)) { frameMoveAt = now; if (!frameSettleNeeded) frameUnsettledSince = now; frameSettleNeeded = true; frameStableRuns = 0; liveLook.moving = mv.why; await zoomStep(mv.zoom); }
           } else {
             if (mv && mv.zoom == null) cutAtWidest(liveLook);
@@ -1375,7 +1393,7 @@
     const state = look.black ? 'black' : !look.found ? 'none' : look.cut.length ? 'cut' : (look.moving || Math.max(look.widthFrac, look.heightFrac) < FRAME_LOW) && frameLoopLive() ? 'zoom' : 'fit';
     zoomLive.hidden = false;
     zoomLive.dataset.state = state;
-    zoomLive.textContent = (zoomCaps ? showZoom(zoomNow()) + ' · ' : '') + (state === 'black' ? 'camera starting…' : state === 'none' ? 'no screen in view' : state === 'cut' ? (look.ink && !look.ink.edge.length ? 'screen larger than the view — reading the text' : look.overfull ? 'screen fills the view' : 'screen cut off: ' + look.cut.join(', ')) : state === 'zoom' ? 'zooming to fit' : 'screen fits');
+    zoomLive.textContent = (zoomCaps ? showZoom(zoomNow()) + ' · ' : '') + (state === 'black' ? 'camera starting…' : state === 'none' ? 'no screen in view' : state === 'cut' ? cutReadout(look) : state === 'zoom' ? 'zooming to fit' : 'screen fits');
     if (!look.found) return;
     octx.lineWidth = 2;
     octx.strokeStyle = state === 'cut' ? '#FFB020' : state === 'fit' ? '#3DDC84' : 'rgba(255,255,255,.85)';
@@ -1386,6 +1404,26 @@
     octx.beginPath(); octx.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < 4; i++) octx.lineTo(pts[i][0], pts[i][1]); octx.closePath(); octx.stroke();
     octx.setLineDash([]);
     inkOutline(look, s, ox, oy);
+  }
+  // the readout for a screen larger than the view: what the print in view allows — a block whole in view is read
+  // (small and off at a side: only aiming brings it closer), print running off an edge brings a step out, and no
+  // print at all (a blank part of the screen, or text too small and far to count) is said so, with what helps
+  function cutReadout(look) {
+    const where = look.overfull ? 'screen fills the view' : 'screen cut off: ' + look.cut.join(', ');
+    const ink = look.ink && look.ink.strong ? look.ink : null;
+    if (ink && ink.edge.length) return 'text runs off the ' + ink.edge.join(' and ') + ' — zooming out';
+    if (ink) return inkAside(ink) ? 'text off at the ' + inkAside(ink) + ' — point at it to zoom in' : 'screen larger than the view — reading the text';
+    return where + (look.inkLooked ? ' · no print in view — aim at the question' : '');
+  }
+  // print off at a side of the view (the lens zooms about the middle, so only aiming brings it closer): where it
+  // sits, as words — '' when it is central (what a step in can frame) or already large in the view
+  function inkAside(ink) {
+    const [x0, y0, x1, y1] = ink.box, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    if (Math.max(ink.w, ink.h) >= FRAME_LOW || (Math.abs(cx - 0.5) <= 0.25 && Math.abs(cy - 0.5) <= 0.25)) return '';
+    const parts = [];
+    if (cy < 0.3) parts.push('top'); else if (cy > 0.7) parts.push('bottom');
+    if (cx < 0.3) parts.push('left'); else if (cx > 0.7) parts.push('right');
+    return parts.join(' ');
   }
   // the print the lens is framing on a screen larger than the view: a thin white box round it
   function inkOutline(look, s, ox, oy) {
@@ -1760,14 +1798,18 @@
   const inkCanvas = document.createElement('canvas'), ikctx = inkCanvas.getContext('2d', { willReadFrequently: true });
   function inkBox(src, srcW, srcH) {
     if (!srcW || !srcH) { srcW = src.width; srcH = src.height; }
-    const W = 480, H = Math.max(16, Math.round(srcH * W / srcW));
+    const W = Math.min(800, srcW), H = Math.max(16, Math.round(srcH * W / srcW));   // a question block four per cent of a 4K frame across is still two cells here (a smaller frame is read as it is, never blown up)
     inkCanvas.width = W; inkCanvas.height = H;
     ikctx.drawImage(src, 0, 0, W, H);
-    const d = ikctx.getImageData(0, 0, W, H).data, lum = new Uint8Array(W * H);
-    for (let i = 0; i < lum.length; i++) lum[i] = (d[i * 4] * 3 + d[i * 4 + 1] * 6 + d[i * 4 + 2]) / 10;
-    return inkBoxOf(lum, W, H, srcW, srcH);
+    const d = ikctx.getImageData(0, 0, W, H).data, lum = new Uint8Array(W * H), chroma = new Uint8Array(W * H);
+    for (let i = 0; i < lum.length; i++) {
+      const r = d[i * 4], g = d[i * 4 + 1], b = d[i * 4 + 2];
+      lum[i] = (r * 3 + g * 6 + b) / 10;
+      chroma[i] = Math.max(r, g, b) - Math.min(r, g, b);   // print is neutral; the fringes of a moiré on an LCD are coloured (the subpixels beating)
+    }
+    return inkBoxOf(lum, W, H, srcW, srcH, chroma);
   }
-  function inkBoxOf(lum, W, H, srcW, srcH) {
+  function inkBoxOf(lum, W, H, srcW, srcH, chroma) {
     const n = W * H, hist = new Uint32Array(256); for (let i = 0; i < n; i++) hist[lum[i]]++;
     let acc = 0, white = 255; for (let t = 255; t >= 0; t--) { acc += hist[t]; if (acc >= n * 0.1) { white = t; break; } }   // the page white: the 90th percentile
     if (white < 100) return null;
@@ -1778,14 +1820,25 @@
       const yEnd = Math.min(H, gy * C + C), xEnd = Math.min(W, gx * C + C);
       for (let y = gy * C; y < yEnd; y++) for (let x = gx * C; x < xEnd; x++) { ch[lum[y * W + x]]++; cnt++; }
       let a = 0, bg = 255; for (let t = 255; t >= 0; t--) { a += ch[t]; if (a >= cnt * 0.15) { bg = t; break; } }   // the cell's own background
-      let ink = 0; const lim = bg - 35; for (let t = 0; t < lim; t++) ink += ch[t];
+      // ink is WELL below its ground: print is 45 or more below (and three tenths of the ground, on a bright page) —
+      // the fringes of a moiré (the screen's pixel grid beating with the sensor's, a few tenths below the page
+      // white) are not, however many of them there are
+      let ink = 0; const lim = bg - Math.max(45, Math.round(bg * 0.3)); for (let t = 0; t < lim; t++) ink += ch[t];
+      if (chroma && ink) { let tinted = 0; for (let y = gy * C; y < yEnd; y++) for (let x = gx * C; x < xEnd; x++) { const i = y * W + x; if (lum[i] < lim && chroma[i] > 40) tinted++; } ink -= tinted; }   // coloured "ink" is a moiré, a picture, a highlight — not print
+      // print sits on a FLAT page: nearly every pixel is either ground or ink, and only the strokes' edges lie in
+      // between. A moiré (the screen's pixel grid beating with the sensor's — a dense weave of dashes, a few of
+      // them dark enough to count as ink) is a continuous texture: between its darkest dashes and its ground lies
+      // half the cell. So when more than three tenths of the cell lies between the ink and the ground, it is
+      // texture, not print — measured on the user's own captures: a moiré band holds 36–54 % of its cells there,
+      // print 3–30 %
+      let mid = 0; for (let t = lim; t < bg - 15; t++) mid += ch[t];
       // print is STROKES, not blocks: a stripe or a bar has its ink in rows (or columns) that are dark from end to
       // end — when most of a cell's ink lies in such full rows or full columns, it is a bar, a stripe, a block of
       // colour, not print
       let print = false;
-      if (bg >= bgMin && ink >= cnt * 0.015 && ink <= cnt * 0.5) {
+      if (bg >= bgMin && ink >= cnt * 0.015 && ink <= cnt * 0.5 && mid <= cnt * 0.3) {
         const rowInk = new Int32Array(C), colInk = new Int32Array(C), rows = yEnd - gy * C, cols = xEnd - gx * C;
-        for (let y = gy * C; y < yEnd; y++) for (let x = gx * C; x < xEnd; x++) if (lum[y * W + x] < lim) { rowInk[y - gy * C]++; colInk[x - gx * C]++; }
+        for (let y = gy * C; y < yEnd; y++) for (let x = gx * C; x < xEnd; x++) { const i = y * W + x; if (lum[i] < lim && !(chroma && chroma[i] > 40)) { rowInk[y - gy * C]++; colInk[x - gx * C]++; } }
         let full = 0; for (let i = 0; i < rows; i++) if (rowInk[i] >= cols * 0.9) full += rowInk[i]; for (let i = 0; i < cols; i++) if (colInk[i] >= rows * 0.9) full += colInk[i];
         print = full < ink * 0.7;
       }
@@ -1796,12 +1849,15 @@
     for (let s = 0; s < gw * gh; s++) {
       if (cell[s] < 0 || seen[s]) continue;
       const stack = [s]; seen[s] = 1; let inkSum = 0, cells = 0, x0 = gw, y0 = gh, x1 = -1, y1 = -1;
+      const rowN = new Uint16Array(gh), colN = new Uint16Array(gw);   // cells per grid row and column: a block runs wide AND deep, a seam does not
       while (stack.length) {
-        const q = stack.pop(), gx = q % gw, gy = (q - gx) / gw; inkSum += cell[q]; cells++;
+        const q = stack.pop(), gx = q % gw, gy = (q - gx) / gw; inkSum += cell[q]; cells++; rowN[gy]++; colN[gx]++;
         if (gx < x0) x0 = gx; if (gx > x1) x1 = gx; if (gy < y0) y0 = gy; if (gy > y1) y1 = gy;
-        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const nx = gx + dx, ny = gy + dy; if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue; const t = ny * gw + nx; if (cell[t] >= 0 && !seen[t]) { seen[t] = 1; stack.push(t); } }
+        // neighbours: touching cells, and cells one empty row away — the lines of a widely spaced question, or
+        // a stem and its options, make one block, not a cluster per line; columns apart stay apart
+        for (let dy = -2; dy <= 2; dy++) for (let dx = -1; dx <= 1; dx++) { const nx = gx + dx, ny = gy + dy; if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue; const t = ny * gw + nx; if (cell[t] >= 0 && !seen[t]) { seen[t] = 1; stack.push(t); } }
       }
-      if (cells >= 3 && (!best || cells > best.cells || (cells === best.cells && inkSum > best.inkSum))) best = { inkSum, cells, x0, y0, x1, y1 };
+      if (cells >= 3 && (!best || cells > best.cells || (cells === best.cells && inkSum > best.inkSum))) { let rowMax = 0, colMax = 0; for (const n of rowN) if (n > rowMax) rowMax = n; for (const n of colN) if (n > colMax) colMax = n; best = { inkSum, cells, x0, y0, x1, y1, rowMax, colMax }; }
     }
     if (!best) return null;
     const frac = (best.x1 - best.x0 + 1) * (best.y1 - best.y0 + 1) / (gw * gh);
@@ -1812,7 +1868,12 @@
     if (pw < srcW * 0.04 || ph < srcH * 0.04) return null;
     const edge = [];   // the print runs to the picture's edge here: some of it may lie outside
     if (best.x0 === 0) edge.push('left'); if (best.x1 === gw - 1) edge.push('right'); if (best.y0 === 0) edge.push('top'); if (best.y1 === gh - 1) edge.push('bottom');
-    return { x: Math.round(px), y: Math.round(py), w: Math.round(pw), h: Math.round(ph), frac, edge };
+    // a BLOCK of print, not a speck and not a seam: six cells or more, some row of it three cells wide and some
+    // column two deep (lines of text) — the cells along the edge of a moiré band (half page, half weave) make a
+    // line or a staircase, one or two cells thick, never a block. The block is what the lens may be framed by,
+    // and what goes close up.
+    const strong = best.cells >= 6 && best.rowMax >= 3 && best.colMax >= 2;
+    return { x: Math.round(px), y: Math.round(py), w: Math.round(pw), h: Math.round(ph), frac, edge, cells: best.cells, strong };
   }
   // A frame for Claude: { b64 (the overview, long side S.imgSize), tiles [{ b64, c, r, cols, rows }], thumb, sig (of
   // the raw frame, for the "same picture" checks), screen: { found, cut, zoom, tiles, widthFrac } }.
@@ -1864,7 +1925,7 @@
     let closeUp = null;
     if (S.screenRead !== false && (look || fills)) {
       const box = inkBox(src);
-      if (box) {
+      if (box && box.strong) {   // a block of print; a speck, a seam, a thin strip is not worth a picture
         const k = Math.min(1, S.imgSize / Math.max(box.w, box.h));
         tileCanvas.width = Math.round(box.w * k); tileCanvas.height = Math.round(box.h * k);
         tlctx.drawImage(src, box.x, box.y, box.w, box.h, 0, 0, tileCanvas.width, tileCanvas.height);
@@ -1887,7 +1948,7 @@
     try { sigCanvas.width = 48; sigCanvas.height = 36; sctx.drawImage(canvas, 0, 0, Math.max(1, Math.round(cw * 0.55)), ch, 0, 0, 48, 36); const ld = sctx.getImageData(0, 0, 48, 36).data; leftSig = new Uint8Array(48 * 36); for (let i = 0; i < leftSig.length; i++) leftSig[i] = (ld[i * 4] * 3 + ld[i * 4 + 1] * 6 + ld[i * 4 + 2]) / 10; } catch (e) {}
     const screen = { found: !!look || fills, fills, black, cut: look ? look.cut : fills ? ['every side'] : [], straightened: !!look && look.straight && src !== rawCanvas, cropped: !!look && src !== rawCanvas, flattened: !!look && src !== rawCanvas && rectifyFlattened, tiles: tiles.length, closeUp: closeUp ? Math.round(closeUp.frac * 100) : 0, widthFrac: look ? look.widthFrac : fills ? 1 : 0, heightFrac: look ? look.heightFrac : fills ? 1 : 0, boxFrac: look ? look.boxFrac : fills ? [0, 0, 1, 1] : null, zoom: zoomNow(), w: src.width, h: src.height, why: look ? '' : (S.screenRead === false ? 'screen reading off' : screenWhy || 'no screen found') };
     // a screen cut off: where the print sits in the FRAME (as the live loop sees it), for the capture-time judgement
-    if (screen.found && screen.cut.length) { try { const ib = inkBox(rawCanvas); if (ib) screen.ink = { box: [ib.x / rawCanvas.width, ib.y / rawCanvas.height, (ib.x + ib.w) / rawCanvas.width, (ib.y + ib.h) / rawCanvas.height], w: ib.w / rawCanvas.width, h: ib.h / rawCanvas.height, edge: ib.edge }; } catch (e) {} }
+    if (screen.found && screen.cut.length) { try { const ib = inkBox(rawCanvas); if (ib) screen.ink = { box: [ib.x / rawCanvas.width, ib.y / rawCanvas.height, (ib.x + ib.w) / rawCanvas.width, (ib.y + ib.h) / rawCanvas.height], w: ib.w / rawCanvas.width, h: ib.h / rawCanvas.height, edge: ib.edge, strong: ib.strong, noIn: Date.now() < frameInHoldUntil }; } catch (e) {} }
     diagLog.push({ at: Date.now(), zoom: screen.zoom, frame: vw + '×' + vh, screen }); if (diagLog.length > 12) diagLog.shift();
     return { b64: dataUrl.slice(dataUrl.indexOf(',') + 1), thumb, w: cw, h: ch, sig, docSig, leftSig, tiles, closeUp, screen, rawB64, rawSize: rawCanvas.width + '×' + rawCanvas.height };
   }
@@ -2046,7 +2107,7 @@
   // still for a moment (a note held up, a page put down) is read at once instead of waiting for the timer.
   let watchTimer = null, prevSig = null, lastChangeAt = 0;
   function watchFrame() {
-    if (!running || S.skipStill === false) return;
+    if (!running || S.skipStill === false || answerHeld()) return;   // (an answer kept on screen: the picture is looked at again once the hold is over)
     let sig; try { sig = frameSignature(); } catch (e) { return; }
     if (!sig) return;
     const changed = !sameScene(sig, lastSig);
@@ -2103,6 +2164,7 @@
 
   function snap(source) {
     if (convoActive() && source !== 'button') { skippedSince = frameNo; return; }   // a role play is running: the camera waits
+    if (source !== 'button' && answerHeld()) return;   // the answer on screen is kept for its moment: nothing replaces it yet (the hold's end is the next tick)
     // (while you speak the capture still happens — a tab, a page of notes is collected — only a new answer waits for
     // the quiet spell: see decideRole)
     let frame;
@@ -2680,11 +2742,12 @@
     if (!frame.tag) { frameNo += 1; frame.no = frameNo; frame.at = new Date(); frame.tag = fmtF(frameNo); frameCounter.textContent = frame.tag; }
     lastShot.src = frame.thumb; lastShot.hidden = false;
     flash.classList.remove('on'); void flash.offsetWidth; flash.classList.add('on');
-    lastGoodText = hit.text; showingTranscript = false; renderLiveStrip(); shownSig = frame.sig || null; shownFrame = frame.b64 ? frame : null;
+    lastGoodText = hit.text; showingTranscript = false; renderLiveStrip(); shownSig = frame.sig || null; shownFrame = frame.b64 ? frame : null; shownAt = Date.now();
     const { head, body } = splitAnswer(hit.text);
     answerBody.innerHTML = renderAnswer(hit.text, false, frame.choice); answerBody.classList.remove('stale');
-    answerMeta.textContent = frame.tag + ' · ' + fmtTime(frame.at) + ' · ' + sourceLabel(hit.from) + (frame.roleLook ? ' · ' + frame.roleLook : '') + (screenNote(frame) ? ' · ' + screenNote(frame) : '');
+    answerMeta.textContent = shownMeta = frame.tag + ' · ' + fmtTime(frame.at) + ' · ' + sourceLabel(hit.from) + (frame.roleLook ? ' · ' + frame.roleLook : '') + (screenNote(frame) ? ' · ' + screenNote(frame) : '');
     copyBtn.hidden = false; $('readBtn').hidden = false;
+    holdAnswer(hit.text, frame.choice);
     setStatus(running ? 'done' : 'idle', 'From memory for ' + frame.tag);
     if (isVerdictText(hit.text, frame.choice) || (splitAnswer(hit.text).role && S.roleAuto !== false)) showVerdictPanel();   // a remembered verdict or briefing: the panel, no feed
     else {
@@ -2751,7 +2814,20 @@
     }
     return best ? { text: best.v.text, from: best.st.driveId ? 'drive' : 'phone' } : null;
   }
-  const nothingToRead = (text) => /^nothing to read\b/i.test(splitAnswer(text || '').head);
+  // A reply that is no answer: "nothing to read", as the rules ask for an empty or unreadable frame — or a TITLE that
+  // describes such a frame instead ("Overexposed, motion-blurred frame — only washed-out white", "Out-of-focus,
+  // washed-out pale blur": the model names the blur when the rules asked it to say nothing to read). Either keeps
+  // the text on screen, is never remembered and never replayed. Only the words of picture quality count, and never
+  // on a verdict: an option about blurred vision is an answer.
+  const EMPTY_FRAME_RE = /\b(?:washed[- ]out|over-?exposed|under-?exposed|out[- ]of[- ]focus|motion[- ]blur|blurr(?:y|ed) (?:frame|photo|image|picture|shot|screen|page|text|capture)|(?:frame|photo|image|picture|shot|screen|page|text|capture) (?:is |was )?(?:too |very )?blurr(?:y|ed)|too blurr(?:y|ed)|illegible|unreadable|not legible|not readable|no (?:legible|readable|visible|discernible) (?:text|content|question|writing)|nothing (?:legible|readable|visible|discernible)|blank (?:screen|page|frame|photo|image|display|white)|empty (?:screen|frame|photo|image|display)|cannot be (?:read|made out)|can'?t be (?:read|made out)|too (?:dark|bright) to read|lens (?:flare|glare)|camera (?:shake|on the move|moving|still moving))\b/i;
+  const emptyFrameTitle = (a, choice) => {
+    if (!a.head || a.role || a.task) return false;
+    const v = verdictOf(a, choice);
+    if (v && v.parts) return false;
+    if (v && v.key && !(v.key === 'No' && /^no (?:legible|readable|visible|discernible) /i.test(a.head))) return false;   // an option, Yes/No, a value: an answer ("No legible text in frame" reads as a No verdict: it is not one)
+    return EMPTY_FRAME_RE.test(a.head);   // (a bare line on a page judged a question with options — a verdict by the page, not by its words — is still judged by its words here)
+  };
+  const nothingToRead = (text, choice) => { const a = splitAnswer(text || ''); return /^nothing to read\b/i.test(a.head) || emptyFrameTitle(a, choice); };
   function recall(sig, question, isRole, docSig) {
     let m = memoryHit(sig, question, isRole, docSig); if (m && nothingToRead(m.text)) m = null;
     let c = !question ? cacheHit(sig, isRole, docSig) : null; if (c && nothingToRead(c.text)) c = null;
@@ -2826,6 +2902,10 @@
     if (frame.b64) {
       content.push(...frameImages(frame, frame.tabs ? `CURRENT FRAME (${frame.tag}) — the question, with tab "${frame.tab || tabsNameOf(frame)}" selected:` : earlier.length ? `CURRENT FRAME (${frame.tag}), the one to answer:` : `The frame (${frame.tag}):`));
       if (frame.cutNote) content.push({ type: 'text', text: (frame.screen.fills ? 'Note: the screen is larger than the photo — the photo shows only part of it, on every side' : 'Note: the ' + frame.screen.cut.join(' and ') + ' edge of the screen may lie outside the photo') + '; answer from what is visible and say in one line if something needed is missing.' });
+      // the verdict on screen rides along, so the same question seen again — moved, zoomed, caught a little blurred —
+      // keeps its answer instead of flickering between readings; a different question is answered on its own
+      const kept = !frame.question && !scene && !frame.tabs && lastGoodText && shownFrame && Date.now() - shownAt < 180000 ? verdictOf(splitAnswer(lastGoodText), shownFrame.choice) : null;
+      if (kept) content.push({ type: 'text', text: 'For consistency: the answer on the user\'s screen at this moment, from a frame taken a little earlier, is "' + splitAnswer(lastGoodText).head.replace(/"/g, '\'') + '". If this frame shows the SAME question, give that same answer unless this frame shows plainly that a different option is the correct one; if it shows a different question, answer that one.' });
     }
     if (frame.question) {
       content.push({ type: 'text', text: 'Spoken question from the user: ' + frame.question + (frame.b64 ? '\n\nA frame from the camera is attached in case the question refers to it.' : '') });
@@ -2878,7 +2958,7 @@
       req.endedAt = Date.now();
       active = active.filter((r) => r !== req);
       finish(req);
-      if (running && pending && !active.length) { const f = pending; pending = null; send(f); }
+      if (running && pending && !active.length) { const f = pending; pending = null; if (!answerHeld()) send(f); }   // (a frame queued behind a verdict is let go: the picture is looked at afresh when the hold is over)
     }
   }
 
@@ -2947,7 +3027,7 @@
     refreshReadouts();
     // a role card's lines: the lock holds them; if they never came, the same card in view asks again
     if ((req.scene || req.frame.tabs) && roleLock && roleLock.reqId === req.id) {
-      const ok = !req.error && req.text && !/^nothing to read\b/i.test(splitAnswer(req.text).head);
+      const ok = !req.error && req.text && !nothingToRead(req.text, req.frame.choice);
       if (ok) roleLock.text = req.text; else roleLock.failed = true;
     }
     // the usual answer came back as a role card's lines (the model saw the card even if the quick look did not):
@@ -2985,19 +3065,28 @@
     }
     failStreak = 0;
     const a = splitAnswer(req.text || '');
-    const nothing = !req.frame.question && /^nothing to read\b/i.test(a.head);   // never remembered: it is not an answer
+    const nothing = !req.frame.question && nothingToRead(req.text, req.frame.choice);   // never remembered: it is not an answer (nor is a title that only describes a blurred or empty frame)
     if (req.text && !nothing) { try { cacheStore(req.frame.sig || lastSig, req.text, req.scene, req.frame.docSig); } catch (e) {} }
     if (req.text && !nothing && S.useStories) recordVisual(req);   // every answer is kept with its storyline, photo or not
     if (req === current) {
-      if (!req.frame.question && /^nothing to read\b/i.test(a.head) && lastGoodText) {
-        // the camera sees nothing worth answering: what is on screen stays, this frame is not part of any document,
-        // and the empty scene is remembered so it is not sent again while it stays in view
+      if (nothing && lastGoodText) {
+        // the camera sees nothing worth answering: what is on screen stays — the panel as it was (the reply never
+        // drew over it: renderCurrent), its meta line back — this frame is not part of any document, and the empty
+        // scene is remembered so it is not sent again while it stays in view
         forgetFrame(req.frame); nothingFrame = req.frame;
-        setStatus(running ? 'done' : 'idle', `${req.frame.tag}: nothing to read · keeping the text`);
+        answerBody.classList.remove('stale'); if (shownMeta) answerMeta.textContent = shownMeta;
+        req.keptNote = `${req.frame.tag}: nothing to read · keeping the ${verdictOf(splitAnswer(lastGoodText), shownFrame && shownFrame.choice) ? 'answer' : 'text'}`;
+        setStatus(running ? 'done' : 'idle', req.keptNote);
       } else if (!req.frame.question && (holdingForSpeech() || (a.frames === 'new' && readingUnderWay()))) {
         // a camera text that arrives while you speak, or a new subject while the current text is still being read, waits
         heldReq = req; setStatus('armed', `Text for ${req.frame.tag} ready · shown ${a.frames === 'new' && readingUnderWay() ? 'when the current text has played through' : 'when you pause'}`);
-      } else displayAnswer(req);
+      } else {
+        // nothing to read and nothing on screen yet, with a screen larger than the view in front of the camera: the
+        // likely reason is that the camera looks at a blank part of it — say so, and what helps (the zoom works about
+        // the middle of the view, so only aiming brings a question at the far corner closer)
+        if (nothing && req.frame.screen && req.frame.screen.found && req.frame.screen.cut.length && !(req.frame.screen.ink && req.frame.screen.ink.strong)) req.text = (req.text || 'ANSWER: nothing to read') + '\n\nThe camera is looking at a blank part of the screen (the screen is larger than its view, cut off ' + cutText(req.frame.screen.cut) + '). Aim it at the question — the zoom then closes in on it — or hold the phone a hand\'s width further back so the whole screen fits.';
+        displayAnswer(req);
+      }
     }
     pushHistory(req);
   }
@@ -3010,16 +3099,17 @@
     showingTranscript = false;
     renderLiveStrip();
     const from = apiSource(req.text);
-    shownSig = req.frame.sig || null; shownFrame = req.frame.b64 ? req.frame : null;
+    shownSig = req.frame.sig || null; shownFrame = req.frame.b64 ? req.frame : null; shownAt = Date.now();
     const inAll = req.inTok + (req.cacheW || 0) + (req.cacheR || 0);
     const bits = [req.frame.tag, fmtTime(req.frame.at), `${secs(took)}`, `${inAll}${req.cacheR ? ' (' + req.cacheR + ' cached)' : ''}→${req.outTok} tok`, `$${req.cost.toFixed(3)}`, sourceLabel(from)];
     if (req.frame.roleLook) bits.push(req.frame.roleLook);   // what the role-card look made of the picture
     if (screenNote(req.frame)) bits.push(screenNote(req.frame));   // how the picture was taken: straightened, tiles, zoom
-    answerMeta.textContent = bits.join(' · ');
+    answerMeta.textContent = shownMeta = bits.join(' · ');
     answerBody.innerHTML = renderAnswer(req.text || '(no text in the reply)', false, req.frame.choice);
     answerBody.classList.remove('stale');
     copyBtn.hidden = !req.text;
     $('readBtn').hidden = !req.text;
+    holdAnswer(req.text, req.frame.choice);   // a verdict stays on screen for its moment, whatever the camera does
     if (req.stop === 'max_tokens') showBanner('The reply hit the max output tokens limit and was cut off. Raise the limit in settings if this keeps happening.', 'note');
     else if (req.stop === 'refusal') showBanner('Claude declined to answer this frame.', 'note');
     setStatus(running ? 'done' : 'idle', running ? `Answered ${req.frame.tag} · next in ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s` : 'Idle');
@@ -3049,7 +3139,7 @@
       if (req !== current || req.endedAt) return;
       const a = splitAnswer(req.text), { head, body, frames } = a;
       if (!body || countWords(body) < 4) return;
-      if (!req.frame.question && (/^nothing to read\b/i.test(head) || (frames === 'new' && readingUnderWay() && reader.streamId !== req.id))) return;   // keeps what is on screen
+      if (!req.frame.question && (nothingToRead(req.text, req.frame.choice) || (frames === 'new' && readingUnderWay() && reader.streamId !== req.id))) return;   // keeps what is on screen
       if (verdictOf(a, req.frame.choice) || (a.role && S.roleAuto !== false)) { if (!reader.streamId) { showVerdictPanel(); shownSig = req.frame.sig || null; shownFrame = req.frame.b64 ? req.frame : null; } return; }   // streams into the panel itself, no feed
       if (reader.open && reader.streamId === req.id) { growReader(body); return; }
       if (reader.streamId && reader.streamId !== req.id) return;   // another reply is on its way in
@@ -3066,10 +3156,16 @@
     const elapsed = Date.now() - r.startedAt;
     const phase = r.firstTextAt ? 'answering' : 'thinking';
     answerMeta.textContent = `${r.frame.tag} · ${fmtTime(r.frame.at)} · ${phase} ${secs(elapsed)}`;
-    if (r.text) {
+    // a reply draws over the panel as it streams — once its first line is in and is an answer; one that says
+    // nothing to read (or only describes a blurred frame) never does: the text on screen stays, crisp
+    const headIn = r.text.indexOf('\n') >= 0;
+    const keeps = !!lastGoodText && !r.frame.question && (!headIn || nothingToRead(r.text, r.frame.choice));
+    if (r.text && !keeps) {
       answerBody.innerHTML = renderAnswer(r.text, true, r.frame.choice);
       answerBody.classList.remove('stale');
       copyBtn.hidden = false;
+    } else if (r.text && headIn) {
+      answerBody.classList.remove('stale');   // no answer coming: what is on screen is still the answer
     } else if (lastGoodText) {
       answerBody.classList.add('stale');
     } else {
@@ -3123,7 +3219,7 @@
     } else if (convoActive()) {
       setStatus('streaming', 'Role play ' + convoClock() + ' · you are ' + convo.counterpart.replace(/ \(.*\)$/, '') + ' · Claude is the ' + convo.role + (convo.inFlight ? ' · replying' : convo.pending ? ' · heard, waiting for your pause' : ' · listening') + ' · "Lens, next" ends it');
     } else if (running && statusEl.dataset.kind === 'done' && current) {
-      setStatus('done', `Answered ${current.frame.tag} · next in ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s` + taskNote());
+      setStatus('done', `${current.keptNote || 'Answered ' + current.frame.tag} · next in ${Math.max(0, Math.ceil((nextAt - Date.now()) / 1000))}s` + taskNote());
     } else if (running && listening && story && !awaitingQuestion) {
       setStatus('streaming', `Session ${mmss(Date.now() - story.startedAt)} · ${story.engine === 'cloud' ? 'ElevenLabs' : 'phone'} · ${skippedSince >= 0 ? 'picture unchanged' : 'watching'}` + taskNote());
       if (showingTranscript) answerMeta.textContent = `● REC · ${mmss(Date.now() - story.startedAt)} · ${storyWords(story)} words · ${story.engine === 'cloud' ? 'ElevenLabs' : 'phone'}`;

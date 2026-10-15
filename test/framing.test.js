@@ -55,8 +55,11 @@ assert(framingMove(screen(0.01, 0.01, 0.99, 0.99), 0.5, caps, 1, 0) === null, 'â
 const inkAt = (x0, y0, x1, y1, edge) => ({ box: [x0, y0, x1, y1], w: x1 - x0, h: y1 - y0, edge: edge || [] });
 const big = screen(0, 0, 1, 1, ['every side']);
 assert(framingMove(big, 1, caps, 1, 0, inkAt(0.03, 0.1, 0.3, 0.5)) === null, 'the screen fills the view, the question whole at the far left: the lens STAYS (closing in would push it out) â€” the close-up reads it');
-m = framingMove(big, 1, caps, 1, 0, inkAt(0.35, 0.35, 0.65, 0.65));
-assert(m && m.why === 'in' && near(m.zoom, 1.6), 'the screen fills the view, the print small near the centre: a step in on the print (' + JSON.stringify(m) + ')');
+m = framingMove(big, 1, caps, 1, 0, Object.assign(inkAt(0.35, 0.35, 0.65, 0.65), { strong: true }));
+assert(m && m.why === 'in' && near(m.zoom, 1.44), 'the screen fills the view, a block of print near the centre: a step in on the print, with room to spare (' + JSON.stringify(m) + ')');
+assert(framingMove(big, 1, caps, 1, 0, inkAt(0.35, 0.35, 0.65, 0.65)) === null, 'a speck of print near the centre: kept in view, not closed in on');
+assert(framingMove(big, 1, caps, 1, 0, Object.assign(inkAt(0.05, 0.3, 0.3, 0.6), { strong: true })) === null, 'a block of print off at the left: not closed in on (it would be pushed out)');
+assert(framingMove(big, 1, caps, 1, 0, Object.assign(inkAt(0.35, 0.35, 0.65, 0.65), { strong: true, noIn: true })) === null, 'right after a step out from the print: no step in');
 m = framingMove(big, 1, caps, 1, 0, inkAt(0, 0.1, 0.3, 0.5, ['left']));
 assert(m && m.why === 'text' && near(m.zoom, 0.72), 'the print runs to the left edge: ONE step out, not straight to the widest (' + JSON.stringify(m) + ')');
 m = framingMove(big, 0.5, caps, 1, 0, inkAt(0, 0.1, 0.3, 0.5, ['left']));

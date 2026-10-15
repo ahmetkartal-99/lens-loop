@@ -60,4 +60,21 @@ const dot = (lum, x, y, r, v) => { for (let yy = y - r; yy <= y + r; yy++) for (
   const rb = inkBoxOf(ruled, W, H, W, H);
   assert(rb && rb.y + rb.h <= 200 && rb.x + rb.w >= 200 && rb.x <= 40, 'print above a thick rule: the print alone (' + JSON.stringify(rb) + ')');
 }
+// 7. a MOIRÉ is not print: a band of fine weave (the screen's pixel grid beating with the sensor's), its darkest
+// dashes a few tenths below the page — dark enough to count as ink — but with half the band lying between the dashes
+// and the ground, where a flat page has nothing; the cells along the band's edge (half page, half weave) are a seam,
+// not a block. Measured on the user's own captures: 36–54 % of a moiré cell in between, 3–30 % of a print cell.
+{
+  const moire = (lum, x0, x1) => { for (let y = 0; y < H; y++) for (let x = x0; x < x1; x++) lum[y * W + x] = Math.max(0, Math.min(255, Math.round(185 + 28 * Math.sin(x * 2.1) + 22 * Math.sin(y * 1.7) + rnd() * 8))); };
+  const band = page(205); moire(band, 200, 320);
+  const mb = inkBoxOf(band, W, H, W, H);
+  assert(!mb || !mb.strong, 'a moiré band alone: no block of print (' + JSON.stringify(mb) + ')');
+  const beside = page(205); moire(beside, 200, 320); text(beside, 20, 40, 160, 150, 130);
+  const bb = inkBoxOf(beside, W, H, W, H);
+  assert(bb && bb.strong && bb.x <= 20 && bb.x + bb.w >= 160 && bb.x + bb.w < 200 && bb.y + bb.h >= 150, 'print beside a moiré band: the print alone, a block (' + JSON.stringify(bb) + ')');
+  // a strip one cell wide, however long, and a staircase are not blocks
+  const strip = page(205); text(strip, 100, 40, 112, 330, 130);
+  const sb = inkBoxOf(strip, W, H, W, H);
+  assert(!sb || !sb.strong, 'a strip of print one cell wide: found, but no block (' + JSON.stringify(sb) + ')');
+}
 console.log(process.exitCode ? 'INK FAILED' : 'ALL TESTS PASSED');

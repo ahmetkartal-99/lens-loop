@@ -57,8 +57,33 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
    every request before the current one (not for a role-play card — see 13), oldest first, the last one cache-marked; the
    session's open tail now rides in the message after them (`buildSystem` returns `{ blocks, tail }`) so the
    frames stay cached. The reply's third line `FRAMES: continues|new` (`splitAnswer(...).frames`): `new` waits
-   for `readingUnderWay()` to end before display; `nothing to read` (head) keeps the text, is never cached or
-   recorded, and sets `nothingFrame`. Scene comparison: `sameScene`/`nearScene` (mean + share of cells off by
+   for `readingUnderWay()` to end before display; a reply that is NO ANSWER (`nothingToRead(text, choice)`: the
+   head `nothing to read`, OR a title that only describes a blurred or empty frame — `emptyFrameTitle`,
+   `EMPTY_FRAME_RE`: "Overexposed, motion-blurred frame — only washed-out white", "Out-of-focus, washed-out pale
+   blur", the author's morning captures of Oct 15 came back exactly so, titled instead of "nothing to read" — never
+   an option / Yes-No / value verdict, a "No legible text" head aside) keeps the text, is never cached or recorded,
+   sets `nothingFrame`, puts the shown meta line back (`shownMeta`) and says "F-0012: nothing to read · keeping the
+   answer" (`req.keptNote`, which the readout loop keeps); `renderCurrent` never draws such a reply over the panel
+   while it streams (the panel waits, dimmed, until the first line is in, then draws an answer or stays as it was).
+   The rules now say so too ("never a title that describes the blur, the glare or the lack of text"). With NOTHING
+   on screen yet, "nothing to read" for a screen larger than the view with no block of print in it gets a line
+   added before display: "The camera is looking at a blank part of the screen (… cut off on the right and top and
+   bottom). Aim it at the question — the zoom then closes in on it — or hold the phone a hand's width further back
+   so the whole screen fits." (the author's 07:05–07:14 session: the phone 10 cm from the screen, the question at
+   the far corner of the frame or out of it, forty frames of blank page and moiré).
+   **An answer is KEPT for ten seconds** (`ANSWER_HOLD_MS`, `holdAnswer` from `displayAnswer`/`showRecalled`,
+   `answerHeld`; the author: "if faced with MC questions it shouldn't change its answer for at least 10 seconds and
+   stay with the right answer"): once a VERDICT is on screen, `snap` (every source but the button), `watchFrame`
+   and the queued `pending` frame stand down until the hold is over — no capture, no quick look, no request, however
+   the hand drifts or the zoom settles — and `reschedule` makes the hold's end the next tick, so the next look comes
+   then; a spoken question is never held; titles, briefings and letters are not held (the feed has its own
+   `readingUnderWay` guard). While a verdict is on screen (< 3 min), every camera request carries it "for
+   consistency" (`send`: "the answer on the user's screen at this moment … is "B) 42". If this frame shows the SAME
+   question, give that same answer unless this frame shows plainly that a different option is the correct one"), so
+   the same question re-framed keeps its answer instead of flickering between readings. `test/hold.e2e.js`: the
+   verdict B, the picture moved 3 s later — nothing for the hold; after it the moved picture sent (≥ 10 s), the
+   consistency note, a blur-titled reply keeping B with its meta line and status; a different question answered at
+   once; "nothing to read" keeping C. Scene comparison: `sameScene`/`nearScene` (mean + share of cells off by
    >20, 48×36 cells) against the shown frame, the empty scene and the last sent frame; when alike but not
    identical (mean < 40) `looksSame` asks `PAGE_CHECK_MODEL` (Haiku) SAME/DIFFERENT (`pageCheckBusy`).
    **Memory first** (`recall` → `memoryHit`/`cacheHit`): every visual note keeps the picture's fingerprint
@@ -263,24 +288,45 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     read as it is · 4 tiles · text close-up". It is no longer "nothing much brighter than the room" (which sent the
     frame as ONE 1568-px picture with the question 230 px wide, unreadable) and no longer makes the loop ease back
     to 1× while the screen overfills the frame. **The text close-up** (`inkBox` / `inkBoxOf`, unit-tested in
-    `test/ink.test.js`): on a 480-cell grey copy in 16×16 cells, ink is what lies 35 below the cell's OWN background
-    (its 85th percentile) — local, since the far side of a screen seen from an angle is dim all over and print there
-    is dark on grey; a cell holds print when 1.5–50 % of it is ink on a page-like ground (≥ 50 and ≥ 0.4 × the
-    picture's white) AND the ink is strokes, not blocks — when ≥ 70 % of a cell's ink lies in rows or columns dark
-    from end to end it is a bar, a stripe, a block of colour (the role-card test's stripes and checkerboards) and
-    not print; touching cells cluster, and the cluster with the MOST CELLS is the text (a block of lines is
-    extensive; a cursor, a speck, a patch of moiré is compact); its box with a margin, cropped from the picture at
-    the camera's own pixels and sent as one more image ("The text in the same picture, close up … read the small
-    print here") whenever the print covers < 55 % of the picture — the author's far-right photo yields the question
-    and all five options crisp at 454×655 from a 2016-px frame. **A screen larger than the view is FRAMED BY ITS
-    PRINT** (`framingMove`'s `ink` argument, from `inkBox(video)` on the live frame whenever the screen is cut;
+    `test/ink.test.js`): on an 800-px grey copy (a question block 4 % of a 4K frame across is still two cells) in
+    16×16 cells, ink is what lies WELL below the cell's OWN background (its 85th percentile): 45 or more, and three
+    tenths of the ground — local, since the far side of a screen seen from an angle is dim all over and print there
+    is dark on grey — and NEUTRAL (chroma ≤ 40: the coloured fringes of a moiré, a picture, a highlight are not
+    print); a cell holds print when 1.5–50 % of it is ink on a page-like ground (≥ 50 and ≥ 0.4 × the picture's
+    white), the ink is strokes, not blocks (when ≥ 70 % of a cell's ink lies in rows or columns dark from end to end
+    it is a bar, a stripe, a block of colour — the role-card test's stripes and checkerboards), AND the page is FLAT:
+    at most three tenths of the cell lies between the ink threshold and 15 below the ground. That last rule is what
+    tells print from a MOIRÉ — the screen's pixel grid beating with the sensor's, a dense weave of dashes a few of
+    which are dark enough to count as ink: measured on the author's own captures (the blank, moiré-banded frames of
+    07:06–07:14 on Oct 15, `cell-stats.js` scratch work) a moiré cell has 36–54 % of its pixels in that in-between
+    band, a print cell 3–30 % — ink depth, adjacency and chroma alone did not separate them. Touching cells cluster
+    and the cluster with the MOST CELLS is the text (a block of lines is extensive; a cursor, a speck is compact);
+    (cells one empty row apart join too — the lines of a widely spaced question, a stem and its options, are one
+    block; columns apart stay apart); `strong` marks a BLOCK of print (≥ 6 cells, some row ≥ 3 cells wide, some
+    column ≥ 2 deep — `rowMax`/`colMax`;
+    the cells along the edge of a moiré band, half page half weave, make a line or a staircase, never a block;
+    density was tried and rejected: real paragraphs fill 10–30 % of their box). Only a strong block goes CLOSE UP —
+    its box with a margin, cropped from the picture at the camera's own pixels and sent as one more image ("The
+    text in the same picture, close up … read the small print here") whenever the print covers < 55 % of the
+    picture — the author's far-right photo yields the question and all five options crisp at 454×655 from a
+    2016-px frame; his blank/moiré frames now yield none (they used to send the model a "close-up" of the weave,
+    22–53 % of the frame, and the loop zoomed INTO it). **A screen larger than the view is FRAMED BY ITS PRINT**
+    (`framingMove`'s `ink` argument, from `inkBox(video)` on the live frame whenever the screen is cut;
     `frameAdjusting` gets the capture's own `screen.ink`): the text whole in view → the lens STAYS (every step out
-    costs it pixels) or closes in where the headroom allows; the text running to an edge → ONE step out (× 0.72,
-    why 'text'), then another look; only with no print found does a cut-off screen go straight out as before. The
-    overlay draws the print's box (thin dashed white) and the readout says "screen larger than the view — reading
-    the text". `test/screen.e2e.js` part 9: the screen filling the view with a question block at the top left —
-    answered at once, the lens unmoved, the frame + tiles + close-up (the close-up the block alone), the note, the
-    meta line, the readout. Moves are 450 ms apart (`FRAME_HOLD`), at most eight per ten seconds
+    costs it pixels), or closes in (× ≤ 0.9 of the step) only on a STRONG block near the CENTRE (its centre within
+    a quarter of the frame's — the zoom works about the middle, so print off at a side would be pushed out), not
+    within 8 s of a step out from print (`frameInHoldUntil`, `ink.noIn`); the text running to an edge → ONE step
+    out (× 0.72, why 'text'), then another look; only with no print found does a cut-off screen go straight out as
+    before. The overlay draws the print's box (thin dashed white) and the readout (`cutReadout`) says "screen
+    larger than the view — reading the text", or "text off at the top left — point at it to zoom in" when the
+    block is off-centre (its centre more than a quarter of the frame from the middle — what no step in can frame)
+    and not already large in the view (`inkAside`: the author's real case — the question at
+    the far top-left of the frame from 10 cm away is ~4 % of the frame and only aiming at it lets the zoom, up to
+    10×, enlarge it), "text runs off the left — zooming out", or "screen fills the view · no print in view — aim at
+    the question" (a blank part of the screen, or text too small and far to count; dark-mode pages are not found
+    by this detector, a known limit). `test/screen.e2e.js` part 9: the screen filling the view with a question
+    block at the top left — answered at once, the lens unmoved, the frame + tiles + close-up (the close-up the
+    block alone), the note, the meta line, the readout "text off at the top left". Moves are 450 ms apart (`FRAME_HOLD`), at most eight per ten seconds
     (`frameBudget`); a tapped chip holds the loop for 20 s (`frameHoldUntil`). Two stable looks after a move =
     SETTLED (`frameSettled`): the capture is taken at once (`snap('zoom')`, `zoomBumped` so it is new whatever the
     fingerprints say) and the tick rescheduled — the answer comes ~2–3 s after a screen appears, not at the next
@@ -289,8 +335,8 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     out"), deferred six seconds at most, then it goes as it is; a lens with no zoom range keeps the capture-time
     handling of a cut-off screen (the ultra-wide lens, then the banner). Every step goes through `zoomStep`: a lens
     that refuses or ignores two moves — the reported zoom unchanged AND the picture unchanged 350 ms later — sets
-    `zoomDead` and the loop stands down for the session with a status line. `applyZoom` tries the plain
-    `{ zoom }` constraint first (ideal; Safari 17.4+, Chrome), the advanced form as the fallback. **On the
+    `zoomDead` and the loop stands down for the session with a status line. (`applyZoom`: the advanced form
+    first, the plain `{ zoom }` constraint as the fallback — see above.) **On the
     viewfinder** (`overlayDraw`, a canvas over the "cover"-scaled video): the found quad outlined — green when it
     fits, amber when cut off (dashed round the whole frame when overfull), dashed white while zooming in — and a
     readout beside the frame counter (`#zoomLive`: "2.4× · screen fits" / "screen cut off: right" / "zooming to
@@ -404,10 +450,13 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
   finder's geometry: corners however the screen is turned, cut edges, a window behind, a lamp beside a far screen,
   a lit room, a page split by a dark bar, two shades of desk, the homography, the tiles), `node test/framing.test.js`
   (the live auto-zoom's one step: in, capped by the nearest edge; out; back; a screen larger than the view framed by
-  its print; and 400 random runs that settle without ever leaving the frame), `node test/ink.test.js` (the text
-  close-up: the question block boxed, a cursor left out, print on a dim grey ground found, print at an edge said so,
-  none for a whole page of print or no page) and `node test/tabs.test.js` (the TABS verdict in every form, the
-  selected tab, the same question vs another with the same stem).
+  its print — a strong central block closed in on, a speck, an off-centre block, a fresh step-out not; and 400
+  random runs that settle without ever leaving the frame), `node test/ink.test.js` (the text close-up: the question
+  block boxed, a cursor left out, print on a dim grey ground found, print at an edge said so, none for a whole page
+  of print or no page, stripes/bars/a checkerboard not print, a moiré band no block of print and print beside it the
+  print alone, a one-cell strip no block) and `node test/tabs.test.js` (the TABS verdict in every form, the
+  selected tab, the same question vs another with the same stem); `node test/verdict.test.js` also fixes which
+  replies are NO answer (a blur-describing title) and which are (an option about blurred vision).
 - `node test/session.e2e.js`, `node test/drive-renewal.e2e.js`, `node test/fresh-build.e2e.js`,
   `node test/memory-voice.e2e.js`, `node test/drive-helper.e2e.js`, `node test/drive-expired-open.e2e.js` (the app
   opened hours later: a silent renewal, retries on a backoff, a dead token in Google's real shape, and the banner only
@@ -420,7 +469,9 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
   straightened with two tiles, a cut-off screen and the wide lens, a stuck lens, a role card locked and a zoom move
   costing nothing after, a phone with a multi-lens device taken for its wider range, the captures mirrored to an
   in-memory Drive, a screen larger than the view answered at once from the part in view, the screen filling the view
-  answered with tiles and the text close-up), `node test/tabs.e2e.js` (a question over three tabs: collected tab by tab, one request with the
+  answered with tiles and the text close-up), `node test/hold.e2e.js` (a verdict kept ten seconds whatever the
+  picture does, the consistency note, a blur-titled reply and "nothing to read" keeping it, a different question
+  answered at once), `node test/tabs.e2e.js` (a question over three tabs: collected tab by tab, one request with the
   bundle, a second question at once from the same bytes, "Lens, answer"), `node test/latency.e2e.js` (audio cadence and
   highlight reaction time), `node test/document.e2e.js` (a document page by page, the desk, a new subject) and
   `node test/hour-session.e2e.js` (an hour of dictation compressed into half a

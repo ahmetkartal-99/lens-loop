@@ -78,7 +78,8 @@ function jpegSize(b64) {
       // lines of text, laid on the quadrilateral (bilinear in its unit square)
       const at = (u, v) => { const x = (1 - v) * ((1 - u) * q[0][0] + u * q[1][0]) + v * ((1 - u) * q[3][0] + u * q[2][0]); const y = (1 - v) * ((1 - u) * q[0][1] + u * q[1][1]) + v * ((1 - u) * q[3][1] + u * q[2][1]); return [x, y]; };
       g.fillStyle = '#1a1a1a';
-      for (let v = 0.12; v < 0.9; v += 0.07) { const len = 0.35 + ((v * 100) % 50) / 100; for (let u = 0.08; u < 0.08 + len; u += 0.045) { const a = at(u, v), b = at(u + 0.03, v), c = at(u + 0.03, v + 0.02), d = at(u, v + 0.02); g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.lineTo(c[0], c[1]); g.lineTo(d[0], d[1]); g.closePath(); g.fill(); } }   // lines of "words"
+      // lines of "words": at a 2560-px frame, 38 × 11 px with 25-px gaps — strokes, not bars, at the ink detector's 800-px scale (a 63 × 22 px dash fills a 16-px cell from end to end and is rightly no print)
+      for (let v = 0.12; v < 0.9; v += 0.05) { const len = 0.35 + ((v * 100) % 50) / 100; for (let u = 0.08; u < 0.08 + len; u += 0.03) { const a = at(u, v), b = at(u + 0.018, v), c = at(u + 0.018, v + 0.01), d = at(u, v + 0.01); g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.lineTo(c[0], c[1]); g.lineTo(d[0], d[1]); g.closePath(); g.fill(); } }
     };
     draw(); setInterval(draw, 100);
     const vstream = cv.captureStream(10);
@@ -416,7 +417,7 @@ function jpegSize(b64) {
   const meta9 = await p9.evaluate(() => (document.getElementById('answerMeta') || {}).textContent || '');
   assert(/the screen fills the view — read as it is · \d tiles · text close-up/.test(meta9), '9. the meta line says so (' + meta9 + ')');
   const live9 = await p9.evaluate(() => document.getElementById('zoomLive').textContent);
-  assert(/screen larger than the view — reading the text/.test(live9), '9. the readout: reading the text (' + live9 + ')');
+  assert(/text off at the top left — point at it to zoom in/.test(live9), '9. the readout: the question block is off at the top left — where to aim, since the zoom works about the middle (' + live9 + ')');
   assert(errors9.length === 0, '9. no page errors' + (errors9.length ? ': ' + errors9.join(' | ') : ''));
   await b9.close(); server.close();
   console.log(process.exitCode ? 'SCREEN E2E FAILED' : 'SCREEN E2E PASSED');

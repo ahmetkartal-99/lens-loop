@@ -72,4 +72,31 @@ assert(parts('ANSWER: Pros | Cons\n\nA title with a bar in it.') === null && !v(
 assert(parts('ANSWER: Mall Information | Building Plan') === null, 'not parts: tab names are not verdicts');
 assert(JSON.stringify(parts('ANSWER: **1: Yes** | **2: No**')) === JSON.stringify(['1/Yes/', '2/No/']), 'parts: bold stripped');
 assert(!vl('ANSWER: nothing to read\n\nAn empty desk.'), 'loose: never "nothing to read"');
+
+// a reply that is NO ANSWER keeps the text on screen: "nothing to read", or a title that only describes a blurred or
+// empty frame — the words the model used on the user's own captures — never a verdict, never a title about a subject
+const empty = new Function(code + pick('  const EMPTY_FRAME_RE = ', '  function recall(') + '; return { nothingToRead, emptyFrameTitle };')();
+const nr = (text, choice) => empty.nothingToRead(text, choice);
+for (const t of [
+  'ANSWER: nothing to read\n\nAn empty desk.',
+  'ANSWER: Overexposed, motion-blurred frame — only washed-out white visible\n\nNo text can be made out.',
+  'ANSWER: Out-of-focus, washed-out pale blur\n\nThe frame holds no legible text.',
+  'ANSWER: Blurry photo of a laptop screen\n\nToo blurred to read.',
+  'ANSWER: Blank white screen\n\nNothing on it.',
+  'ANSWER: No legible text in frame\n\nA white glow.',
+  'ANSWER: Screen too blurred to read\n\n…',
+  'ANSWER: Camera still moving — unreadable\n\n…',
+]) assert(nr(t), 'no answer: ' + t.split('\n')[0]);
+for (const t of [
+  'ANSWER: B) Blurred vision is a side effect\n\nOf the drug…',
+  'ANSWER: C) Washed-out appearance of the retina\n\n…',
+  'ANSWER: Blurred vision after head injury\n\nA reading passage about…',
+  'ANSWER: Yes\n\nThe text is clear.',
+  'ANSWER: 1: Yes | 2: No\n\n…',
+  'ANSWER: Discharge advice after pneumonia\nROLE: Doctor\n\n**Setting:** …',
+  'ANSWER: A patient who cannot read small print\n\nPresbyopia is…',
+  'ANSWER: The toll keeper takes a memory\nSTORYLINE: Current session\n\n…',
+]) assert(!nr(t), 'an answer: ' + t.split('\n')[0]);
+assert(!nr('ANSWER: Lobar pneumonia\n\n…', true) && !nr('ANSWER: C) Image is out of focus\n\n…', true), 'a page judged a question with options: a bare answer line, or an option, is an answer');
+assert(nr('ANSWER: Out-of-focus, washed-out pale blur\n\n…', true), '… but a bare line that only describes the blur is none, even on such a page');
 console.log(process.exitCode ? 'VERDICT FAILED' : 'ALL TESTS PASSED');
