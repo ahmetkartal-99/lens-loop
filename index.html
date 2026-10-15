@@ -650,7 +650,7 @@
           <option value="environment">Back camera (auto)</option>
           <option value="user">Front camera</option>
         </select>
-        <div class="hint">"Back camera (auto)" picks the phone's multi-lens camera when it has one (one zoom range across the lenses, 0.5× to 15× on an iPhone), so the auto-zoom has the whole range. Lenses the phone reports are listed after the first Start. Zoom presets (widest, 1×, 2×) appear on the camera view while running.</div>
+        <div class="hint">"Back camera (auto)" picks the phone's multi-lens camera when it has one (one zoom range across the lenses, 0.5× to 15× on an iPhone), so the auto-zoom has the whole range. Lenses the phone reports are listed after the first Start. Zoom chips (0.5×, 1×, 2×, 5× — as the phone's own Camera app labels them; on a phone that lists the ultra-wide lens separately, 0.5× switches to that lens) appear on the camera view while running.</div>
       </div>
       <div class="field">
         <label for="thumbSize">Answer text size</label>
@@ -875,7 +875,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-14 21:30';
+  const BUILD = '2026-10-14 21:55';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -1079,9 +1079,18 @@
     try { await video.play(); } catch (e) { /* autoplay blocked; muted video usually plays anyway */ }
     await waitForFrames();
     $('vfPlaceholder').hidden = true;
+    await listCameras();
     await setupZoom();
-    listCameras();
     await bestLens(withMic);
+  }
+  // A lens switched to by a chip (0.5× on a single-lens phone = the ultra-wide camera; 1× back), or by the auto-zoom
+  // for a cut-off screen: for this session; the chosen lens is back at Stop.
+  async function switchLens(deviceId, note) {
+    if (!deviceId || deviceId === S.deviceId) return false;
+    if (mainDevice == null) mainDevice = S.deviceId || '';
+    S.deviceId = deviceId;
+    try { await openCamera(!!micStream || listening); if (note) setStatus('armed', note); bumpSnap(); return true; }
+    catch (e) { S.deviceId = mainDevice || ''; mainDevice = null; try { await openCamera(!!micStream || listening); } catch (e2) {} return false; }
   }
   // "Back camera (auto)": the phone's MULTI-LENS device when it has one ("Back Triple Camera", "Back Dual Wide
   // Camera" — one zoom range running across the ultra-wide, the wide and the telephoto, 0.5× to 15× and more on an
@@ -1103,7 +1112,7 @@
     try {
       await openCamera(withMic);
       const range = zoomCaps ? zoomCaps.max / zoomCaps.min : 1;
-      if (range > prevRange * 1.2) { lensAuto = true; listCameras(); setStatus('armed', 'Using the ' + (better.label || 'multi-lens camera') + ' — zoom ' + fmtZoom(zoomCaps.min) + ' to ' + fmtZoom(zoomCaps.max)); return; }
+      if (range > prevRange * 1.2) { lensAuto = true; listCameras(); setStatus('armed', 'Using the ' + (better.label || 'multi-lens camera') + ' — zoom ' + showZoom(zoomCaps.min) + ' to ' + showZoom(zoomCaps.max)); return; }
       S.deviceId = prevId; await openCamera(withMic);   // no wider a range after all: back to the plain lens
     } catch (e) { S.deviceId = ''; try { await openCamera(withMic); } catch (e2) {} }
   }
@@ -1112,6 +1121,16 @@
   const zoomRow = $('zoomRow');
   let zoomCaps = null;
   const fmtZoom = (z) => (Math.round(z * 10) / 10).toString().replace(/\.0$/, '') + '×';
+  // The zoom as the phone's own Camera app shows it. A lens that holds the ultra-wide — the multi-lens camera, or
+  // the ultra-wide camera itself — reports that widest view as zoom 1.0 and the main lens as 2.0; the Camera app
+  // calls those 0.5× and 1×. So on such a lens every zoom shown or saved is the raw value halved (zoomScale 0.5);
+  // the auto-zoom works in raw values throughout.
+  let zoomScale = 1;
+  const showZoom = (z) => fmtZoom(z * zoomScale);
+  const lensHoldsWide = (label) => /ultra\s*-?\s*wide|triple|dual\s*wide/i.test(label || '');
+  let cameraDevices = [];   // every lens the phone reports, from listCameras
+  const ultraWideDevice = () => cameraDevices.find((d) => /ultra\s*-?\s*wide|0[.,]5\s*x/i.test(d.label || ''));
+  const mainBackDevice = () => cameraDevices.find((d) => /back|rear/i.test(d.label || '') && !/ultra|tele|front/i.test(d.label || '') && !/triple|dual/i.test(d.label || '')) || cameraDevices.find((d) => /triple|dual/i.test(d.label || ''));
   async function setupZoom() {
     zoomCaps = null;
     zoomRow.hidden = true;
@@ -1122,24 +1141,32 @@
     try { caps = track.getCapabilities(); } catch (e) { return; }
     if (!caps || !caps.zoom || typeof caps.zoom.min !== 'number' || typeof caps.zoom.max !== 'number' || caps.zoom.max <= caps.zoom.min) return;
     zoomCaps = caps.zoom;
+    let label = ''; try { label = track.label || ''; } catch (e) {}
+    zoomScale = lensHoldsWide(label) && caps.zoom.min <= 1.05 ? 0.5 : 1;
+    // the chips, in the Camera app's terms: 0.5×, 1×, 2×, 5× where this lens reaches them …
     const presets = [];
-    const add = (z) => {
+    const add = (shown) => {
+      const z = shown / zoomScale;
       if (z < caps.zoom.min - 1e-6 || z > caps.zoom.max + 1e-6) return;
-      if (presets.some((p) => Math.abs(p - z) < 0.05)) return;
-      presets.push(z);
+      if (presets.some((p) => Math.abs(p.z - z) < 0.05)) return;
+      presets.push({ z, shown });
     };
-    add(caps.zoom.min); add(1); add(2);
-    for (const z of presets) {
+    add(0.5); add(1); add(2); add(5);
+    if (!presets.some((p) => Math.abs(p.z - caps.zoom.min) < 0.05)) presets.unshift({ z: caps.zoom.min, shown: caps.zoom.min * zoomScale });
+    const chip = (text, onTap, raw) => {
       const b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'zoom-chip';
-      b.dataset.zoom = String(z);
-      b.textContent = fmtZoom(z);
-      b.addEventListener('click', (ev) => { ev.stopPropagation(); S.zoom = z; saveSettings(); applyZoom(z); });
+      b.type = 'button'; b.className = 'zoom-chip'; b.textContent = text;
+      if (raw != null) b.dataset.zoom = String(raw);
+      b.addEventListener('click', (ev) => { ev.stopPropagation(); onTap(); });
       zoomRow.appendChild(b);
-    }
+    };
+    // … and a 0.5× that is another LENS on a phone that lists the ultra-wide camera separately (or 1× back from it)
+    const uw = ultraWideDevice(), mb = mainBackDevice();
+    if (zoomScale === 1 && uw && !lensHoldsWide(label) && S.facing !== 'user') chip('0.5×', () => switchLens(uw.deviceId, 'Ultra-wide lens (0.5×)'));
+    for (const p of presets) chip(fmtZoom(p.shown), () => { S.zoom = p.shown; saveSettings(); applyZoom(p.z); }, p.z);
+    if (zoomScale === 0.5 && /ultra/i.test(label) && mb && caps.zoom.max * zoomScale < 1) chip('1×', () => switchLens(mb.deviceId, 'Main lens (1×)'));
     zoomRow.hidden = false;
-    const want = S.zoom === 'min' ? caps.zoom.min : clamp(+S.zoom || 1, caps.zoom.min, caps.zoom.max);
+    const want = S.zoom === 'min' ? caps.zoom.min : clamp((+S.zoom || 1) / zoomScale, caps.zoom.min, caps.zoom.max);
     if (Math.abs(zoomNow() - want) > 0.01) await applyZoom(want);
     else { zoomCur = want; for (const chip of zoomRow.children) chip.classList.toggle('on', Math.abs(+chip.dataset.zoom - want) < 0.05); }
   }
@@ -1174,7 +1201,7 @@
   let zoomAdjustAt = 0, noScreenRuns = 0, wideTried = false, moveBackAt = 0, cutStreak = 0;
   let zoomBumped = false;   // the lens just moved: the next capture is new whatever the fingerprints say (consumed by snap)
   let zoomStuck = 0, zoomDead = false, mainDevice = null;   // a lens that ignores zoom changes is left alone for the session
-  const baseZoom = () => !zoomCaps ? 1 : S.zoom === 'min' ? zoomCaps.min : clamp(+S.zoom || 1, zoomCaps.min, zoomCaps.max);
+  const baseZoom = () => !zoomCaps ? 1 : S.zoom === 'min' ? zoomCaps.min : clamp((+S.zoom || 1) / zoomScale, zoomCaps.min, zoomCaps.max);   // S.zoom is in the Camera app's terms
   function autoZoom(sc) {
     if (S.autoZoom === false || zoomDead || !running || !stream) return false;
     const now = Date.now(), cur = zoomNow();
@@ -1228,9 +1255,7 @@
     const cur = stream && stream.getVideoTracks()[0]; let curId = ''; try { curId = (cur && cur.getSettings() || {}).deviceId || ''; } catch (e) {}
     const wide = devices.find((d) => /ultra\s*-?\s*wide|0[.,]5\s*x/i.test(d.label || '') && d.deviceId !== curId);
     if (!wide) return false;
-    if (mainDevice == null) mainDevice = S.deviceId || '';   // the chosen lens, back when the session ends
-    S.deviceId = wide.deviceId;   // for this session; the saved choice stands next time
-    try { await openCamera(false); setStatus('armed', 'Switched to the wide lens so the whole screen fits'); bumpSnap(); return true; } catch (e) { return false; }
+    return switchLens(wide.deviceId, 'Switched to the ultra-wide lens (0.5×) so the whole screen fits');
   }
 
   // Fill the camera picker with every lens the phone reports (labels appear once permission was given).
@@ -1239,6 +1264,7 @@
     if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
     let devices = [];
     try { devices = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput'); } catch (e) { return; }
+    cameraDevices = devices;
     for (const opt of [...sel.options]) if (opt.value.startsWith('device:')) opt.remove();
     devices.forEach((d, i) => {
       const opt = document.createElement('option');
@@ -1544,20 +1570,20 @@
   function diagText() {
     const lines = [];
     lines.push('camera: ' + (lensLabel || (stream ? '(no label)' : 'not open')) + (S.deviceId ? (lensAuto ? ' (auto: the multi-lens camera)' : ' (chosen lens)') : ' (auto)'));
-    lines.push('zoom range: ' + (zoomCaps ? fmtZoom(zoomCaps.min) + ' – ' + fmtZoom(zoomCaps.max) + ' · now ' + fmtZoom(zoomNow()) + (zoomDead ? ' · the lens ignored zoom changes — auto-zoom off' : '') : 'none reported by this camera — no auto-zoom possible'));
+    lines.push('zoom range: ' + (zoomCaps ? showZoom(zoomCaps.min) + ' – ' + showZoom(zoomCaps.max) + ' · now ' + showZoom(zoomNow()) + (zoomScale !== 1 ? ' (as the Camera app shows it; raw ' + fmtZoom(zoomCaps.min) + ' – ' + fmtZoom(zoomCaps.max) + ')' : '') + (zoomDead ? ' · the lens ignored zoom changes — auto-zoom off' : '') : 'none reported by this camera — no auto-zoom possible'));
     lines.push('straightening on the GPU: ' + (glFailed ? 'no (WebGL failed — axis-aligned crop instead)' : gl ? 'yes' : 'not used yet'));
     lines.push('auto-zoom ' + (S.autoZoom === false ? 'off' : 'on') + ' · screen reading ' + (S.screenRead === false ? 'off' : 'on') + ' · capture every ' + S.interval + ' s');
     if (!diagLog.length) lines.push('no captures yet');
     for (const d of diagLog.slice().reverse()) {
       const sc = d.screen;
-      lines.push(new Date(d.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' · ' + d.frame + ' · ' + fmtZoom(d.zoom) + ' · ' +
+      lines.push(new Date(d.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' · ' + d.frame + ' · ' + showZoom(d.zoom) + ' · ' +
         (sc.found ? (sc.cut.length ? 'screen cut off on the ' + sc.cut.join(' and ') : (sc.straightened ? 'screen straightened' : sc.cropped ? 'screen cropped' : 'screen') + ' ' + Math.round(sc.widthFrac * 100) + ' % wide' + (sc.tiles ? ' · ' + sc.tiles + ' tiles' : '')) : 'no screen: ' + sc.why));
     }
     return lines.join('\n');
   }
   // What the meta line says about the picture: "screen straightened · 4 tiles · 1.8×", "screen cut off on the right".
   const screenNote = (f) => !f || !f.screen ? '' : f.screen.cut.length ? 'screen cut off on the ' + f.screen.cut.join(' and ')
-    : (f.screen.straightened ? 'screen straightened' : f.screen.cropped ? 'screen cropped' : f.screen.found ? 'screen' : f.screen.why ? 'no screen found — ' + f.screen.why : '') + (f.screen.tiles ? (f.screen.found ? ' · ' : '') + f.screen.tiles + ' tiles' : '') + (f.screen.zoom && Math.abs(f.screen.zoom - 1) > 0.05 ? ' · ' + fmtZoom(f.screen.zoom) : '');
+    : (f.screen.straightened ? 'screen straightened' : f.screen.cropped ? 'screen cropped' : f.screen.found ? 'screen' : f.screen.why ? 'no screen found — ' + f.screen.why : '') + (f.screen.tiles ? (f.screen.found ? ' · ' : '') + f.screen.tiles + ' tiles' : '') + (f.screen.zoom && Math.abs(f.screen.zoom * zoomScale - 1) > 0.05 ? ' · ' + showZoom(f.screen.zoom) : '');
   // The frame's images for a request: the overview, then the closer tiles, labelled.
   function frameImages(f, label) {
     const out = [];

@@ -224,7 +224,14 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     — and keeps it only if its zoom range is really wider (> 1.2× the ratio): one range across ultra-wide, wide and
     telephoto (0.5×–15× and more on an iPhone, the phone switching lenses as the zoom moves), so the auto-zoom has
     the whole of it. Tried once per session (`lensTried`), the picker still says auto (`lensAuto`), the choice is
-    dropped at Stop; `wideLens` stands down for such a lens (the wide end is in its own range). **Diagnostics**: the
+    dropped at Stop; `wideLens` stands down for such a lens (the wide end is in its own range). **Zoom in the Camera
+    app's terms**: a lens holding the ultra-wide (the multi-lens camera, or the ultra-wide camera itself) reports
+    that widest view as raw zoom 1.0 and the main lens as 2.0, which Apple labels 0.5× and 1× — so on such a lens
+    (`lensHoldsWide(label)`, min ≤ 1.05) `zoomScale` = 0.5 and every zoom SHOWN or SAVED (`showZoom`, `S.zoom`, the
+    chips 0.5×/1×/2×/5×, the status, the meta line, the diagnostics) is the raw value halved; the auto-zoom works in
+    raw values throughout. On a phone that lists the ultra-wide camera separately, a "0.5×" chip switches to that
+    LENS (`switchLens`, for the session, the chosen lens back at Stop) and a "1×" chip on it switches back;
+    `listCameras` runs before `setupZoom` so the chips know the lenses (`cameraDevices`). **Diagnostics**: the
     Settings sheet shows `diagText()` — the camera label, its zoom range and the zoom now, whether the GPU
     straightening ran, and the last 12 captures (`diagLog`) with what the finder saw ("screen straightened 49 % wide
     · 2 tiles", "screen cut off on the right", "no screen: nothing much brighter than the room (bright side 48, the
