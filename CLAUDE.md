@@ -302,7 +302,10 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     band, a print cell 3–30 % — ink depth, adjacency and chroma alone did not separate them. Touching cells cluster
     and the cluster with the MOST CELLS is the text (a block of lines is extensive; a cursor, a speck is compact);
     (cells one empty row apart join too — the lines of a widely spaced question, a stem and its options, are one
-    block; columns apart stay apart); `strong` marks a BLOCK of print (≥ 6 cells, some row ≥ 3 cells wide, some
+    block; columns apart stay apart; a cluster that never runs two cells wide — a column of specks, a seam — is no
+    print at all; and the BROWSER'S BARS along the top edge — a band of print touching the top, five rows at most
+    — give way to a cluster of its own below them with a third of the cells: from a distance the tab bar can
+    outweigh the question under it, `test/ink.test.js` 8); `strong` marks a BLOCK of print (≥ 6 cells, some row ≥ 3 cells wide, some
     column ≥ 2 deep — `rowMax`/`colMax`;
     the cells along the edge of a moiré band, half page half weave, make a line or a staircase, never a block;
     density was tried and rejected: real paragraphs fill 10–30 % of their box). Only a strong block goes CLOSE UP —
@@ -310,23 +313,53 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     text in the same picture, close up … read the small print here") whenever the print covers < 55 % of the
     picture — the author's far-right photo yields the question and all five options crisp at 454×655 from a
     2016-px frame; his blank/moiré frames now yield none (they used to send the model a "close-up" of the weave,
-    22–53 % of the frame, and the loop zoomed INTO it). **A screen larger than the view is FRAMED BY ITS PRINT**
+    22–53 % of the frame, and the loop zoomed INTO it). On a screen LARGER than the view the close-up is cut from
+    the FRAME as the camera saw it (`rawInk`, sharp, never resampled — the straightened part in view may stretch
+    the far end threefold and leave it soft; the label says it is not straightened, lines may slope, letters be
+    squeezed) and ANY print found goes (a one-line question, a small block at the far end: `strong` not required
+    there; a whole screen in view keeps the block rule and the straightened picture); the margin round the box is
+    a cell and a half (the last option of the author's GMAT item sat half outside the old three-quarter margin);
+    print counts only when it lies ON the screen the finder found (`inkOnScreen`: the box's centre inside
+    `boxFrac` — his fingers at the frame's edge and the keyboard below the bezel are "print" to the cell test);
+    and every close-up has its CONTRAST EVENED (`evenContrast`: a 6×6 grid, each cell's 3rd and 92nd percentiles
+    as its black and white, interpolated between cell centres, every pixel stretched between them on all three
+    channels; a cell with under 60 between black and white keeps its white and takes its black 60 below, so blank
+    page is not blown up into speckles) — print on the dim far side of a screen seen from an angle, grey on darker
+    grey, reaches the model black on white; his 10:53 capture at 0.7× yields the GMAT question and all five
+    options crisp from the 1024-px Drive copy alone. **A screen larger than the view is FRAMED BY ITS PRINT**
     (`framingMove`'s `ink` argument, from `inkBox(video)` on the live frame whenever the screen is cut;
-    `frameAdjusting` gets the capture's own `screen.ink`): the text whole in view → the lens STAYS (every step out
-    costs it pixels), or closes in (× ≤ 0.9 of the step) only on a STRONG block near the CENTRE (its centre within
-    a quarter of the frame's — the zoom works about the middle, so print off at a side would be pushed out), not
-    within 8 s of a step out from print (`frameInHoldUntil`, `ink.noIn`); the text running to an edge → ONE step
-    out (× 0.72, why 'text'), then another look; only with no print found does a cut-off screen go straight out as
-    before. The overlay draws the print's box (thin dashed white) and the readout (`cutReadout`) says "screen
+    `frameAdjusting` gets the capture's own `screen.ink`): a BLOCK whole in view is closed in on as far as its
+    headroom to the nearest frame edge allows (`stepIn`'s cap — the lens zooms about the middle, so the step stops
+    where the block would reach an edge; a question in a corner gets what the corner allows and never leaves the
+    view; the step a tenth short, × 0.9; no `central` gate any more — the cap is what keeps the block in view),
+    not within 8 s of a step out from print (`frameInHoldUntil`, `ink.noIn`); a LARGE block (`FRAME_BIG` 0.4 of
+    the frame) running off an edge → ONE step out (× 0.72, why 'text'), then another look; a SMALL block or a line
+    at an edge (the question at the top of the view with its page header above, the browser's tab bar) → the lens
+    STAYS — a step out would only shrink it and the close-up reads what is in view (the author's 10:53 session:
+    the loop used to step out from 0.7×, where the question was a block, to 0.5×, where it was nothing — the
+    "zooming out" captures in his Captures folder); a line or a speck whole in view → stays; only with NO print in
+    view does a cut-off screen go out, to find some. **The SWEEP** (`seeking`, `inkMissing`, `INK_MISS` 5 looks,
+    `SEEK_STEP` 1.2, `SEEK_DWELL` 1.5 s, `SEEK_REST` 60 s; `framingMove`'s `seek` = 'step' | 'hold'): at the
+    widest zoom with the screen cut off and no BLOCK of print in sight for five looks — print too small to count
+    there (his question: nothing but the tab bar at 0.5×, a block at 0.7×) — the lens sweeps IN toward the chosen
+    zoom a fifth at a time, 1.5 s apart, never out meanwhile and no capture after a sweep step; a block found →
+    the framing takes over (and a settle brings the capture); nothing by the chosen zoom → out as usual and no
+    sweep for a minute. A sweep counts as a move in progress for `frameAdjusting` (captures held ≤ 6 s). Only
+    with a range below the chosen zoom (an iPhone's 0.5×; the e2e fakes' 1–5 never sweep). The overlay draws the
+    print's box (thin dashed white) and the readout (`cutReadout`) says "screen
     larger than the view — reading the text", or "text off at the top left — point at it to zoom in" when the
     block is off-centre (its centre more than a quarter of the frame from the middle — what no step in can frame)
     and not already large in the view (`inkAside`: the author's real case — the question at
     the far top-left of the frame from 10 cm away is ~4 % of the frame and only aiming at it lets the zoom, up to
     10×, enlarge it), "text runs off the left — zooming out", or "screen fills the view · no print in view — aim at
     the question" (a blank part of the screen, or text too small and far to count; dark-mode pages are not found
-    by this detector, a known limit). `test/screen.e2e.js` part 9: the screen filling the view with a question
-    block at the top left — answered at once, the lens unmoved, the frame + tiles + close-up (the close-up the
-    block alone), the note, the meta line, the readout "text off at the top left". Moves are 450 ms apart (`FRAME_HOLD`), at most eight per ten seconds
+    by this detector, a known limit), "text small at the top left — point at it" for a line of print, "no print
+    in view — looking closer" during a sweep. `test/screen.e2e.js` part 9: the screen filling the view with a
+    question block at the top left — answered at once, the lens unmoved, the frame + tiles + close-up (the
+    close-up the block alone), the note, the meta line, the readout "text off at the top left"; part 10 (a range
+    0.5–10 on the `wideRange` flag; scenes 'blank' and 'corner', the block scaled about the middle by the zoom): a
+    blank screen larger than the view → out to the widest; the block appearing, too small to count → the sweep
+    (0.62…), the block counted, the framing in to ~0.85, the capture with the evened close-up and its answer. Moves are 450 ms apart (`FRAME_HOLD`), at most eight per ten seconds
     (`frameBudget`); a tapped chip holds the loop for 20 s (`frameHoldUntil`). Two stable looks after a move =
     SETTLED (`frameSettled`): the capture is taken at once (`snap('zoom')`, `zoomBumped` so it is new whatever the
     fingerprints say) and the tick rescheduled — the answer comes ~2–3 s after a screen appears, not at the next
@@ -450,7 +483,8 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
   finder's geometry: corners however the screen is turned, cut edges, a window behind, a lamp beside a far screen,
   a lit room, a page split by a dark bar, two shades of desk, the homography, the tiles), `node test/framing.test.js`
   (the live auto-zoom's one step: in, capped by the nearest edge; out; back; a screen larger than the view framed by
-  its print — a strong central block closed in on, a speck, an off-centre block, a fresh step-out not; and 400
+  its print — a block closed in on as far as its headroom allows, a speck or a line not, a fresh step-out not, a
+  large block at an edge out, a small one or a line at an edge kept; the sweep's steps, waits and end; and 400
   random runs that settle without ever leaving the frame), `node test/ink.test.js` (the text close-up: the question
   block boxed, a cursor left out, print on a dim grey ground found, print at an edge said so, none for a whole page
   of print or no page, stripes/bars/a checkerboard not print, a moiré band no block of print and print beside it the

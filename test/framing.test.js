@@ -60,13 +60,36 @@ assert(m && m.why === 'in' && near(m.zoom, 1.44), 'the screen fills the view, a 
 assert(framingMove(big, 1, caps, 1, 0, inkAt(0.35, 0.35, 0.65, 0.65)) === null, 'a speck of print near the centre: kept in view, not closed in on');
 assert(framingMove(big, 1, caps, 1, 0, Object.assign(inkAt(0.05, 0.3, 0.3, 0.6), { strong: true })) === null, 'a block of print off at the left: not closed in on (it would be pushed out)');
 assert(framingMove(big, 1, caps, 1, 0, Object.assign(inkAt(0.35, 0.35, 0.65, 0.65), { strong: true, noIn: true })) === null, 'right after a step out from the print: no step in');
-m = framingMove(big, 1, caps, 1, 0, inkAt(0, 0.1, 0.3, 0.5, ['left']));
-assert(m && m.why === 'text' && near(m.zoom, 0.72), 'the print runs to the left edge: ONE step out, not straight to the widest (' + JSON.stringify(m) + ')');
-m = framingMove(big, 0.5, caps, 1, 0, inkAt(0, 0.1, 0.3, 0.5, ['left']));
+m = framingMove(big, 1, caps, 1, 0, Object.assign(inkAt(0, 0.1, 0.5, 0.7, ['left']), { strong: true }));
+assert(m && m.why === 'text' && near(m.zoom, 0.72), 'a LARGE block of print running off the left edge: ONE step out, not straight to the widest (' + JSON.stringify(m) + ')');
+m = framingMove(big, 0.5, caps, 1, 0, Object.assign(inkAt(0, 0.1, 0.5, 0.7, ['left']), { strong: true }));
 assert(m && m.why === 'widest' && m.zoom === null, '… and at the widest, nothing more the zoom can do');
+assert(framingMove(big, 1, caps, 1, 0, inkAt(0, 0.1, 0.5, 0.7, ['left'])) === null, 'the same extent of print that is no block (a line, specks): read as it is, no step out');
+assert(framingMove(big, 1, caps, 1, 0, Object.assign(inkAt(0.1, 0, 0.3, 0.3, ['top']), { strong: true })) === null, 'a SMALL block at the top edge (a question in the corner, its page header above): the lens stays — a step out would only shrink it, the close-up reads it');
+assert(framingMove(big, 1, caps, 1, 0, inkAt(0.4, 0.4, 0.55, 0.5)) === null, 'a line of print (not a block) whole in view: the lens stays, it does not go out to look for more');
+m = framingMove(big, 1, caps, 1, 0, Object.assign(inkAt(0.15, 0.3, 0.4, 0.6), { strong: true }));
+assert(m && m.why === 'in' && near(m.zoom, 1.221, 0.01), 'a block off to the left with some headroom: closed in on as far as the headroom allows, a little short of it (' + JSON.stringify(m) + ')');
 m = framingMove(screen(0, 0.1, 0.8, 0.9, ['left']), 2, caps, 1, 0, null);
 assert(m && m.why === 'out' && near(m.zoom, 1.44), 'cut off with no print found: out as before (' + JSON.stringify(m) + ')');
 assert(framingMove(big, 1, caps, 1, 0, inkAt(0.1, 0.1, 0.9, 0.9)) === null, 'the print filling the view already: nothing to do');
+
+// the SWEEP for print: a screen larger than the view, nothing in view at the widest — a step in toward the chosen
+// zoom when one is due, a wait between steps, nothing past the chosen zoom; without a sweep, out as before
+const blank = screen(0, 0, 1, 1, ['every side']);
+m = framingMove(blank, 0.5, caps, 1, 0, null, 'step');
+assert(m && m.why === 'seek' && near(m.zoom, 0.6), 'a sweep step from the widest: a fifth closer (' + JSON.stringify(m) + ')');
+assert(framingMove(blank, 0.6, caps, 1, 0, null, 'hold') === null, 'between sweep steps: the lens waits (no step out either)');
+m = framingMove(blank, 0.9, caps, 1, 0, null, 'step');
+assert(m && m.why === 'seek' && m.zoom === 1, 'the last sweep step lands on the chosen zoom exactly');
+assert(framingMove(blank, 1, caps, 1, 0, null, 'step') === null, 'at the chosen zoom the sweep has nowhere further to go');
+m = framingMove(blank, 1, caps, 1, 0, null, null);
+assert(m && m.why === 'out' && near(m.zoom, 0.72), 'no sweep: out, to find the print (' + JSON.stringify(m) + ')');
+m = framingMove(blank, 0.6, caps, 1, 0, Object.assign(inkAt(0.35, 0.35, 0.65, 0.65), { strong: true }), 'step');
+assert(m && m.why === 'in', 'a block found during a sweep: the framing takes over (' + JSON.stringify(m) + ')');
+m = framingMove(blank, 0.5, caps, 1, 0, inkAt(0.4, 0, 0.8, 0.1, ['top']), 'step');
+assert(m && m.why === 'seek' && near(m.zoom, 0.6), 'a line of print at the top edge (the browser\'s tab bar) does not stop a sweep: the step goes on (' + JSON.stringify(m) + ')');
+m = framingMove(blank, 0.6, caps, 1, 0, inkAt(0.4, 0.4, 0.55, 0.5), 'step');
+assert(m && m.why === 'seek', '… nor a speck whole in view (' + JSON.stringify(m) + ')');
 
 // a run of steps settles on a fit, from anywhere in the frame, without the screen ever leaving it
 let worst = 0, longest = 0, unfit = 0;

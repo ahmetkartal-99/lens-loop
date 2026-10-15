@@ -63,6 +63,11 @@ function jpegSize(b64) {
       const g = cv.getContext('2d'), s = window.__scene;
       g.fillStyle = '#232326'; g.fillRect(0, 0, W, H);
       g.fillStyle = '#303034'; g.fillRect(0, 1200, W, 240);
+      if (s === 'blank' || s === 'corner') {   // the screen filling the view at EVERY zoom (the camera close, to one side): a blank page, or one with a question block at the top left that the zoom scales about the middle — tiny at the widest, a block at 0.7×
+        g.fillStyle = '#ececea'; g.fillRect(0, 0, W, H);
+        if (s === 'corner') { const k = window.__zoom || 1; g.fillStyle = '#1a1a1a'; for (let y = 120; y < 240; y += 30) { const len = 160 + ((y / 30) % 3) * 20; for (let x = 110; x < 110 + len; x += 38) g.fillRect(1280 + (x - 1280) * k, 720 + (y - 720) * k, 24 * k, 9 * k); } }
+        return;
+      }
       if (s === 'filled') {   // the screen filling the whole view (the phone close, or far off to one side): a page with a question block at the top left
         g.fillStyle = '#ececea'; g.fillRect(0, 0, W, H);
         g.fillStyle = '#1a1a1a';
@@ -93,7 +98,7 @@ function jpegSize(b64) {
         const want = c && c.video && c.video.deviceId && c.video.deviceId.exact; if (want) window.__device = want;
         for (const t0 of vstream.getVideoTracks()) {
           const t = t0.clone();
-          t.getCapabilities = () => ({ zoom: { min: 1, max: window.__device === 'triple' ? 15 : 5, step: 0.1 }, deviceId: window.__device });
+          t.getCapabilities = () => ({ zoom: { min: localStorage.getItem('wideRange') === '1' ? 0.5 : 1, max: window.__device === 'triple' ? 15 : localStorage.getItem('wideRange') === '1' ? 10 : 5, step: 0.1 }, deviceId: window.__device });
           t.getSettings = () => ({ zoom: window.__zoom, deviceId: window.__device, width: 2560, height: 1440 });
           t.applyConstraints = async (cc) => { const z = (cc.advanced && cc.advanced[0] && cc.advanced[0].zoom) || cc.zoom; if (typeof z === 'number') { window.__zoomCalls.push(Math.round(z * 100) / 100); if (!window.__zoomStuck) window.__zoom = z; } };   // a stuck lens: the call is accepted, nothing moves
           tracks.push(t);
@@ -419,6 +424,49 @@ function jpegSize(b64) {
   const live9 = await p9.evaluate(() => document.getElementById('zoomLive').textContent);
   assert(/text off at the top left — point at it to zoom in/.test(live9), '9. the readout: the question block is off at the top left — where to aim, since the zoom works about the middle (' + live9 + ')');
   assert(errors9.length === 0, '9. no page errors' + (errors9.length ? ': ' + errors9.join(' | ') : ''));
-  await b9.close(); server.close();
+  await b9.close();
+
+  // 10. the SWEEP for print: a lens with a range like an iPhone's (0.5–10, the chosen zoom 1), the screen filling the
+  // view with nothing on it — the lens goes out to the widest to find something; then a question block comes into
+  // view at the top left, too small at 0.5× to count as a block: after a few looks the lens sweeps IN a step at a
+  // time (0.6, 0.72) until the block counts, then the framing closes in on it as far as the corner allows and the
+  // capture goes with the close-up of the block at the camera's own pixels, contrast evened
+  const b10 = await chromium.launch();
+  const ctx10 = await b10.newContext({ viewport: { width: 420, height: 860 } });
+  await ctx10.addInitScript(() => { localStorage.setItem('noWide', '1'); localStorage.setItem('wideRange', '1'); });
+  await ctx10.addInitScript(initCamera);
+  const p10 = await ctx10.newPage();
+  const errors10 = []; p10.on('pageerror', (e) => errors10.push(String(e)));
+  const main10 = [];
+  await p10.route('https://api.anthropic.com/v1/messages', async (route) => {
+    const body = JSON.parse(route.request().postData());
+    if (/haiku/.test(body.model)) return fulfil(route, { status: 200, contentType: 'application/json', body: JSON.stringify({ content: [{ type: 'text', text: 'CHOICE' }], usage: { input_tokens: 1500, output_tokens: 20 } }) });
+    main10.push({ at: Date.now(), zoom: await p10.evaluate(() => window.__zoom), body, scene: await p10.evaluate(() => window.__scene) });
+    return fulfil(route, { status: 200, contentType: 'text/event-stream', body: sse(/close up/.test(textOf(body.messages[0].content)) ? 'ANSWER: B) 42\n\nFrom the close-up.' : 'ANSWER: nothing to read\n\nA blank page.') });
+  });
+  await p10.goto(`http://127.0.0.1:${port}/index.html#key=sk-ant-test-0000`);
+  await p10.evaluate(() => { window.__scene = 'blank'; });
+  await p10.waitForTimeout(800);
+  await p10.click('#startBtn');
+  await p10.waitForTimeout(1800);   // two steps out (0.72, 0.52) within the first second; the sweep for print would start two seconds after that
+  let zc10 = await p10.evaluate(() => window.__zoomCalls.slice());
+  assert(zc10.length >= 1 && Math.abs(zc10[zc10.length - 1] - 0.5) < 0.03, '10. a blank screen larger than the view: the lens went out to the widest (' + zc10.join() + ')');
+  const outCalls = zc10.length;
+  await p10.evaluate(() => { window.__scene = 'corner'; });
+  await p10.waitForTimeout(12000);   // a few looks with the block too small to count, the sweep's steps 1.5 s apart, the settle, the capture
+  zc10 = await p10.evaluate(() => window.__zoomCalls.slice());
+  const sweep = zc10.slice(outCalls);
+  assert(sweep.length >= 2 && sweep[0] > 0.58 && sweep[0] < 0.64 && sweep.every((z, i) => i === 0 || z > sweep[i - 1]), '10. a block too small at the widest: the lens swept in, a fifth closer, and from there only in (' + sweep.join() + ')');
+  assert(sweep.length >= 2 && sweep[sweep.length - 1] > 0.8 && sweep[sweep.length - 1] < 1.0, '10. … the block counted, and the framing closed in on it as far as the corner allows (' + sweep.join() + ')');
+  const last10 = main10.filter((m) => m.scene === 'corner').pop();
+  assert(last10 && last10.zoom > 0.7, '10. the capture came after the sweep, at the closer zoom (' + (last10 ? last10.zoom : 'none') + ')');
+  const c10 = last10 ? last10.body.messages[0].content : [];
+  const closeLabel10 = c10.findIndex((b) => b.type === 'text' && /close up/.test(b.text) && /contrast evened/.test(b.text));
+  assert(closeLabel10 > 0 && c10[closeLabel10 + 1] && c10[closeLabel10 + 1].type === 'image', '10. the close-up of the block, contrast evened, went with the frame (label at ' + closeLabel10 + ')');
+  const cu10 = closeLabel10 > 0 && c10[closeLabel10 + 1] ? jpegSize(c10[closeLabel10 + 1].source.data) : null;
+  assert(cu10 && cu10.w < 900 && cu10.h < 600, '10. … the block alone, small (' + JSON.stringify(cu10) + ')');
+  assert(/^B/.test(await p10.evaluate(() => (document.querySelector('#answerBody .verdict-key') || {}).textContent || '')), '10. and the answer from it is on screen');
+  assert(errors10.length === 0, '10. no page errors' + (errors10.length ? ': ' + errors10.join(' | ') : ''));
+  await b10.close(); server.close();
   console.log(process.exitCode ? 'SCREEN E2E FAILED' : 'SCREEN E2E PASSED');
 })().catch((e) => { console.error(e); process.exit(1); });

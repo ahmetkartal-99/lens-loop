@@ -881,7 +881,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-15 08:15';
+  const BUILD = '2026-10-15 11:30';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -1241,12 +1241,22 @@
   const FRAME_STEP = 1.6, FRAME_OUT = 0.72, FRAME_HOLD = 450, FRAME_LOOK = 400, FRAME_MISS = 5;   // the largest step in, the step out, ms between moves, ms between looks, looks with nothing before easing back
   // The decision, pure (unit-tested): what the finder saw in the live picture, the zoom now, the lens's range, the
   // zoom to come back to, how many looks in a row saw nothing screen-like, and — when the screen is cut off — where
-  // the PRINT sits (`ink`: its box as fractions of the frame, and the edges it runs to). Returns null (nothing to
-  // do), { zoom, why } for a move, or { zoom: null, why: 'widest' } for a cut-off screen the zoom can do nothing
-  // more about. A screen larger than the view is framed by its print: with the text whole in view the lens stays
-  // (or closes in on it where the headroom allows) — the text is what is read, and every step out costs it pixels;
-  // with the text running to an edge the lens steps out ONCE and looks again.
-  function framingMove(sc, cur, caps, base, missing, ink) {
+  // the PRINT sits (`ink`: its box as fractions of the frame, the edges it runs to, whether it is a block). Returns
+  // null (nothing to do), { zoom, why } for a move, or { zoom: null, why: 'widest' } for a cut-off screen the zoom
+  // can do nothing more about. A screen larger than the view is framed by its print — the text is what is read, and
+  // every step out costs it pixels: a block of print whole in view is closed in on as far as its headroom to the
+  // nearest frame edge allows (the lens zooms about the middle, so the step is capped where the block would reach
+  // an edge — a question in a corner gets what the corner allows, and never leaves the view), else the lens
+  // STAYS; a LARGE block running off an edge (a paragraph, a page) is brought whole into view by one step out, then
+  // another look; a small block at an edge (a question at the top of the view, its page header above it — the
+  // author's camera to the right of the laptop, Oct 15 10:53) is read as it is, since a step out would only shrink
+  // it and the close-up reads what is in view; only with NO print in view does the lens go out, to find some.
+  const FRAME_BIG = 0.4;   // a block this large (share of the frame) running off an edge is worth a step out
+  // `seek`: a SWEEP for print on a screen larger than the view with none in sight at the widest zoom — print too
+  // small to count there (the author's question at the far end of the screen: nothing at 0.5×, a block at 0.7×):
+  // 'step' takes one step in toward the chosen zoom, 'hold' waits between steps; null is no sweep (out, to find)
+  const SEEK_STEP = 1.2;
+  function framingMove(sc, cur, caps, base, missing, ink, seek) {
     if (!caps) return null;
     if (!sc || !sc.found) {
       if (missing < FRAME_MISS || Math.abs(cur - base) < 0.03) return null;
@@ -1260,16 +1270,23 @@
       return factor < 1.06 ? null : { zoom: Math.min(caps.max, cur * factor), why: 'in' };   // as close to the edge as it goes: this is the picture
     };
     if (sc.cut.length) {
+      const seekStep = seek === 'step' && cur < base - 0.02 ? { zoom: Math.min(base, cur * SEEK_STEP), why: 'seek' } : null;
       if (ink) {
-        if (ink.edge.length) return cur <= caps.min + 0.02 ? { zoom: null, why: 'widest' } : { zoom: Math.max(caps.min, cur * FRAME_OUT), why: 'text' };   // the print runs to the edge: one step out, then look again
-        const fill = Math.max(ink.w, ink.h), [bx0, by0, bx1, by1] = ink.box, central = Math.abs((bx0 + bx1) / 2 - 0.5) <= 0.25 && Math.abs((by0 + by1) / 2 - 0.5) <= 0.25;
-        // the print whole in view: this is the picture — closer only toward print near the middle (the lens zooms
-        // about the middle: print off at a side would be pushed out), with room to spare, and not right after a
-        // step out from it
-        if (ink.noIn || !ink.strong || !central || fill >= FRAME_LOW || cur >= caps.max - 0.02) return null;   // a speck of print is kept in view, never closed in on
+        const fill = Math.max(ink.w, ink.h);
+        // print running off an edge: a large BLOCK is brought whole into view by one step out (then another look);
+        // a small one, or a line (the tab bar along the top of the view), is read as it is
+        if (ink.edge.length) return !ink.strong || fill < FRAME_BIG ? seekStep : cur <= caps.min + 0.02 ? { zoom: null, why: 'widest' } : { zoom: Math.max(caps.min, cur * FRAME_OUT), why: 'text' };
+        // a line, a speck of print (the browser's tab bar at the top of the view, a page number): kept as it is —
+        // unless a sweep is on, looking for a block
+        if (!ink.strong) return seekStep;
+        // a BLOCK whole in view: this is the picture — closed in on as far as its headroom allows (capped by
+        // stepIn: it never leaves the view), a little short of that; not right after a step out from print, nor
+        // once it fills the view
+        if (ink.noIn || fill >= FRAME_LOW || cur >= caps.max - 0.02) return null;
         const m = stepIn(ink.box, fill);
         return m ? { zoom: Math.min(m.zoom, cur * Math.max(1, (m.zoom / cur) * 0.9)), why: 'in' } : null;
       }
+      if (seek) return seekStep;   // a sweep: a step when one is due, else wait (never out meanwhile)
       return cur <= caps.min + 0.02 ? { zoom: null, why: 'widest' } : { zoom: Math.max(caps.min, cur * FRAME_OUT), why: 'out' };
     }
     const fill = Math.max(sc.widthFrac, sc.heightFrac);
@@ -1278,11 +1295,16 @@
     return null;
   }
   let frameLoopTimer = null, frameMissing = 0, frameMoveAt = 0, frameMoves = 0, frameMovesAt = 0, frameHoldUntil = 0, frameInHoldUntil = 0;
+  // the sweep for print (see framingMove's `seek`): looks in a row with the screen cut off and no print in view,
+  // whether a sweep is on, and until when no sweep is started (one that reached the chosen zoom and found nothing)
+  let inkMissing = 0, seeking = false, seekPauseUntil = 0;
+  const INK_MISS = 5, SEEK_DWELL = 1500, SEEK_REST = 60000;   // looks before a sweep starts; ms between its steps; ms before the next sweep after a fruitless one
   let frameSettleNeeded = false, frameUnsettledSince = 0, frameStableRuns = 0, frameDeferSince = 0, liveLook = null;
   const frameLoopLive = () => !!(running && stream && zoomCaps && !zoomDead && S.autoZoom !== false && S.screenRead !== false);
   function frameLoopStart() {
     frameLoopStop();
     frameMissing = 0; frameMoveAt = 0; frameMoves = 0; frameMovesAt = 0; frameHoldUntil = 0; frameInHoldUntil = 0; frameSettleNeeded = false; frameUnsettledSince = 0; frameStableRuns = 0; frameDeferSince = 0;
+    inkMissing = 0; seeking = false; seekPauseUntil = 0;
     frameLoopTimer = setTimeout(frameLoopTick, 250);
   }
   function frameLoopStop() { clearTimeout(frameLoopTimer); frameLoopTimer = null; liveLook = null; overlayDraw(null); }
@@ -1301,20 +1323,34 @@
         frameMissing = liveLook.found || black ? 0 : frameMissing + 1;
         // the screen cut off: where the print sits decides (a screen larger than the view is framed by its text)
         if (liveLook.found && liveLook.cut.length) {
-          let ib = null; try { ib = inkBox(video, video.videoWidth, video.videoHeight); liveLook.inkLooked = true; } catch (e) { ib = null; }
+          let ib = null; try { ib = inkBox(video, video.videoWidth, video.videoHeight); liveLook.inkLooked = true; if (!inkOnScreen(ib, video.videoWidth, video.videoHeight, liveLook)) ib = null; } catch (e) { ib = null; }
           if (ib) { const vw = video.videoWidth, vh = video.videoHeight; liveLook.ink = { box: [ib.x / vw, ib.y / vh, (ib.x + ib.w) / vw, (ib.y + ib.h) / vh], w: ib.w / vw, h: ib.h / vh, edge: ib.edge, strong: ib.strong, px: ib, noIn: now < frameInHoldUntil }; }
         }
         if (liveLook.found && !liveLook.cut.length && banner.dataset.action === 'framing') hideBanner();   // the whole screen is in view again
+        // the SWEEP: a screen larger than the view with no BLOCK of print in sight at the widest zoom for a few looks
+        // — the question too small to count there (the author's camera to the right of the laptop: nothing but the
+        // browser's tab bar at 0.5×, the question a block at 0.7×) — brings a sweep in toward the chosen zoom, a step
+        // every SEEK_DWELL ms: a block found → the framing takes over from there (and a capture follows, as after any
+        // settle); nothing by the chosen zoom → the lens goes back out as usual and no sweep starts for SEEK_REST
+        const cutNoBlock = liveLook.found && liveLook.cut.length > 0 && !(liveLook.ink && liveLook.ink.strong);   // (a line or a speck of print — a tab bar, a page number — is no block)
+        inkMissing = cutNoBlock ? inkMissing + 1 : 0;
+        if (seeking && !cutNoBlock) { seeking = false; if (liveLook.found && liveLook.ink) { if (!frameSettleNeeded) frameUnsettledSince = now; frameSettleNeeded = true; frameStableRuns = 0; } }
         if (frameLoopLive() && now >= frameHoldUntil && now - frameMoveAt >= FRAME_HOLD) {
-          const cur = zoomNow(), mv = framingMove(liveLook, cur, zoomCaps, baseZoom(), frameMissing, liveLook.ink || null);
+          const cur = zoomNow(), base = baseZoom();
+          if (!seeking && cutNoBlock && inkMissing >= INK_MISS && cur <= zoomCaps.min + 0.02 && now >= seekPauseUntil && base > zoomCaps.min + 0.05) seeking = true;
+          if (seeking && cur >= base - 0.02 && now - frameMoveAt >= SEEK_DWELL) { seeking = false; seekPauseUntil = now + SEEK_REST; }   // the chosen zoom reached with nothing found: out again, and a rest
+          const seek = seeking ? (now - frameMoveAt >= SEEK_DWELL ? 'step' : 'hold') : null;
+          const mv = framingMove(liveLook, cur, zoomCaps, base, frameMissing, liveLook.ink || null, seek);
           if (mv && mv.zoom != null && Math.abs(mv.zoom - cur) > 0.02) {
             if (mv.why === 'text') frameInHoldUntil = now + 8000;   // stepped out from print at the edge: no stepping in on it again for a while
-            if (frameBudget(now)) { frameMoveAt = now; if (!frameSettleNeeded) frameUnsettledSince = now; frameSettleNeeded = true; frameStableRuns = 0; liveLook.moving = mv.why; await zoomStep(mv.zoom); }
+            if (mv.why === 'seek') { if (frameBudget(now)) { frameMoveAt = now; liveLook.moving = mv.why; await zoomStep(mv.zoom); } }   // a sweep step: no capture after it (nothing to read until print is found)
+            else if (frameBudget(now)) { frameMoveAt = now; if (!frameSettleNeeded) frameUnsettledSince = now; frameSettleNeeded = true; frameStableRuns = 0; liveLook.moving = mv.why; await zoomStep(mv.zoom); }
           } else {
             if (mv && mv.zoom == null) cutAtWidest(liveLook);
             if (frameSettleNeeded && ++frameStableRuns >= 2) { frameSettleNeeded = false; frameUnsettledSince = 0; frameSettled(); }
           }
         }
+        liveLook.seeking = seeking;
         overlayDraw(liveLook);
       } else if (!stream || camReopening) { liveLook = null; overlayDraw(null); }   // no picture to outline
     } catch (e) { /* the next look */ }
@@ -1337,7 +1373,7 @@
   function frameAdjusting(sc) {
     const now = Date.now();
     if (frameDeferSince && now - frameDeferSince > 6000) { frameDeferSince = 0; return false; }
-    let busy = frameSettleNeeded && now - frameUnsettledSince < 6000;
+    let busy = (frameSettleNeeded && now - frameUnsettledSince < 6000) || seeking;   // (a sweep for print is a move in progress)
     if (!busy && sc && sc.found && now >= frameHoldUntil) { const cur = zoomNow(), mv = framingMove(sc, cur, zoomCaps, baseZoom(), 0, sc.ink || null); busy = !!(mv && (mv.zoom != null ? Math.abs(mv.zoom - cur) > 0.02 : !wideTried)); }   // a move is due, or a wider lens still to try
     if (busy) { if (!frameDeferSince) frameDeferSince = now; return true; }
     frameDeferSince = 0;
@@ -1410,10 +1446,10 @@
   // print at all (a blank part of the screen, or text too small and far to count) is said so, with what helps
   function cutReadout(look) {
     const where = look.overfull ? 'screen fills the view' : 'screen cut off: ' + look.cut.join(', ');
-    const ink = look.ink && look.ink.strong ? look.ink : null;
-    if (ink && ink.edge.length) return 'text runs off the ' + ink.edge.join(' and ') + ' — zooming out';
-    if (ink) return inkAside(ink) ? 'text off at the ' + inkAside(ink) + ' — point at it to zoom in' : 'screen larger than the view — reading the text';
-    return where + (look.inkLooked ? ' · no print in view — aim at the question' : '');
+    const ink = look.ink || null;
+    if (ink && ink.edge.length && Math.max(ink.w, ink.h) >= FRAME_BIG) return 'text runs off the ' + ink.edge.join(' and ') + ' — zooming out';
+    if (ink) return inkAside(ink) ? 'text ' + (ink.strong ? 'off' : 'small') + ' at the ' + inkAside(ink) + ' — point at it to zoom in' : 'screen larger than the view — reading the text';
+    return where + (look.seeking ? ' · no print in view — looking closer' : look.inkLooked ? ' · no print in view — aim at the question' : '');
   }
   // print off at a side of the view (the lens zooms about the middle, so only aiming brings it closer): where it
   // sits, as words — '' when it is central (what a step in can frame) or already large in the view
@@ -1809,6 +1845,15 @@
     }
     return inkBoxOf(lum, W, H, srcW, srcH, chroma);
   }
+  // the print must lie ON the screen the finder found: a hand at the frame's edge, the keys of the keyboard below
+  // the bezel are "print" to the cell test but not to the question (the author's camera to the right of the laptop:
+  // his fingers at the top left of the frame). `box` in the picture's pixels, `sc` the finder's look (boxFrac as
+  // fractions of the same picture); a screen filling the view, or no box, means everything is screen.
+  function inkOnScreen(box, W, H, sc) {
+    if (!box || !sc || !sc.boxFrac || sc.overfull || sc.fills) return !!box;
+    const [x0, y0, x1, y1] = sc.boxFrac, cx = (box.x + box.w / 2) / W, cy = (box.y + box.h / 2) / H;
+    return cx >= x0 - 0.02 && cx <= x1 + 0.02 && cy >= y0 - 0.02 && cy <= y1 + 0.02;
+  }
   function inkBoxOf(lum, W, H, srcW, srcH, chroma) {
     const n = W * H, hist = new Uint32Array(256); for (let i = 0; i < n; i++) hist[lum[i]]++;
     let acc = 0, white = 255; for (let t = 255; t >= 0; t--) { acc += hist[t]; if (acc >= n * 0.1) { white = t; break; } }   // the page white: the 90th percentile
@@ -1845,7 +1890,7 @@
       cell[gy * gw + gx] = print ? ink : -1;
     }
     // the clusters of touching inked cells; the one with the most cells
-    const seen = new Uint8Array(gw * gh); let best = null;
+    const seen = new Uint8Array(gw * gh); let best = null, below = null;
     for (let s = 0; s < gw * gh; s++) {
       if (cell[s] < 0 || seen[s]) continue;
       const stack = [s]; seen[s] = 1; let inkSum = 0, cells = 0, x0 = gw, y0 = gh, x1 = -1, y1 = -1;
@@ -1857,23 +1902,65 @@
         // a stem and its options, make one block, not a cluster per line; columns apart stay apart
         for (let dy = -2; dy <= 2; dy++) for (let dx = -1; dx <= 1; dx++) { const nx = gx + dx, ny = gy + dy; if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue; const t = ny * gw + nx; if (cell[t] >= 0 && !seen[t]) { seen[t] = 1; stack.push(t); } }
       }
-      if (cells >= 3 && (!best || cells > best.cells || (cells === best.cells && inkSum > best.inkSum))) { let rowMax = 0, colMax = 0; for (const n of rowN) if (n > rowMax) rowMax = n; for (const n of colN) if (n > colMax) colMax = n; best = { inkSum, cells, x0, y0, x1, y1, rowMax, colMax }; }
+      if (cells < 3) continue;
+      let rowMax = 0, colMax = 0; for (const n of rowN) if (n > rowMax) rowMax = n; for (const n of colN) if (n > colMax) colMax = n;
+      if (rowMax < 2) continue;   // nothing runs even two cells wide: a column of specks, the seam of a moiré band — never print, which is lines
+      const cl = { inkSum, cells, x0, y0, x1, y1, rowMax, colMax };
+      if (!best || cells > best.cells || (cells === best.cells && inkSum > best.inkSum)) best = cl;
+      if (y0 > 0 && (!below || cells > below.cells || (cells === below.cells && inkSum > below.inkSum))) below = cl;
     }
     if (!best) return null;
+    // the browser's bars along the top of the view — the tab bar, the address bar, the bookmarks: a band of print
+    // touching the top edge, five rows at most — are print too, and from a distance they can outweigh the question
+    // below them; when a cluster of its own away from the top edge has a third of the cells, that is the text
+    if (below && best.y0 === 0 && best.y1 - best.y0 <= 4 && below !== best && below.cells >= best.cells * 0.35) best = below;
     const frac = (best.x1 - best.x0 + 1) * (best.y1 - best.y0 + 1) / (gw * gh);
     if (frac > 0.55) return null;   // the print spreads over the picture: the tiles cover it
-    const sx = srcW / W, sy = srcH / H, m = C * 0.75;
+    const sx = srcW / W, sy = srcH / H, m = C * 1.5;   // a margin of a cell and a half: the last line of the block, a little short of a cell's worth of ink, is still inside
     const px = Math.max(0, (best.x0 * C - m) * sx), py = Math.max(0, (best.y0 * C - m) * sy);
     const pw = Math.min(srcW, ((best.x1 + 1) * C + m) * sx) - px, ph = Math.min(srcH, ((best.y1 + 1) * C + m) * sy) - py;
     if (pw < srcW * 0.04 || ph < srcH * 0.04) return null;
     const edge = [];   // the print runs to the picture's edge here: some of it may lie outside
     if (best.x0 === 0) edge.push('left'); if (best.x1 === gw - 1) edge.push('right'); if (best.y0 === 0) edge.push('top'); if (best.y1 === gh - 1) edge.push('bottom');
-    // a BLOCK of print, not a speck and not a seam: six cells or more, some row of it three cells wide and some
+    // a BLOCK of print, not a speck, a line or a seam: six cells or more, some row of it three cells wide and some
     // column two deep (lines of text) — the cells along the edge of a moiré band (half page, half weave) make a
-    // line or a staircase, one or two cells thick, never a block. The block is what the lens may be framed by,
-    // and what goes close up.
+    // line or a staircase, one or two cells thick, never a block. The block is what the lens may close in on; any
+    // print found on a screen larger than the view goes close up (a one-line question, a small block at the far
+    // end of the screen), a block when the whole screen is in view.
     const strong = best.cells >= 6 && best.rowMax >= 3 && best.colMax >= 2;
     return { x: Math.round(px), y: Math.round(py), w: Math.round(pw), h: Math.round(ph), frac, edge, cells: best.cells, strong };
+  }
+  // The contrast of a close-up evened cell by cell: on a 6×6 grid each cell's own black (3rd percentile) and white
+  // (92nd) are found, interpolated smoothly between cell centres, and every pixel stretched between them — so print
+  // on the dim far side of a screen seen from an angle (grey 50 on grey 70, the author's corner question of Oct 15)
+  // comes out black on white like the near side. A cell with no contrast of its own (blank page, under 60 between
+  // black and white) keeps its white and takes its black 60 below it, so grain and JPEG blocks are not blown up
+  // into speckles; the same stretch goes on all three channels, so colours keep their hue.
+  function evenContrast(cv) {
+    const w = cv.width, h = cv.height;
+    if (w < 48 || h < 48) return;
+    const g = cv.getContext('2d', { willReadFrequently: true }), img = g.getImageData(0, 0, w, h), d = img.data;
+    const N = 6, cw = w / N, chh = h / N, lo = new Float32Array(N * N), hi = new Float32Array(N * N), hist = new Uint32Array(256);
+    for (let cy = 0; cy < N; cy++) for (let cx = 0; cx < N; cx++) {
+      hist.fill(0); let n = 0;
+      const x0 = Math.floor(cx * cw), x1 = Math.floor((cx + 1) * cw), y0 = Math.floor(cy * chh), y1 = Math.floor((cy + 1) * chh);
+      for (let y = y0; y < y1; y += 2) for (let x = x0; x < x1; x += 2) { const i = (y * w + x) * 4; hist[(d[i] * 3 + d[i + 1] * 6 + d[i + 2]) / 10 | 0]++; n++; }
+      let acc = 0, p3 = -1, p92 = 255; for (let t = 0; t < 256; t++) { acc += hist[t]; if (p3 < 0 && acc >= n * 0.03) p3 = t; if (acc >= n * 0.92) { p92 = t; break; } }
+      if (p92 - p3 < 60) p3 = p92 - 60;   // no contrast of its own: nothing to blow up
+      lo[cy * N + cx] = p3; hi[cy * N + cx] = p92;
+    }
+    // bilinear between cell centres (clamped at the border cells), per pixel row
+    const at = (arr, fx, fy) => { const x = Math.min(N - 1, Math.max(0, fx)), y = Math.min(N - 1, Math.max(0, fy)), ix = Math.floor(x), iy = Math.floor(y), jx = Math.min(N - 1, ix + 1), jy = Math.min(N - 1, iy + 1), tx = x - ix, ty = y - iy; return (arr[iy * N + ix] * (1 - tx) + arr[iy * N + jx] * tx) * (1 - ty) + (arr[jy * N + ix] * (1 - tx) + arr[jy * N + jx] * tx) * ty; };
+    const loRow = new Float32Array(w), hiRow = new Float32Array(w);
+    for (let y = 0; y < h; y++) {
+      const fy = y / chh - 0.5;
+      for (let x = 0; x < w; x++) { const fx = x / cw - 0.5; loRow[x] = at(lo, fx, fy); hiRow[x] = at(hi, fx, fy); }
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4, l = loRow[x], k = 255 / Math.max(30, hiRow[x] - l);
+        d[i] = Math.max(0, Math.min(255, (d[i] - l) * k)); d[i + 1] = Math.max(0, Math.min(255, (d[i + 1] - l) * k)); d[i + 2] = Math.max(0, Math.min(255, (d[i + 2] - l) * k));
+      }
+    }
+    g.putImageData(img, 0, 0);
   }
   // A frame for Claude: { b64 (the overview, long side S.imgSize), tiles [{ b64, c, r, cols, rows }], thumb, sig (of
   // the raw frame, for the "same picture" checks), screen: { found, cut, zoom, tiles, widthFrac } }.
@@ -1921,16 +2008,25 @@
     }
     // the text, close up: where the print sits in a small part of a big bright picture (a question at the far side
     // of a screen seen from an angle), that part alone at the sensor's own pixels — the one picture the small print
-    // is readable in
-    let closeUp = null;
+    // is readable in. A screen larger than the view: the print is found in the FRAME as the camera saw it (sharp,
+    // never resampled; the straightened part in view may stretch it threefold and leave it soft) and any print
+    // found goes — a one-line question, a small block at the far end of the screen; a whole screen in view: the
+    // block, from the straightened picture. Its contrast is evened cell by cell (evenContrast): print on the dim
+    // far side of a screen seen from an angle — grey on darker grey — reaches the model black on white.
+    let closeUp = null, rawInk = null;
     if (S.screenRead !== false && (look || fills)) {
-      const box = inkBox(src);
-      if (box && box.strong) {   // a block of print; a speck, a seam, a thin strip is not worth a picture
+      const cut = fills || (look && look.cut.length > 0);
+      const from = cut ? rawCanvas : src;
+      let box = inkBox(from);
+      if (cut && !inkOnScreen(box, from.width, from.height, look || { fills: true })) box = null;
+      if (cut) rawInk = box;
+      if (box && (cut || box.strong)) {
         const k = Math.min(1, S.imgSize / Math.max(box.w, box.h));
         tileCanvas.width = Math.round(box.w * k); tileCanvas.height = Math.round(box.h * k);
-        tlctx.drawImage(src, box.x, box.y, box.w, box.h, 0, 0, tileCanvas.width, tileCanvas.height);
+        tlctx.drawImage(from, box.x, box.y, box.w, box.h, 0, 0, tileCanvas.width, tileCanvas.height);
+        try { evenContrast(tileCanvas); } catch (e) {}
         const u = tileCanvas.toDataURL('image/jpeg', 0.85);
-        closeUp = { b64: u.slice(u.indexOf(',') + 1), w: tileCanvas.width, h: tileCanvas.height, frac: box.frac, gain: Math.round(k * src.width / cw * 10) / 10 };
+        closeUp = { b64: u.slice(u.indexOf(',') + 1), w: tileCanvas.width, h: tileCanvas.height, frac: box.frac, gain: Math.round(k * from.width / cw * 10) / 10, raw: from === rawCanvas && src !== rawCanvas, strong: box.strong };
       }
     }
     // the frame as the camera saw it, small, for the Captures folder on Drive (what the finder worked from)
@@ -1948,7 +2044,7 @@
     try { sigCanvas.width = 48; sigCanvas.height = 36; sctx.drawImage(canvas, 0, 0, Math.max(1, Math.round(cw * 0.55)), ch, 0, 0, 48, 36); const ld = sctx.getImageData(0, 0, 48, 36).data; leftSig = new Uint8Array(48 * 36); for (let i = 0; i < leftSig.length; i++) leftSig[i] = (ld[i * 4] * 3 + ld[i * 4 + 1] * 6 + ld[i * 4 + 2]) / 10; } catch (e) {}
     const screen = { found: !!look || fills, fills, black, cut: look ? look.cut : fills ? ['every side'] : [], straightened: !!look && look.straight && src !== rawCanvas, cropped: !!look && src !== rawCanvas, flattened: !!look && src !== rawCanvas && rectifyFlattened, tiles: tiles.length, closeUp: closeUp ? Math.round(closeUp.frac * 100) : 0, widthFrac: look ? look.widthFrac : fills ? 1 : 0, heightFrac: look ? look.heightFrac : fills ? 1 : 0, boxFrac: look ? look.boxFrac : fills ? [0, 0, 1, 1] : null, zoom: zoomNow(), w: src.width, h: src.height, why: look ? '' : (S.screenRead === false ? 'screen reading off' : screenWhy || 'no screen found') };
     // a screen cut off: where the print sits in the FRAME (as the live loop sees it), for the capture-time judgement
-    if (screen.found && screen.cut.length) { try { const ib = inkBox(rawCanvas); if (ib) screen.ink = { box: [ib.x / rawCanvas.width, ib.y / rawCanvas.height, (ib.x + ib.w) / rawCanvas.width, (ib.y + ib.h) / rawCanvas.height], w: ib.w / rawCanvas.width, h: ib.h / rawCanvas.height, edge: ib.edge, strong: ib.strong, noIn: Date.now() < frameInHoldUntil }; } catch (e) {} }
+    if (screen.found && screen.cut.length && rawInk) { const ib = rawInk; screen.ink = { box: [ib.x / rawCanvas.width, ib.y / rawCanvas.height, (ib.x + ib.w) / rawCanvas.width, (ib.y + ib.h) / rawCanvas.height], w: ib.w / rawCanvas.width, h: ib.h / rawCanvas.height, edge: ib.edge, strong: ib.strong, noIn: Date.now() < frameInHoldUntil }; }
     diagLog.push({ at: Date.now(), zoom: screen.zoom, frame: vw + '×' + vh, screen }); if (diagLog.length > 12) diagLog.shift();
     return { b64: dataUrl.slice(dataUrl.indexOf(',') + 1), thumb, w: cw, h: ch, sig, docSig, leftSig, tiles, closeUp, screen, rawB64, rawSize: rawCanvas.width + '×' + rawCanvas.height };
   }
@@ -1984,7 +2080,9 @@
       for (const t of f.tiles) out.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: t.b64 } });
     }
     if (f.closeUp) {
-      out.push({ type: 'text', text: 'The text in the same picture, close up (the part holding the print, at the camera\'s own pixels — read the small print here):' });
+      out.push({ type: 'text', text: f.closeUp.raw
+        ? 'The text, close up, as the camera saw it — the part of the frame holding the print at the camera\'s own pixels, its contrast evened, NOT straightened: the lines may slope and the letters be squeezed by the angle, but this is the sharpest view of the print. Read the question and every option here:'
+        : 'The text in the same picture, close up (the part holding the print, at the camera\'s own pixels, its contrast evened — read the small print here):' });
       out.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: f.closeUp.b64 } });
     }
     return out;

@@ -77,4 +77,14 @@ const dot = (lum, x, y, r, v) => { for (let yy = y - r; yy <= y + r; yy++) for (
   const sb = inkBoxOf(strip, W, H, W, H);
   assert(!sb || !sb.strong, 'a strip of print one cell wide: found, but no block (' + JSON.stringify(sb) + ')');
 }
+// 8. the browser's bars along the top of the view (a band of print touching the top edge) are not the text when a
+// block of its own sits below them, even a smaller one; a block that itself touches the top edge, alone, is kept
+{
+  const bars = page(210); text(bars, 0, 0, W, 40, 130); text(bars, 60, 120, 220, 200, 130);
+  const bb = inkBoxOf(bars, W, H, W, H);
+  assert(bb && bb.y >= 80 && bb.x <= 60 && bb.x + bb.w >= 220, 'bars along the top edge and a question below: the question (' + JSON.stringify(bb) + ')');
+  const alone = page(210); text(alone, 60, 0, 220, 90, 130);
+  const ab = inkBoxOf(alone, W, H, W, H);
+  assert(ab && ab.y === 0 && ab.edge.includes('top'), 'a block touching the top edge with nothing below: kept, said to run off the top (' + JSON.stringify(ab) + ')');
+}
 console.log(process.exitCode ? 'INK FAILED' : 'ALL TESTS PASSED');
