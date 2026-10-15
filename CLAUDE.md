@@ -238,9 +238,49 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     with the answer (`moveBack`, once per 60 s, `banner.dataset.action = 'framing'`, which `send` leaves alone and
     the loop clears once the whole screen is in view): "From here the screen is larger than the camera's view (cut
     off on the right and top and bottom) — the part in view is read and answered. A hand's width further back, the
-    whole screen fits." The camera is opened in the sensor's 4:3 shape (`openCamera`: width 4032 / height 3024 /
-    aspectRatio 4:3 ideal): a 16:9 4K frame is the same sensor with a third of its height cut away, so 4:3 sees a
-    third more above and below — the author's frames were 3840×2160 with the screen off the top and the bottom. Moves are 450 ms apart (`FRAME_HOLD`), at most eight per ten seconds
+    whole screen fits." **The camera stays at 4K 16:9** (`openCamera`: 3840×2160 ideal, nothing larger): asking
+    for the sensor's full 4:3 (4032×3024, tried Oct 15 00:40) gave the author's iPhone BLACK frames for seconds at
+    a time ("bright side 0, the rest 0" in the Captures of 02:21–02:31, a black picture even sent to the model) and,
+    after the camera was taken away and returned, a 192×144 stream — the "camera turns all black" and the blurry
+    white preview of his screenshots. **`applyZoom` tries the advanced form first** (`{ advanced: [{ zoom }] }`,
+    the one proven to move the zoom and leave the frame size alone), the plain form only if refused. **The camera
+    watchdog** (`cameraCheck`) now also reopens the camera when the live picture has been BLACK for 5 s
+    (`blackSince`, set by the live loop from the finder's "the frame is black"; 6 s of black, and only 8 s after
+    the camera opened) or the stream came back at a TWENTIETH of the pixels this camera gave before in the session
+    (`camBestPixels`; a camera that never gave more than 320×240 — a test fake, a cheap webcam — is left alone),
+    with the placeholder saying "Camera restarting…"; a black capture is never sent nor remembered (`snap`: "The
+    camera shows nothing yet"). The finder tells a black frame (99th percentile < 10) from a frame all of one grey
+    (nothing to crop, as before) from a frame all of one bright shade (the screen fills the view) — Otsu cannot
+    split a uniform frame, so these go by percentiles, not by its class means (a first cut that used the means
+    called every uniform test frame "black" and reopened the camera for ever: `test/screen.test.js` 4 fixes the
+    three verdicts). A cut-off region is straightened only when it is screen-shaped and sizable (`straight` and
+    coverage ≥ 25 %); a cut-off sliver (a bright bar, a stripe) is not the screen's outline, and the frame goes whole. **The screen FILLING the view**
+    (the phone close, or far off to one side looking across the screen at a question at the far end — the author's
+    photo of a radical-expression item at the top left of a screen seen from the far right): the finder returns
+    "the whole frame is bright (118 – 171): the screen fills the view" (both sides of Otsu's split bright) or a
+    region cut on all four sides — either is `fills`: the frame goes as the screen does, with its closer tiles,
+    the model told "the screen is larger than the photo — on every side", the meta line "the screen fills the view —
+    read as it is · 4 tiles · text close-up". It is no longer "nothing much brighter than the room" (which sent the
+    frame as ONE 1568-px picture with the question 230 px wide, unreadable) and no longer makes the loop ease back
+    to 1× while the screen overfills the frame. **The text close-up** (`inkBox` / `inkBoxOf`, unit-tested in
+    `test/ink.test.js`): on a 480-cell grey copy in 16×16 cells, ink is what lies 35 below the cell's OWN background
+    (its 85th percentile) — local, since the far side of a screen seen from an angle is dim all over and print there
+    is dark on grey; a cell holds print when 1.5–50 % of it is ink on a page-like ground (≥ 50 and ≥ 0.4 × the
+    picture's white) AND the ink is strokes, not blocks — when ≥ 70 % of a cell's ink lies in rows or columns dark
+    from end to end it is a bar, a stripe, a block of colour (the role-card test's stripes and checkerboards) and
+    not print; touching cells cluster, and the cluster with the MOST CELLS is the text (a block of lines is
+    extensive; a cursor, a speck, a patch of moiré is compact); its box with a margin, cropped from the picture at
+    the camera's own pixels and sent as one more image ("The text in the same picture, close up … read the small
+    print here") whenever the print covers < 55 % of the picture — the author's far-right photo yields the question
+    and all five options crisp at 454×655 from a 2016-px frame. **A screen larger than the view is FRAMED BY ITS
+    PRINT** (`framingMove`'s `ink` argument, from `inkBox(video)` on the live frame whenever the screen is cut;
+    `frameAdjusting` gets the capture's own `screen.ink`): the text whole in view → the lens STAYS (every step out
+    costs it pixels) or closes in where the headroom allows; the text running to an edge → ONE step out (× 0.72,
+    why 'text'), then another look; only with no print found does a cut-off screen go straight out as before. The
+    overlay draws the print's box (thin dashed white) and the readout says "screen larger than the view — reading
+    the text". `test/screen.e2e.js` part 9: the screen filling the view with a question block at the top left —
+    answered at once, the lens unmoved, the frame + tiles + close-up (the close-up the block alone), the note, the
+    meta line, the readout. Moves are 450 ms apart (`FRAME_HOLD`), at most eight per ten seconds
     (`frameBudget`); a tapped chip holds the loop for 20 s (`frameHoldUntil`). Two stable looks after a move =
     SETTLED (`frameSettled`): the capture is taken at once (`snap('zoom')`, `zoomBumped` so it is new whatever the
     fingerprints say) and the tick rescheduled — the answer comes ~2–3 s after a screen appears, not at the next
@@ -363,9 +403,11 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
   play's rules, who plays whom, the clock, "I'm ready" / "Lens, next"), `node test/screen.test.js` (the screen
   finder's geometry: corners however the screen is turned, cut edges, a window behind, a lamp beside a far screen,
   a lit room, a page split by a dark bar, two shades of desk, the homography, the tiles), `node test/framing.test.js`
-  (the live auto-zoom's one step: in, capped by the nearest edge; out; back; and 400 random runs that settle without
-  ever leaving the frame) and `node test/tabs.test.js` (the TABS verdict in every form, the selected tab, the same
-  question vs another with the same stem).
+  (the live auto-zoom's one step: in, capped by the nearest edge; out; back; a screen larger than the view framed by
+  its print; and 400 random runs that settle without ever leaving the frame), `node test/ink.test.js` (the text
+  close-up: the question block boxed, a cursor left out, print on a dim grey ground found, print at an edge said so,
+  none for a whole page of print or no page) and `node test/tabs.test.js` (the TABS verdict in every form, the
+  selected tab, the same question vs another with the same stem).
 - `node test/session.e2e.js`, `node test/drive-renewal.e2e.js`, `node test/fresh-build.e2e.js`,
   `node test/memory-voice.e2e.js`, `node test/drive-helper.e2e.js`, `node test/drive-expired-open.e2e.js` (the app
   opened hours later: a silent renewal, retries on a backoff, a dead token in Google's real shape, and the banner only
@@ -377,7 +419,8 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
   is, a small screen zoomed in on live — step by step within seconds, the readout and the outline — an angled screen
   straightened with two tiles, a cut-off screen and the wide lens, a stuck lens, a role card locked and a zoom move
   costing nothing after, a phone with a multi-lens device taken for its wider range, the captures mirrored to an
-  in-memory Drive), `node test/tabs.e2e.js` (a question over three tabs: collected tab by tab, one request with the
+  in-memory Drive, a screen larger than the view answered at once from the part in view, the screen filling the view
+  answered with tiles and the text close-up), `node test/tabs.e2e.js` (a question over three tabs: collected tab by tab, one request with the
   bundle, a second question at once from the same bytes, "Lens, answer"), `node test/latency.e2e.js` (audio cadence and
   highlight reaction time), `node test/document.e2e.js` (a document page by page, the desk, a new subject) and
   `node test/hour-session.e2e.js` (an hour of dictation compressed into half a

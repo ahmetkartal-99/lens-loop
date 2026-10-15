@@ -56,6 +56,11 @@ const near = (p, q, tol) => Math.abs(p[0] - q[0]) <= tol && Math.abs(p[1] - q[1]
   assert(screenQuad(frame([{ pts: [[10, 10], [22, 10], [22, 22], [10, 22]] }]), W, H) === null, 'a small lamp is not a screen');
   assert(screenQuad(frame([], 200), W, H) === null, 'the whole frame bright: nothing to crop');
   assert(screenQuad(frame([]), W, H) === null, 'a dark room: nothing');
+  // frames all of one shade (a test camera's, a camera that delivers nothing): told apart by what they are
+  assert(screenQuad(new Uint8Array(W * H).fill(60), W, H) === null && /nothing much brighter/.test(screenWhyOf()), 'a frame all of one grey: nothing to crop, nothing more (' + screenWhyOf() + ')');
+  assert(screenQuad(new Uint8Array(W * H).fill(0), W, H) === null && /frame is black/.test(screenWhyOf()), 'a frame all black: the camera shows nothing (' + screenWhyOf() + ')');
+  assert(screenQuad(new Uint8Array(W * H).fill(200), W, H) === null && /fills the view/.test(screenWhyOf()), 'a frame all of one bright shade: the screen fills the view (' + screenWhyOf() + ')');
+  assert(screenQuad(frame([], 200), W, H) === null && /fills the view/.test(screenWhyOf()), 'a bright frame with grain: the screen fills the view (' + screenWhyOf() + ')');
 }
 // 5. bright content in pieces (a dark-themed page with two white boxes): taken together, the box around both
 {

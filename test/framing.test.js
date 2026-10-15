@@ -50,6 +50,21 @@ m = framingMove(screen(0.01, 0.01, 0.99, 0.99), 2, caps, 1, 0);
 assert(m && m.why === 'room' && near(m.zoom, 1.8), 'a screen filling the frame to its edges, not cut: a touch out for some room (' + JSON.stringify(m) + ')');
 assert(framingMove(screen(0.01, 0.01, 0.99, 0.99), 0.5, caps, 1, 0) === null, '… but not past the widest');
 
+// a screen LARGER than the view is framed by its PRINT: the text whole in view — the lens stays, or closes in where
+// the headroom allows; the text running to an edge — one step out, then another look; at the widest, nothing more
+const inkAt = (x0, y0, x1, y1, edge) => ({ box: [x0, y0, x1, y1], w: x1 - x0, h: y1 - y0, edge: edge || [] });
+const big = screen(0, 0, 1, 1, ['every side']);
+assert(framingMove(big, 1, caps, 1, 0, inkAt(0.03, 0.1, 0.3, 0.5)) === null, 'the screen fills the view, the question whole at the far left: the lens STAYS (closing in would push it out) — the close-up reads it');
+m = framingMove(big, 1, caps, 1, 0, inkAt(0.35, 0.35, 0.65, 0.65));
+assert(m && m.why === 'in' && near(m.zoom, 1.6), 'the screen fills the view, the print small near the centre: a step in on the print (' + JSON.stringify(m) + ')');
+m = framingMove(big, 1, caps, 1, 0, inkAt(0, 0.1, 0.3, 0.5, ['left']));
+assert(m && m.why === 'text' && near(m.zoom, 0.72), 'the print runs to the left edge: ONE step out, not straight to the widest (' + JSON.stringify(m) + ')');
+m = framingMove(big, 0.5, caps, 1, 0, inkAt(0, 0.1, 0.3, 0.5, ['left']));
+assert(m && m.why === 'widest' && m.zoom === null, '… and at the widest, nothing more the zoom can do');
+m = framingMove(screen(0, 0.1, 0.8, 0.9, ['left']), 2, caps, 1, 0, null);
+assert(m && m.why === 'out' && near(m.zoom, 1.44), 'cut off with no print found: out as before (' + JSON.stringify(m) + ')');
+assert(framingMove(big, 1, caps, 1, 0, inkAt(0.1, 0.1, 0.9, 0.9)) === null, 'the print filling the view already: nothing to do');
+
 // a run of steps settles on a fit, from anywhere in the frame, without the screen ever leaving it
 let worst = 0, longest = 0, unfit = 0;
 let seed = 7; const rnd = () => (seed = (seed * 48271) % 2147483647) / 2147483647;

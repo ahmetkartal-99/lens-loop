@@ -63,6 +63,14 @@ function jpegSize(b64) {
       const g = cv.getContext('2d'), s = window.__scene;
       g.fillStyle = '#232326'; g.fillRect(0, 0, W, H);
       g.fillStyle = '#303034'; g.fillRect(0, 1200, W, 240);
+      if (s === 'filled') {   // the screen filling the whole view (the phone close, or far off to one side): a page with a question block at the top left
+        g.fillStyle = '#ececea'; g.fillRect(0, 0, W, H);
+        g.fillStyle = '#1a1a1a';
+        for (let y = 120; y < 520; y += 40) { const len = 380 + ((y / 40) % 3) * 90; for (let x = 110; x < 110 + len; x += 46) g.fillRect(x, y, 30, 12); }   // lines of "words"
+
+        g.fillRect(2300, 900, 14, 22);   // a cursor far off
+        return;
+      }
       if (!QUADS[s]) return;
       const k = (window.__zoom || 1) * (window.__device === 'wide' ? 0.5 : 1);
       const q = QUADS[s].map(([x, y]) => [1280 + (x - 1280) * k, 720 + (y - 720) * k]);
@@ -70,7 +78,7 @@ function jpegSize(b64) {
       // lines of text, laid on the quadrilateral (bilinear in its unit square)
       const at = (u, v) => { const x = (1 - v) * ((1 - u) * q[0][0] + u * q[1][0]) + v * ((1 - u) * q[3][0] + u * q[2][0]); const y = (1 - v) * ((1 - u) * q[0][1] + u * q[1][1]) + v * ((1 - u) * q[3][1] + u * q[2][1]); return [x, y]; };
       g.fillStyle = '#1a1a1a';
-      for (let v = 0.12; v < 0.9; v += 0.07) { const len = 0.35 + ((v * 100) % 50) / 100; const a = at(0.08, v), b = at(0.08 + len, v), c = at(0.08 + len, v + 0.02), d = at(0.08, v + 0.02); g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.lineTo(c[0], c[1]); g.lineTo(d[0], d[1]); g.closePath(); g.fill(); }
+      for (let v = 0.12; v < 0.9; v += 0.07) { const len = 0.35 + ((v * 100) % 50) / 100; for (let u = 0.08; u < 0.08 + len; u += 0.045) { const a = at(u, v), b = at(u + 0.03, v), c = at(u + 0.03, v + 0.02), d = at(u, v + 0.02); g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.lineTo(c[0], c[1]); g.lineTo(d[0], d[1]); g.closePath(); g.fill(); } }   // lines of "words"
     };
     draw(); setInterval(draw, 100);
     const vstream = cv.captureStream(10);
@@ -145,7 +153,7 @@ function jpegSize(b64) {
   assert(main[1].at - smallAt < 5000, '1. … within seconds of the screen appearing, as the lens settled, not at the next tick (' + Math.round((main[1].at - smallAt) / 100) / 10 + ' s after it appeared)');
   let im = imagesOf(main[1].body);
   assert(im[0] && Math.abs(im[0].w / im[0].h - 1.5) < 0.06 && im[0].w >= 1400 && im[0].w <= 1568, '1. the picture is the screen itself — 3:2, at the pixels the sensor has (' + JSON.stringify(im[0]) + ')');
-  assert(/screen (straightened|cropped) · (\d tiles · )?2\.\d×/.test(await meta()), '1. the meta line says how the picture was taken (' + await meta() + ')');
+  assert(/screen (straightened|cropped) · (\d tiles · )?(text close-up · )?2\.\d×/.test(await meta()), '1. the meta line says how the picture was taken (' + await meta() + ')');
   const live = await page.evaluate(() => document.getElementById('zoomLive').textContent);
   assert(/^2\.\d× · screen fits$/.test(live), '1. the readout on the viewfinder: the zoom, and that the screen fits (' + live + ')');
   const outline = await page.evaluate(() => { const c = document.getElementById('vfOverlay'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let green = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 0 && d[i + 1] > 150 && d[i] < 120) green++; return green; });
@@ -371,6 +379,45 @@ function jpegSize(b64) {
   const banner8 = await p8.evaluate(() => { const b = document.getElementById('banner'); return b.hidden ? '' : b.textContent; });
   assert(/larger than the camera's view/.test(banner8) && /the whole screen fits/.test(banner8), '8. the banner says how the whole screen would fit, without blocking the answer (' + banner8 + ')');
   assert(errors8.length === 0, '8. no page errors' + (errors8.length ? ': ' + errors8.join(' | ') : ''));
-  await b8.close(); server.close();
+  await b8.close();
+
+  // 9. the screen FILLING the view, a question block at the top left (the phone far off to one side looking across
+  // the screen, or close up): nothing is "found" to straighten, yet it is answered at once — as the screen it is,
+  // with closer tiles, plus a CLOSE-UP of the text at the camera's own pixels; the lens stays put (the text is whole
+  // in view: every step out would cost it pixels); the readout says so
+  const b9 = await chromium.launch();
+  const ctx9 = await b9.newContext({ viewport: { width: 420, height: 860 } });
+  await ctx9.addInitScript(() => { localStorage.setItem('noWide', '1'); });
+  await ctx9.addInitScript(initCamera);
+  const p9 = await ctx9.newPage();
+  const errors9 = []; p9.on('pageerror', (e) => errors9.push(String(e)));
+  const main9 = [];
+  await p9.route('https://api.anthropic.com/v1/messages', async (route) => {
+    const body = JSON.parse(route.request().postData());
+    if (/haiku/.test(body.model)) return fulfil(route, { status: 200, contentType: 'application/json', body: JSON.stringify({ content: [{ type: 'text', text: 'CHOICE' }], usage: { input_tokens: 1500, output_tokens: 20 } }) });
+    main9.push({ at: Date.now(), zoom: await p9.evaluate(() => window.__zoom), body });
+    return fulfil(route, { status: 200, contentType: 'text/event-stream', body: sse('ANSWER: B) 42\n\nFrom the second line.') });
+  });
+  await p9.goto(`http://127.0.0.1:${port}/index.html#key=sk-ant-test-0000`);
+  await p9.evaluate(() => { window.__scene = 'filled'; });
+  await p9.waitForTimeout(800);
+  const start9 = Date.now();
+  await p9.click('#startBtn');
+  await p9.waitForTimeout(7000);
+  assert(main9.length >= 1 && main9[0].at - start9 < 6000, '9. the screen filling the view is answered at once (' + main9.length + ' answers)');
+  assert((await p9.evaluate(() => window.__zoomCalls.slice())).length === 0, '9. the lens stays put: the text is whole in view (' + (await p9.evaluate(() => window.__zoomCalls.join())) + ')');
+  const c9 = main9.length ? main9[0].body.messages[0].content : [];
+  const imgs9 = c9.filter((b) => b.type === 'image').map((b) => jpegSize(b.source.data));
+  const closeLabel = c9.findIndex((b) => b.type === 'text' && /close up/.test(b.text));
+  assert(imgs9.length >= 4 && closeLabel > 0 && c9[closeLabel + 1] && c9[closeLabel + 1].type === 'image', '9. the whole frame, its closer tiles and the close-up of the text go (' + imgs9.length + ' images, close-up label at ' + closeLabel + ')');
+  const cu = closeLabel > 0 && c9[closeLabel + 1] ? jpegSize(c9[closeLabel + 1].source.data) : null;
+  assert(cu && cu.w >= 600 && cu.w <= 1568 && cu.w / cu.h > 1.2 && cu.w / cu.h < 2.2, '9. the close-up is the question block alone, not the whole page (' + JSON.stringify(cu) + ')');
+  assert(c9.some((b) => b.type === 'text' && /larger than the photo/.test(b.text)), '9. the model is told the screen is larger than the photo');
+  const meta9 = await p9.evaluate(() => (document.getElementById('answerMeta') || {}).textContent || '');
+  assert(/the screen fills the view — read as it is · \d tiles · text close-up/.test(meta9), '9. the meta line says so (' + meta9 + ')');
+  const live9 = await p9.evaluate(() => document.getElementById('zoomLive').textContent);
+  assert(/screen larger than the view — reading the text/.test(live9), '9. the readout: reading the text (' + live9 + ')');
+  assert(errors9.length === 0, '9. no page errors' + (errors9.length ? ': ' + errors9.join(' | ') : ''));
+  await b9.close(); server.close();
   console.log(process.exitCode ? 'SCREEN E2E FAILED' : 'SCREEN E2E PASSED');
 })().catch((e) => { console.error(e); process.exit(1); });

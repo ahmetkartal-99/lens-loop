@@ -881,7 +881,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-15 00:40';
+  const BUILD = '2026-10-15 04:05';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -1058,10 +1058,10 @@
       throw new Error('This browser cannot open the camera here. Open the page over https:// in Safari.');
     }
     stopCamera();
-    // Ask for the most pixels the lens offers, in the sensor's own 4:3 shape: a 16:9 "4K" frame is that same sensor
-    // with a third of its height cut away, so 4:3 sees a third more above and below — the first thing a screen
-    // larger than the view needs. The frame is scaled down to the chosen size afterwards.
-    const quality = { width: { ideal: 4032 }, height: { ideal: 3024 }, aspectRatio: { ideal: 4 / 3 } };
+    // Ask for the most pixels the lens offers; the frame is scaled down to the chosen size afterwards. 4K 16:9 and
+    // nothing larger: asking for the sensor's full 4:3 (4032×3024) gave the author's iPhone BLACK frames for seconds
+    // at a time and, after the camera was taken back, a 192×144 stream — see the Captures of Oct 15 02:21–02:31.
+    const quality = { width: { ideal: 3840 }, height: { ideal: 2160 } };
     const audio = withMic ? { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } : false;
     const byFacing = { audio, video: { facingMode: { ideal: S.facing }, ...quality } };
     const get = async (c) => {
@@ -1089,6 +1089,7 @@
     video.srcObject = stream;
     try { await video.play(); } catch (e) { /* autoplay blocked; muted video usually plays anyway */ }
     await waitForFrames();
+    camOpenedAt = Date.now(); blackSince = 0;
     $('vfPlaceholder').hidden = true;
     await listCameras();
     await setupZoom();
@@ -1193,12 +1194,12 @@
   async function applyZoom(z, quiet) {
     const track = stream && stream.getVideoTracks()[0];
     if (!track || !zoomCaps) return false;
-    // the plain form first: a bare value there is "ideal", which every browser applies as nearly as the lens allows
-    // (Safari 17.4+, Chrome); the advanced form is the fallback for an engine that only reads it there
+    // the advanced form first — the one proven on the author's iPhone to move the zoom and leave the frame size
+    // alone (the Captures of Oct 15 00:13: 3840×2160 across every step); the plain form only if it is refused
     try {
-      await track.applyConstraints({ zoom: z });
+      await track.applyConstraints({ advanced: [{ zoom: z }] });
     } catch (e) {
-      try { await track.applyConstraints({ advanced: [{ zoom: z }] }); } catch (e2) { if (!quiet) showBanner('This camera did not accept the zoom change: ' + (e2.message || e2)); return false; }
+      try { await track.applyConstraints({ zoom: z }); } catch (e2) { if (!quiet) showBanner('This camera did not accept the zoom change: ' + (e2.message || e2)); return false; }
     }
     let current = z;
     try { const s = track.getSettings(); if (typeof s.zoom === 'number') current = s.zoom; } catch (e) { /* keep requested value */ }
@@ -1227,23 +1228,35 @@
   const FRAME_FIT = 0.90, FRAME_LOW = 0.80, FRAME_HIGH = 0.97;   // the screen's share of the frame aimed at, and the band that counts as fitting
   const FRAME_STEP = 1.6, FRAME_OUT = 0.72, FRAME_HOLD = 450, FRAME_LOOK = 400, FRAME_MISS = 5;   // the largest step in, the step out, ms between moves, ms between looks, looks with nothing before easing back
   // The decision, pure (unit-tested): what the finder saw in the live picture, the zoom now, the lens's range, the
-  // zoom to come back to, and how many looks in a row saw nothing screen-like. Returns null (nothing to do), { zoom,
-  // why } for a move, or { zoom: null, why: 'widest' } for a cut-off screen the zoom can do nothing more about.
-  function framingMove(sc, cur, caps, base, missing) {
+  // zoom to come back to, how many looks in a row saw nothing screen-like, and — when the screen is cut off — where
+  // the PRINT sits (`ink`: its box as fractions of the frame, and the edges it runs to). Returns null (nothing to
+  // do), { zoom, why } for a move, or { zoom: null, why: 'widest' } for a cut-off screen the zoom can do nothing
+  // more about. A screen larger than the view is framed by its print: with the text whole in view the lens stays
+  // (or closes in on it where the headroom allows) — the text is what is read, and every step out costs it pixels;
+  // with the text running to an edge the lens steps out ONCE and looks again.
+  function framingMove(sc, cur, caps, base, missing, ink) {
     if (!caps) return null;
     if (!sc || !sc.found) {
       if (missing < FRAME_MISS || Math.abs(cur - base) < 0.03) return null;
       return { zoom: cur > base ? Math.max(base, cur * 0.75) : Math.min(base, cur * 1.33), why: 'back' };   // nothing in view for a while: ease back to the chosen zoom
     }
-    if (sc.cut.length) return cur <= caps.min + 0.02 ? { zoom: null, why: 'widest' } : { zoom: Math.max(caps.min, cur * FRAME_OUT), why: 'out' };
-    const fill = Math.max(sc.widthFrac, sc.heightFrac);
-    if (fill < FRAME_LOW && cur < caps.max - 0.02) {
-      // the lens zooms about the frame's centre: a screen off to one side reaches the edge before it fills the frame,
-      // so the step is capped by the headroom of its nearest edge (with a little to spare), never past it
+    // the step in toward a box (the screen's, or the print's): capped by the headroom of its nearest frame edge —
+    // the lens zooms about the frame's centre, so a box off to one side reaches the edge before it fills the frame
+    const stepIn = (box, fill) => {
       let factor = Math.min(FRAME_STEP, FRAME_FIT / fill);
-      if (sc.boxFrac) { const [x0, y0, x1, y1] = sc.boxFrac; for (const off of [x1 - 0.5, 0.5 - x0, y1 - 0.5, 0.5 - y0]) if (off > 0.02) factor = Math.min(factor, 0.95 * 0.5 / off); }
+      if (box) { const [x0, y0, x1, y1] = box; for (const off of [x1 - 0.5, 0.5 - x0, y1 - 0.5, 0.5 - y0]) if (off > 0.02) factor = Math.min(factor, 0.95 * 0.5 / off); }
       return factor < 1.06 ? null : { zoom: Math.min(caps.max, cur * factor), why: 'in' };   // as close to the edge as it goes: this is the picture
+    };
+    if (sc.cut.length) {
+      if (ink) {
+        if (ink.edge.length) return cur <= caps.min + 0.02 ? { zoom: null, why: 'widest' } : { zoom: Math.max(caps.min, cur * FRAME_OUT), why: 'text' };   // the print runs to the edge: one step out, then look again
+        const fill = Math.max(ink.w, ink.h);
+        return fill < FRAME_LOW && cur < caps.max - 0.02 ? stepIn(ink.box, fill) : null;   // the print whole in view: this is the picture (closer where it can)
+      }
+      return cur <= caps.min + 0.02 ? { zoom: null, why: 'widest' } : { zoom: Math.max(caps.min, cur * FRAME_OUT), why: 'out' };
     }
+    const fill = Math.max(sc.widthFrac, sc.heightFrac);
+    if (fill < FRAME_LOW && cur < caps.max - 0.02) return stepIn(sc.boxFrac, fill);
     if (fill > FRAME_HIGH && cur > caps.min + 0.02) return { zoom: Math.max(caps.min, cur * 0.9), why: 'room' };   // a little room round it
     return null;
   }
@@ -1263,13 +1276,20 @@
       if (stream && !camReopening && !document.hidden && video.videoWidth && S.screenRead !== false) {
         let sc = null; try { sc = screenFind(video, video.videoWidth, video.videoHeight); } catch (e) { sc = null; }
         const now = Date.now();
-        // a screen overfilling the frame is "the whole frame bright" to the finder: cut off on every side
-        const overfull = !sc && /whole frame is bright/.test(screenWhy);
-        liveLook = sc ? Object.assign({ found: true, at: now }, sc) : overfull ? { found: true, at: now, overfull: true, cut: ['every side'], widthFrac: 1, heightFrac: 1, boxFrac: [0, 0, 1, 1], quad: null } : { found: false, at: now, cut: [], why: screenWhy };
-        frameMissing = liveLook.found ? 0 : frameMissing + 1;
+        // a screen overfilling the frame is "the whole frame bright" to the finder: cut off on every side; a black
+        // frame is the camera starting or taken away — nothing to judge, and the watchdog's business if it goes on
+        const overfull = !sc && /whole frame is bright/.test(screenWhy), black = !sc && /frame is black/.test(screenWhy);
+        liveLook = sc ? Object.assign({ found: true, at: now }, sc) : overfull ? { found: true, at: now, overfull: true, cut: ['every side'], widthFrac: 1, heightFrac: 1, boxFrac: [0, 0, 1, 1], quad: null } : { found: false, at: now, black, cut: [], why: screenWhy };
+        if (black) { if (!blackSince) blackSince = now; } else blackSince = 0;
+        frameMissing = liveLook.found || black ? 0 : frameMissing + 1;
+        // the screen cut off: where the print sits decides (a screen larger than the view is framed by its text)
+        if (liveLook.found && liveLook.cut.length) {
+          let ib = null; try { ib = inkBox(video, video.videoWidth, video.videoHeight); } catch (e) { ib = null; }
+          if (ib) { const vw = video.videoWidth, vh = video.videoHeight; liveLook.ink = { box: [ib.x / vw, ib.y / vh, (ib.x + ib.w) / vw, (ib.y + ib.h) / vh], w: ib.w / vw, h: ib.h / vh, edge: ib.edge, px: ib }; }
+        }
         if (liveLook.found && !liveLook.cut.length && banner.dataset.action === 'framing') hideBanner();   // the whole screen is in view again
         if (frameLoopLive() && now >= frameHoldUntil && now - frameMoveAt >= FRAME_HOLD) {
-          const cur = zoomNow(), mv = framingMove(liveLook, cur, zoomCaps, baseZoom(), frameMissing);
+          const cur = zoomNow(), mv = framingMove(liveLook, cur, zoomCaps, baseZoom(), frameMissing, liveLook.ink || null);
           if (mv && mv.zoom != null && Math.abs(mv.zoom - cur) > 0.02) {
             if (frameBudget(now)) { frameMoveAt = now; if (!frameSettleNeeded) frameUnsettledSince = now; frameSettleNeeded = true; frameStableRuns = 0; liveLook.moving = mv.why; await zoomStep(mv.zoom); }
           } else {
@@ -1278,10 +1298,11 @@
           }
         }
         overlayDraw(liveLook);
-      }
+      } else if (!stream || camReopening) { liveLook = null; overlayDraw(null); }   // no picture to outline
     } catch (e) { /* the next look */ }
     if (running) frameLoopTimer = setTimeout(frameLoopTick, FRAME_LOOK);
   }
+  let blackSince = 0;   // the live picture has been black since (0: it is not)
   // no more than eight moves in ten seconds: a lens that will not settle (a flickering screen, a hand in the way) is left be for a while
   function frameBudget(now) { if (now - frameMovesAt > 10000) { frameMovesAt = now; frameMoves = 0; } if (frameMoves >= 8) return false; frameMoves++; return true; }
   // the lens has settled after a move: the capture is taken now — new whatever the fingerprints say — and the tick moved on
@@ -1299,7 +1320,7 @@
     const now = Date.now();
     if (frameDeferSince && now - frameDeferSince > 6000) { frameDeferSince = 0; return false; }
     let busy = frameSettleNeeded && now - frameUnsettledSince < 6000;
-    if (!busy && sc && sc.found && now >= frameHoldUntil) { const cur = zoomNow(), mv = framingMove(sc, cur, zoomCaps, baseZoom(), 0); busy = !!(mv && (mv.zoom != null ? Math.abs(mv.zoom - cur) > 0.02 : !wideTried)); }   // a move is due, or a wider lens still to try
+    if (!busy && sc && sc.found && now >= frameHoldUntil) { const cur = zoomNow(), mv = framingMove(sc, cur, zoomCaps, baseZoom(), 0, sc.ink || null); busy = !!(mv && (mv.zoom != null ? Math.abs(mv.zoom - cur) > 0.02 : !wideTried)); }   // a move is due, or a wider lens still to try
     if (busy) { if (!frameDeferSince) frameDeferSince = now; return true; }
     frameDeferSince = 0;
     return false;
@@ -1313,10 +1334,11 @@
     moveBack(sc);
     return false;
   }
+  const cutText = (cut) => cut[0] === 'every side' ? 'on every side' : 'on the ' + cut.join(' and ');
   function moveBack(sc) {
     if (Date.now() - moveBackAt < 60000) return;
     moveBackAt = Date.now();
-    showBanner('From here the screen is larger than the camera\'s view (cut off on the ' + sc.cut.join(' and ') + ') — the part in view is read and answered. A hand\'s width further back, the whole screen fits.', 'note');
+    showBanner('From here the screen is larger than the camera\'s view (cut off ' + cutText(sc.cut) + ') — the part in view is read and answered. A hand\'s width further back, the whole screen fits.', 'note');
     banner.dataset.action = 'framing';   // stays while the answer goes out; gone once the screen fits again
   }
   // the lens has moved: the next capture is new whatever the fingerprints say, and comes soon
@@ -1350,18 +1372,27 @@
     octx.clearRect(0, 0, ew, eh);
     const vw = video.videoWidth, vh = video.videoHeight;
     if (!look || !vw || !vh) { zoomLive.hidden = true; return; }
-    const state = !look.found ? 'none' : look.cut.length ? 'cut' : (look.moving || Math.max(look.widthFrac, look.heightFrac) < FRAME_LOW) && frameLoopLive() ? 'zoom' : 'fit';
+    const state = look.black ? 'black' : !look.found ? 'none' : look.cut.length ? 'cut' : (look.moving || Math.max(look.widthFrac, look.heightFrac) < FRAME_LOW) && frameLoopLive() ? 'zoom' : 'fit';
     zoomLive.hidden = false;
     zoomLive.dataset.state = state;
-    zoomLive.textContent = (zoomCaps ? showZoom(zoomNow()) + ' · ' : '') + (state === 'none' ? 'no screen in view' : state === 'cut' ? 'screen cut off' + (look.overfull ? '' : ': ' + look.cut.join(', ')) : state === 'zoom' ? 'zooming to fit' : 'screen fits');
+    zoomLive.textContent = (zoomCaps ? showZoom(zoomNow()) + ' · ' : '') + (state === 'black' ? 'camera starting…' : state === 'none' ? 'no screen in view' : state === 'cut' ? (look.ink && !look.ink.edge.length ? 'screen larger than the view — reading the text' : look.overfull ? 'screen fills the view' : 'screen cut off: ' + look.cut.join(', ')) : state === 'zoom' ? 'zooming to fit' : 'screen fits');
     if (!look.found) return;
     octx.lineWidth = 2;
     octx.strokeStyle = state === 'cut' ? '#FFB020' : state === 'fit' ? '#3DDC84' : 'rgba(255,255,255,.85)';
     octx.setLineDash(state === 'zoom' || look.overfull ? [8, 6] : []);
-    if (look.overfull || !look.quad) { octx.strokeRect(6, 6, ew - 12, eh - 12); octx.setLineDash([]); return; }
+    if (look.overfull || !look.quad) { octx.strokeRect(6, 6, ew - 12, eh - 12); octx.setLineDash([]); inkOutline(look, Math.max(ew / vw, eh / vh), (ew - vw * Math.max(ew / vw, eh / vh)) / 2, (eh - vh * Math.max(ew / vw, eh / vh)) / 2); return; }
     const s = Math.max(ew / vw, eh / vh), ox = (ew - vw * s) / 2, oy = (eh - vh * s) / 2;
     const pts = look.quad.map(([x, y]) => [x * s + ox, y * s + oy]);
     octx.beginPath(); octx.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < 4; i++) octx.lineTo(pts[i][0], pts[i][1]); octx.closePath(); octx.stroke();
+    octx.setLineDash([]);
+    inkOutline(look, s, ox, oy);
+  }
+  // the print the lens is framing on a screen larger than the view: a thin white box round it
+  function inkOutline(look, s, ox, oy) {
+    if (!look.ink || !look.ink.px) return;
+    const b = look.ink.px;
+    octx.lineWidth = 1.5; octx.strokeStyle = 'rgba(255,255,255,.9)'; octx.setLineDash([4, 4]);
+    octx.strokeRect(b.x * s + ox, b.y * s + oy, b.w * s, b.h * s);
     octx.setLineDash([]);
   }
   async function wideLens() {
@@ -1427,6 +1458,13 @@
     let sum = 0; for (let i = 0; i < 256; i++) sum += i * hist[i];
     let sumB = 0, wB = 0, best = 0, thr = 128, meanDark = 0, meanBright = 0;   // Otsu: the split between the dark room and the bright screen
     for (let t = 0; t < 256; t++) { wB += hist[t]; if (!wB) continue; const wF = n - wB; if (!wF) break; sumB += t * hist[t]; const mB = sumB / wB, mF = (sum - sumB) / wF; const v = wB * wF * (mB - mF) * (mB - mF); if (v > best) { best = v; thr = t; meanDark = mB; meanBright = mF; } }
+    // a black frame (the camera starting, or taken away) is no room at all; a frame bright on BOTH sides of the split
+    // — or all of one bright shade, which Otsu cannot split at all — is the screen filling the view: there is no
+    // edge to find, the whole frame is screen (cut off on every side). A frame all of one dark or grey shade is
+    // simply nothing to crop.
+    let acc0 = 0, p1 = 0, p99a = 255; for (let t = 0; t < 256; t++) { acc0 += hist[t]; if (!p1 && acc0 >= n * 0.01) p1 = t; if (acc0 >= n * 0.99) { p99a = t; break; } }
+    if (p99a < 6 || (best > 0 && meanBright < 8)) { screenWhy = 'the frame is black'; return null; }   // black means black: a camera delivering nothing, not a dark room
+    if ((best > 0 && meanDark >= 110 && meanBright >= 140) || (best === 0 && p1 >= 110)) { screenWhy = 'the whole frame is bright (' + (best > 0 ? Math.round(meanDark) + ' – ' + Math.round(meanBright) : p1 + ' – ' + p99a) + '): the screen fills the view'; return null; }
     // a screen is BRIGHT, and much brighter than the room: two shades of a dark desk (a lighter band on the floor, a
     // shadow) split just as neatly by Otsu, and are not a screen
     if (meanBright < 90 || meanBright - meanDark < 45) { screenWhy = 'nothing much brighter than the room (bright side ' + Math.round(meanBright) + ', the rest ' + Math.round(meanDark) + ')'; return null; }
@@ -1712,6 +1750,70 @@
     return c;
   }
   const rawCanvas = document.createElement('canvas'), rctx = rawCanvas.getContext('2d'), tileCanvas = document.createElement('canvas'), tlctx = tileCanvas.getContext('2d');
+  // Where the PRINT sits in a picture: on a 480-cell grey copy, in cells of 16×16, ink is what lies well below the
+  // cell's OWN background (its 85th percentile) — local, because the far side of a screen seen from an angle is dim
+  // all over, and print there is dark on grey, not on white. A cell holds print when a little of it is ink (1.5 –
+  // 50 %) and its background is page-like (at least 50, and two fifths of the picture's white); touching cells form
+  // clusters, and the cluster with the MOST CELLS is the text — a block of lines is extensive; a cursor, a speck,
+  // a patch of moiré is compact — its box with a margin, in the picture's own pixels. Null when the print spreads
+  // over most of the picture (the closer tiles cover that), or there is next to none, or no bright page at all.
+  const inkCanvas = document.createElement('canvas'), ikctx = inkCanvas.getContext('2d', { willReadFrequently: true });
+  function inkBox(src, srcW, srcH) {
+    if (!srcW || !srcH) { srcW = src.width; srcH = src.height; }
+    const W = 480, H = Math.max(16, Math.round(srcH * W / srcW));
+    inkCanvas.width = W; inkCanvas.height = H;
+    ikctx.drawImage(src, 0, 0, W, H);
+    const d = ikctx.getImageData(0, 0, W, H).data, lum = new Uint8Array(W * H);
+    for (let i = 0; i < lum.length; i++) lum[i] = (d[i * 4] * 3 + d[i * 4 + 1] * 6 + d[i * 4 + 2]) / 10;
+    return inkBoxOf(lum, W, H, srcW, srcH);
+  }
+  function inkBoxOf(lum, W, H, srcW, srcH) {
+    const n = W * H, hist = new Uint32Array(256); for (let i = 0; i < n; i++) hist[lum[i]]++;
+    let acc = 0, white = 255; for (let t = 255; t >= 0; t--) { acc += hist[t]; if (acc >= n * 0.1) { white = t; break; } }   // the page white: the 90th percentile
+    if (white < 100) return null;
+    const C = 16, gw = Math.ceil(W / C), gh = Math.ceil(H / C), bgMin = Math.max(50, white * 0.4);
+    const cell = new Int32Array(gw * gh), ch = new Uint32Array(256);   // ink pixels per cell, -1 for a cell that is not print
+    for (let gy = 0; gy < gh; gy++) for (let gx = 0; gx < gw; gx++) {
+      ch.fill(0); let cnt = 0;
+      const yEnd = Math.min(H, gy * C + C), xEnd = Math.min(W, gx * C + C);
+      for (let y = gy * C; y < yEnd; y++) for (let x = gx * C; x < xEnd; x++) { ch[lum[y * W + x]]++; cnt++; }
+      let a = 0, bg = 255; for (let t = 255; t >= 0; t--) { a += ch[t]; if (a >= cnt * 0.15) { bg = t; break; } }   // the cell's own background
+      let ink = 0; const lim = bg - 35; for (let t = 0; t < lim; t++) ink += ch[t];
+      // print is STROKES, not blocks: a stripe or a bar has its ink in rows (or columns) that are dark from end to
+      // end — when most of a cell's ink lies in such full rows or full columns, it is a bar, a stripe, a block of
+      // colour, not print
+      let print = false;
+      if (bg >= bgMin && ink >= cnt * 0.015 && ink <= cnt * 0.5) {
+        const rowInk = new Int32Array(C), colInk = new Int32Array(C), rows = yEnd - gy * C, cols = xEnd - gx * C;
+        for (let y = gy * C; y < yEnd; y++) for (let x = gx * C; x < xEnd; x++) if (lum[y * W + x] < lim) { rowInk[y - gy * C]++; colInk[x - gx * C]++; }
+        let full = 0; for (let i = 0; i < rows; i++) if (rowInk[i] >= cols * 0.9) full += rowInk[i]; for (let i = 0; i < cols; i++) if (colInk[i] >= rows * 0.9) full += colInk[i];
+        print = full < ink * 0.7;
+      }
+      cell[gy * gw + gx] = print ? ink : -1;
+    }
+    // the clusters of touching inked cells; the one with the most cells
+    const seen = new Uint8Array(gw * gh); let best = null;
+    for (let s = 0; s < gw * gh; s++) {
+      if (cell[s] < 0 || seen[s]) continue;
+      const stack = [s]; seen[s] = 1; let inkSum = 0, cells = 0, x0 = gw, y0 = gh, x1 = -1, y1 = -1;
+      while (stack.length) {
+        const q = stack.pop(), gx = q % gw, gy = (q - gx) / gw; inkSum += cell[q]; cells++;
+        if (gx < x0) x0 = gx; if (gx > x1) x1 = gx; if (gy < y0) y0 = gy; if (gy > y1) y1 = gy;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const nx = gx + dx, ny = gy + dy; if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue; const t = ny * gw + nx; if (cell[t] >= 0 && !seen[t]) { seen[t] = 1; stack.push(t); } }
+      }
+      if (cells >= 3 && (!best || cells > best.cells || (cells === best.cells && inkSum > best.inkSum))) best = { inkSum, cells, x0, y0, x1, y1 };
+    }
+    if (!best) return null;
+    const frac = (best.x1 - best.x0 + 1) * (best.y1 - best.y0 + 1) / (gw * gh);
+    if (frac > 0.55) return null;   // the print spreads over the picture: the tiles cover it
+    const sx = srcW / W, sy = srcH / H, m = C * 0.75;
+    const px = Math.max(0, (best.x0 * C - m) * sx), py = Math.max(0, (best.y0 * C - m) * sy);
+    const pw = Math.min(srcW, ((best.x1 + 1) * C + m) * sx) - px, ph = Math.min(srcH, ((best.y1 + 1) * C + m) * sy) - py;
+    if (pw < srcW * 0.04 || ph < srcH * 0.04) return null;
+    const edge = [];   // the print runs to the picture's edge here: some of it may lie outside
+    if (best.x0 === 0) edge.push('left'); if (best.x1 === gw - 1) edge.push('right'); if (best.y0 === 0) edge.push('top'); if (best.y1 === gh - 1) edge.push('bottom');
+    return { x: Math.round(px), y: Math.round(py), w: Math.round(pw), h: Math.round(ph), frac, edge };
+  }
   // A frame for Claude: { b64 (the overview, long side S.imgSize), tiles [{ b64, c, r, cols, rows }], thumb, sig (of
   // the raw frame, for the "same picture" checks), screen: { found, cut, zoom, tiles, widthFrac } }.
   function captureFrame() {
@@ -1723,13 +1825,21 @@
     const swap = rot === 90 || rot === -90;
     rawCanvas.width = swap ? vh : vw; rawCanvas.height = swap ? vw : vh;   // the whole frame at the sensor's resolution
     rctx.save(); rctx.translate(rawCanvas.width / 2, rawCanvas.height / 2); rctx.rotate(rot * Math.PI / 180); rctx.drawImage(video, -vw / 2, -vh / 2, vw, vh); rctx.restore();
-    let look = null, src = rawCanvas;
+    let look = null, src = rawCanvas, fills = false, black = false;
     if (S.screenRead !== false) {
       try { look = screenFind(rawCanvas); } catch (e) { look = null; }
       // straightened — a screen cut off by the frame's edge too: its corners on the cut sides lie on the frame's edge,
       // so the PART IN VIEW is straightened (its own edge upright, the lines of text level, the room left out) and
       // goes with the note that an edge lies outside; far more legible than the frame as it is
-      if (look) { const r = rectify(rawCanvas, look.quad); if (r) src = r; else look = null; }
+      // — when what was found is screen-shaped and sizable; a cut-off sliver (a bright bar, a stripe) is not the
+      // screen's outline, and the frame goes whole
+      if (look && (!look.cut.length || (look.straight && look.coverage >= 0.25))) { const r = rectify(rawCanvas, look.quad); if (r) src = r; else look = null; }
+      // the screen FILLING the view (the phone close, or far off to one side looking across it): cut off on every
+      // side, or no edge to find at all — the whole frame is screen, and it goes as the screen does, with its closer
+      // tiles and the close-up of the text
+      if (look && look.cut.length >= 4) fills = true;
+      else if (!look && /whole frame is bright/.test(screenWhy)) fills = true;
+      else if (!look && /frame is black/.test(screenWhy)) black = true;
     }
     const scale = Math.min(1, S.imgSize / Math.max(src.width, src.height));
     canvas.width = Math.round(src.width * scale); canvas.height = Math.round(src.height * scale);
@@ -1741,12 +1851,26 @@
     tctx.drawImage(canvas, 0, 0, tw, th);
     const thumb = thumbCanvas.toDataURL('image/jpeg', 0.6);
     const tiles = [];
-    if (S.screenRead !== false && look) for (const t of tilePlan(src.width, src.height)) {   // closer tiles of a screen or page; a desk, a hand, a blur go as one picture
+    if (S.screenRead !== false && (look || fills)) for (const t of tilePlan(src.width, src.height)) {   // closer tiles of a screen or page; a desk, a hand, a blur go as one picture
       const k = Math.min(1, S.imgSize / Math.max(t.w, t.h));
       tileCanvas.width = Math.round(t.w * k); tileCanvas.height = Math.round(t.h * k);
       tlctx.drawImage(src, t.x, t.y, t.w, t.h, 0, 0, tileCanvas.width, tileCanvas.height);
       const u = tileCanvas.toDataURL('image/jpeg', 0.85);
       tiles.push({ b64: u.slice(u.indexOf(',') + 1), c: t.c, r: t.r, cols: t.cols, rows: t.rows });
+    }
+    // the text, close up: where the print sits in a small part of a big bright picture (a question at the far side
+    // of a screen seen from an angle), that part alone at the sensor's own pixels — the one picture the small print
+    // is readable in
+    let closeUp = null;
+    if (S.screenRead !== false && (look || fills)) {
+      const box = inkBox(src);
+      if (box) {
+        const k = Math.min(1, S.imgSize / Math.max(box.w, box.h));
+        tileCanvas.width = Math.round(box.w * k); tileCanvas.height = Math.round(box.h * k);
+        tlctx.drawImage(src, box.x, box.y, box.w, box.h, 0, 0, tileCanvas.width, tileCanvas.height);
+        const u = tileCanvas.toDataURL('image/jpeg', 0.85);
+        closeUp = { b64: u.slice(u.indexOf(',') + 1), w: tileCanvas.width, h: tileCanvas.height, frac: box.frac, gain: Math.round(k * src.width / cw * 10) / 10 };
+      }
     }
     // the frame as the camera saw it, small, for the Captures folder on Drive (what the finder worked from)
     let rawB64 = '';
@@ -1761,9 +1885,11 @@
     // the left-hand part of the picture on its own (the sources panel of a tabbed question): a tab whose panel changed
     let leftSig = null;
     try { sigCanvas.width = 48; sigCanvas.height = 36; sctx.drawImage(canvas, 0, 0, Math.max(1, Math.round(cw * 0.55)), ch, 0, 0, 48, 36); const ld = sctx.getImageData(0, 0, 48, 36).data; leftSig = new Uint8Array(48 * 36); for (let i = 0; i < leftSig.length; i++) leftSig[i] = (ld[i * 4] * 3 + ld[i * 4 + 1] * 6 + ld[i * 4 + 2]) / 10; } catch (e) {}
-    const screen = { found: !!look, cut: look ? look.cut : [], straightened: !!look && look.straight && src !== rawCanvas, cropped: !!look && src !== rawCanvas, flattened: !!look && src !== rawCanvas && rectifyFlattened, tiles: tiles.length, widthFrac: look ? look.widthFrac : 0, heightFrac: look ? look.heightFrac : 0, boxFrac: look ? look.boxFrac : null, zoom: zoomNow(), w: src.width, h: src.height, why: look ? '' : (S.screenRead === false ? 'screen reading off' : screenWhy || 'no screen found') };
+    const screen = { found: !!look || fills, fills, black, cut: look ? look.cut : fills ? ['every side'] : [], straightened: !!look && look.straight && src !== rawCanvas, cropped: !!look && src !== rawCanvas, flattened: !!look && src !== rawCanvas && rectifyFlattened, tiles: tiles.length, closeUp: closeUp ? Math.round(closeUp.frac * 100) : 0, widthFrac: look ? look.widthFrac : fills ? 1 : 0, heightFrac: look ? look.heightFrac : fills ? 1 : 0, boxFrac: look ? look.boxFrac : fills ? [0, 0, 1, 1] : null, zoom: zoomNow(), w: src.width, h: src.height, why: look ? '' : (S.screenRead === false ? 'screen reading off' : screenWhy || 'no screen found') };
+    // a screen cut off: where the print sits in the FRAME (as the live loop sees it), for the capture-time judgement
+    if (screen.found && screen.cut.length) { try { const ib = inkBox(rawCanvas); if (ib) screen.ink = { box: [ib.x / rawCanvas.width, ib.y / rawCanvas.height, (ib.x + ib.w) / rawCanvas.width, (ib.y + ib.h) / rawCanvas.height], w: ib.w / rawCanvas.width, h: ib.h / rawCanvas.height, edge: ib.edge }; } catch (e) {} }
     diagLog.push({ at: Date.now(), zoom: screen.zoom, frame: vw + '×' + vh, screen }); if (diagLog.length > 12) diagLog.shift();
-    return { b64: dataUrl.slice(dataUrl.indexOf(',') + 1), thumb, w: cw, h: ch, sig, docSig, leftSig, tiles, screen, rawB64, rawSize: rawCanvas.width + '×' + rawCanvas.height };
+    return { b64: dataUrl.slice(dataUrl.indexOf(',') + 1), thumb, w: cw, h: ch, sig, docSig, leftSig, tiles, closeUp, screen, rawB64, rawSize: rawCanvas.width + '×' + rawCanvas.height };
   }
   const tabsNameOf = (f) => (f && f.tab) || '?';
   // the diagnostics: the lens, its zoom range, the GPU, and the last captures as the screen finder saw them
@@ -1780,13 +1906,13 @@
     for (const d of diagLog.slice().reverse()) {
       const sc = d.screen;
       lines.push(new Date(d.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' · ' + d.frame + ' · ' + showZoom(d.zoom) + ' · ' +
-        (sc.found ? (sc.cut.length ? 'screen cut off on the ' + sc.cut.join(' and ') : (sc.straightened ? 'screen straightened' : sc.cropped ? 'screen cropped' : 'screen') + ' ' + Math.round(sc.widthFrac * 100) + ' % wide' + (sc.tiles ? ' · ' + sc.tiles + ' tiles' : '')) : 'no screen: ' + sc.why));
+        (sc.black ? 'black frame' : sc.fills ? 'the screen fills the view' + (sc.tiles ? ' · ' + sc.tiles + ' tiles' : '') + (sc.closeUp ? ' · text close-up ' + sc.closeUp + ' %' : '') : sc.found ? (sc.cut.length ? 'screen cut off on the ' + sc.cut.join(' and ') : (sc.straightened ? 'screen straightened' : sc.cropped ? 'screen cropped' : 'screen') + ' ' + Math.round(sc.widthFrac * 100) + ' % wide' + (sc.tiles ? ' · ' + sc.tiles + ' tiles' : '')) + (sc.closeUp ? ' · text close-up ' + sc.closeUp + ' %' : '') : 'no screen: ' + sc.why));
     }
     return lines.join('\n');
   }
   // What the meta line says about the picture: "screen straightened · 4 tiles · 1.8×", "screen cut off on the right".
-  const screenNote = (f) => !f || !f.screen ? '' : (f.screen.cut.length ? 'screen cut off on the ' + f.screen.cut.join(' and ') + (f.screen.straightened || f.screen.cropped ? ' — the part in view ' + (f.screen.straightened ? 'straightened' : 'cropped') : '')
-    : (f.screen.straightened ? 'screen straightened' + (f.screen.flattened ? ', lighting evened' : '') : f.screen.cropped ? 'screen cropped' : f.screen.found ? 'screen' : f.screen.why ? 'no screen found — ' + f.screen.why : '')) + (f.screen.tiles ? (f.screen.found ? ' · ' : '') + f.screen.tiles + ' tiles' : '') + (f.screen.zoom && Math.abs(f.screen.zoom * zoomScale - 1) > 0.05 ? ' · ' + showZoom(f.screen.zoom) : '');
+  const screenNote = (f) => !f || !f.screen ? '' : (f.screen.fills ? 'the screen fills the view — read as it is' : f.screen.cut.length ? 'screen cut off on the ' + f.screen.cut.join(' and ') + (f.screen.straightened || f.screen.cropped ? ' — the part in view ' + (f.screen.straightened ? 'straightened' : 'cropped') : '')
+    : (f.screen.straightened ? 'screen straightened' + (f.screen.flattened ? ', lighting evened' : '') : f.screen.cropped ? 'screen cropped' : f.screen.found ? 'screen' : f.screen.why ? 'no screen found — ' + f.screen.why : '')) + (f.screen.tiles ? (f.screen.found ? ' · ' : '') + f.screen.tiles + ' tiles' : '') + (f.screen.closeUp ? ' · text close-up' : '') + (f.screen.zoom && Math.abs(f.screen.zoom * zoomScale - 1) > 0.05 ? ' · ' + showZoom(f.screen.zoom) : '');
   // The frame's images for a request: the overview, then the closer tiles, labelled.
   function frameImages(f, label) {
     const out = [];
@@ -1795,6 +1921,10 @@
     if (f.tiles && f.tiles.length) {
       out.push({ type: 'text', text: 'The same picture in ' + f.tiles.length + ' closer tiles (overlapping; left to right, then top to bottom) for small print:' });
       for (const t of f.tiles) out.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: t.b64 } });
+    }
+    if (f.closeUp) {
+      out.push({ type: 'text', text: 'The text in the same picture, close up (the part holding the print, at the camera\'s own pixels — read the small print here):' });
+      out.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: f.closeUp.b64 } });
     }
     return out;
   }
@@ -1822,21 +1952,29 @@
   // the video track ends or stays muted, the picture freezes, and the loop would quietly compare the same
   // frozen frame with itself for the rest of the session. While running, the track is checked every two
   // seconds and the camera reopened when it has died, with attempts spaced out while it keeps failing.
-  let camTimer = null, camReopening = false, camMutedSince = 0, camFailAt = 0, camFails = 0;
+  let camTimer = null, camReopening = false, camMutedSince = 0, camFailAt = 0, camFails = 0, camOpenedAt = 0, camBestPixels = 0;
   async function cameraCheck() {
     if (!running || camReopening || document.visibilityState === 'hidden') return;
     const track = stream && stream.getVideoTracks()[0];
     const now = Date.now();
-    let dead = !track || track.readyState === 'ended';
+    let dead = !track || track.readyState === 'ended', why = 'Camera lost';
     if (!dead && track.muted) { if (!camMutedSince) camMutedSince = now; dead = now - camMutedSince > 8000; }
     else camMutedSince = 0;
+    // a track that is live by its own account can still deliver nothing: a black picture for seconds on end (seen on
+    // the author's iPhone), or a stream handed back at a toy size (192×144) once the camera was taken away and
+    // returned — both are a camera to open afresh
+    if (!dead && blackSince && now - blackSince > 6000 && now - camOpenedAt > 8000) { dead = true; why = 'Camera shows nothing'; }
+    const px = video.videoWidth * video.videoHeight;
+    if (px > camBestPixels) camBestPixels = px;
+    if (!dead && px && px < camBestPixels * 0.05 && now - camOpenedAt > 4000) { dead = true; why = 'Camera came back at ' + video.videoWidth + '×' + video.videoHeight; }   // a twentieth of what this camera gave before: a toy stream
     if (!dead) { if (video.paused && video.srcObject) { try { await video.play(); } catch (e) {} } return; }
     if (now - camFailAt < Math.min(60000, 5000 * Math.pow(2, Math.min(camFails, 4)))) return;
     camReopening = true;
-    setStatus('armed', 'Camera lost — reopening');
+    setStatus('armed', why + ' — reopening');
+    $('vfPlaceholder').textContent = 'Camera restarting…';   // what the black viewfinder means while the camera is reopened
     try {
       await openCamera(false);   // picture only: the recording's microphone is the engine's own and reopens by itself
-      camFails = 0; camFailAt = 0; camMutedSince = 0;
+      camFails = 0; camFailAt = 0; camMutedSince = 0; blackSince = 0;
       lastSig = null; prevSig = null;
       setStatus(running ? 'done' : 'idle', 'Camera back');
     } catch (e) {
@@ -1875,7 +2013,7 @@
     frameLoopStart();
     tick();
     clearInterval(watchTimer); watchTimer = setInterval(watchFrame, 500);
-    camMutedSince = 0; camFailAt = 0; camFails = 0;
+    camMutedSince = 0; camFailAt = 0; camFails = 0; camBestPixels = 0; blackSince = 0;
     clearInterval(camTimer); camTimer = setInterval(cameraCheck, 2000);
     if (S.sessionListen !== false && !listening) startStory(micStream ? { micStream } : {});
   }
@@ -1895,6 +2033,7 @@
     if (lensAuto) { S.deviceId = ''; lensAuto = false; }   // the multi-lens device was picked for the session: "auto" again
     if (listening) stopStory(true);   // the recording ends with the session and is saved
     stopCamera();
+    $('vfPlaceholder').textContent = 'Camera off · tap Start';
     if (!listening) releaseWake();
     startBtn.textContent = 'Start';
     startBtn.dataset.running = 'false';
@@ -1968,13 +2107,16 @@
     // the quiet spell: see decideRole)
     let frame;
     try { frame = captureFrame(); } catch (e) { showBanner(e.message); return; }
+    // a black frame (the camera starting, or taken away for a moment) is nothing to answer: never sent, never
+    // remembered as a picture; the camera watchdog reopens the camera if the black goes on
+    if (frame.screen && frame.screen.black && source !== 'button') { setStatus('armed', 'The camera shows nothing yet'); keepCapture(frame, 'black frame'); skippedSince = frameNo; return; }
     // the whole screen, or nothing: a screen with an edge outside the frame is not answered — the zoom goes out first
     // (and in on a screen too small in the frame to read, the small capture dropped for the zoomed one)
     if (source !== 'button') {
       const adjusting = autoZoom(frame.screen);
       if (frame.screen && frame.screen.cut.length) {
         cutStreak++;
-        if (adjusting) { setStatus('armed', 'The screen is cut off on the ' + frame.screen.cut.join(' and ') + ' — zooming out'); keepCapture(frame, 'cut off on the ' + frame.screen.cut.join(' and ') + ', zooming out'); skippedSince = frameNo; return; }
+        if (adjusting) { setStatus('armed', 'The screen is cut off ' + cutText(frame.screen.cut) + ' — zooming out'); keepCapture(frame, 'cut off ' + cutText(frame.screen.cut) + ', zooming out'); skippedSince = frameNo; return; }
         frame.cutNote = true;   // nothing more the zoom can do from here: the part in view goes at once, the model told (the banner says how to help)
       } else { cutStreak = 0; if (adjusting) { setStatus('armed', 'Zooming to fit the screen'); keepCapture(frame, 'zooming to fit'); skippedSince = frameNo; return; } }
     }
@@ -2683,7 +2825,7 @@
     if (sys.tail) content.push({ type: 'text', text: sys.tail });
     if (frame.b64) {
       content.push(...frameImages(frame, frame.tabs ? `CURRENT FRAME (${frame.tag}) — the question, with tab "${frame.tab || tabsNameOf(frame)}" selected:` : earlier.length ? `CURRENT FRAME (${frame.tag}), the one to answer:` : `The frame (${frame.tag}):`));
-      if (frame.cutNote) content.push({ type: 'text', text: 'Note: the ' + frame.screen.cut.join(' and ') + ' edge of the screen may lie outside the photo; answer from what is visible and say in one line if something needed is missing.' });
+      if (frame.cutNote) content.push({ type: 'text', text: (frame.screen.fills ? 'Note: the screen is larger than the photo — the photo shows only part of it, on every side' : 'Note: the ' + frame.screen.cut.join(' and ') + ' edge of the screen may lie outside the photo') + '; answer from what is visible and say in one line if something needed is missing.' });
     }
     if (frame.question) {
       content.push({ type: 'text', text: 'Spoken question from the user: ' + frame.question + (frame.b64 ? '\n\nA frame from the camera is attached in case the question refers to it.' : '') });
@@ -4132,7 +4274,7 @@
     if ((verdict !== 'sent' && now - captureAt < 4000) || captureBusy >= 2) return;   // a sent picture always goes; the dropped ones one every few seconds
     captureAt = now;
     const sc = frame.screen || { cut: [] }, when = new Date(), z = zoomCaps ? showZoom(sc.zoom != null ? sc.zoom : zoomNow()) : '';
-    const seen = !sc.found ? 'no screen: ' + (sc.why || '') : sc.cut.length ? 'cut off on the ' + sc.cut.join(' and ') : (sc.straightened ? 'straightened' : sc.cropped ? 'cropped' : 'screen') + ' ' + Math.round((sc.widthFrac || 0) * 100) + ' % wide' + (sc.tiles ? ', ' + sc.tiles + ' tiles' : '');
+    const seen = sc.black ? 'black frame' : sc.fills ? 'the screen fills the view' + (sc.tiles ? ', ' + sc.tiles + ' tiles' : '') + (sc.closeUp ? ', text close-up ' + sc.closeUp + ' %' : '') : !sc.found ? 'no screen: ' + (sc.why || '') : (sc.cut.length ? 'cut off ' + cutText(sc.cut) : (sc.straightened ? 'straightened' : sc.cropped ? 'cropped' : 'screen') + ' ' + Math.round((sc.widthFrac || 0) * 100) + ' % wide' + (sc.tiles ? ', ' + sc.tiles + ' tiles' : '')) + (sc.closeUp ? ', text close-up ' + sc.closeUp + ' %' : '');
     const name = 'Capture ' + when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }).replace(/:/g, '.') + (z ? ' · ' + z : '') + ' · ' + safeName(verdict) + '.jpg';
     const description = [when.toLocaleString(), 'lens: ' + (lensLabel || '?'), 'zoom: ' + (zoomCaps ? z + ' of ' + showZoom(zoomCaps.min) + ' – ' + showZoom(zoomCaps.max) : 'none reported'), 'finder: ' + seen, 'decision: ' + verdict, 'frame: ' + (frame.rawSize || '?') + ', picture sent: ' + (sc.w || '?') + '×' + (sc.h || '?'), 'live framing: ' + (frameLoopLive() ? 'on' : 'off')].join(' · ');
     captureBusy++;
