@@ -84,13 +84,13 @@ const sentence = (i) => `Minute ${Math.floor(i / 6)} note ${i}: the toll keeper 
   }
   // audio parts are recorded in pieces as it goes
   await page.waitForTimeout(6000);
-  const parts = await page.evaluate(() => new Promise((res) => { const r = indexedDB.open('lensloop', 3); r.onsuccess = () => { const g = r.result.transaction('audio', 'readonly').objectStore('audio').getAll(); g.onsuccess = () => res(g.result.map((p) => ({ part: p.part, bytes: p.blob ? p.blob.size : 0, secs: p.seconds }))); }; r.onerror = () => res([]); }));
+  const parts = await page.evaluate(() => new Promise((res) => { const r = indexedDB.open('lensloop', 4); r.onsuccess = () => { const g = r.result.transaction('audio', 'readonly').objectStore('audio').getAll(); g.onsuccess = () => res(g.result.map((p) => ({ part: p.part, bytes: p.blob ? p.blob.size : 0, secs: p.seconds }))); }; r.onerror = () => res([]); }));
   assert(parts.length >= 3 && parts.every((p) => p.bytes > 0), 'audio parts saved on the phone as the session runs (' + parts.length + ' parts, ' + parts.map((p) => p.bytes).join('/') + ' bytes)');
   // stop: the storyline is saved with every word, titled by the digest
   if (await page.isVisible('#readerClose')) { try { await page.click('#readerClose', { timeout: 2000 }); } catch (e) {} }
   await page.click('#startBtn');
   await page.waitForTimeout(3000);
-  const saved = await page.evaluate(() => new Promise((res) => { const r = indexedDB.open('lensloop', 3); r.onsuccess = () => { const g = r.result.transaction('storylines', 'readonly').objectStore('storylines').getAll(); g.onsuccess = () => res(g.result.map((st) => ({ title: st.title, words: st.words, textWords: st.text.split(/\s+/).length, summary: st.summary, visuals: (st.visuals || []).length }))); }; r.onerror = () => res([]); }));
+  const saved = await page.evaluate(() => new Promise((res) => { const r = indexedDB.open('lensloop', 4); r.onsuccess = () => { const g = r.result.transaction('storylines', 'readonly').objectStore('storylines').getAll(); g.onsuccess = () => res(g.result.map((st) => ({ title: st.title, words: st.words, textWords: st.text.split(/\s+/).length, summary: st.summary, visuals: (st.visuals || []).length }))); }; r.onerror = () => res([]); }));
   console.log('saved:', JSON.stringify(saved));
   assert(saved.length === 1 && Math.abs(saved[0].textWords - spoken) <= 12, 'the saved storyline holds the whole hour (' + (saved[0] && saved[0].textWords) + ' words; a question sentence is left out by design)');
   assert(saved[0] && saved[0].title === 'The eel skin ledger' && !!saved[0].summary, 'title and summary written');

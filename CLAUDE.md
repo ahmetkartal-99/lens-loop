@@ -179,8 +179,16 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     diagonal extremes), `fill` (a rectangle ≈ 1, a round lamp ≈ 1.57), aspect (0.4–3.5) and `cut` (which frame edges
     it runs into), and the screen is the largest region SHAPED like one — a rectangle not cut off — else the largest
     cut on one edge, else the largest of all (a window behind the laptop, bigger and cut off, loses to the screen; a
-    lamp never merges). When no clean rectangle shows at Otsu's split (a lit room: desk, walls and screen all on the
-    bright side, one blob off the frame), higher splits toward the 99th percentile are tried, four at most. Other
+    lamp never merges). Several splits are tried and the LARGEST clean rectangle among them is the screen: higher
+    splits toward the 99th percentile when a lit room puts desk, walls and screen on the bright side together (one
+    blob off the frame), and LOWER splits (0.75…0.22 × Otsu's, floor 28; they count only when clean, since the
+    room's own grey taken in is a blob off the frame) for a screen seen at a STEEP ANGLE — an LCD dims hard
+    off-axis, its face runs from dark at the far side (dimmer than the room) to blown-out at the near side, and at
+    Otsu's split only the near part is "bright"; the black bezel keeps the whole screen apart from the room, so the
+    low split takes in the dim far part. The look is a 320-cell copy (a real 6 mm bezel is three cells wide, so it
+    survives the low splits). The author's own framing (the old frames' 48×36 fingerprints on Drive: a smooth
+    gradient, dark top to blown-out bottom, bright area at three frame edges) is exactly this: close, steep, the
+    screen overflowing — so the zoom-out / ultra-wide path and this low-split path are what his captures hit. Other
     clean rectangles lying close by (their union box ≤ 3× their joint area: the two panels of a page split by a dark
     bar, the boxes of a dark-themed page) are joined and the joined set's own corners used — one screen, straightened
     — or the `union` box when those corners hold no rectangle. The night-time dark-desk tests were not enough: a
@@ -235,7 +243,15 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     Settings sheet shows `diagText()` — the camera label, its zoom range and the zoom now, whether the GPU
     straightening ran, and the last 12 captures (`diagLog`) with what the finder saw ("screen straightened 49 % wide
     · 2 tiles", "screen cut off on the right", "no screen: nothing much brighter than the room (bright side 48, the
-    rest 35)"); the meta line says "no screen found — <why>" when nothing was found. `test/screen.e2e.js` runs the whole
+    rest 35)"); the meta line says "no screen found — <why>" when nothing was found. **Lighting evened**
+    (`S.flattenLight`, default on): after the GPU straightening, `gainMapOf` measures each cell of a 32×24 grid at
+    its PAGE WHITE (the brightest of 16 sub-cells, so text-heavy cells are not taken for dim ones), and when the
+    brightest cells are ≥ 1.3× the dimmest, a second GPU pass multiplies by a smoothly interpolated gain map (each
+    cell lifted to the 90th-percentile level, ≤ 3.5×, never darkened) — the dim far side of a steeply angled screen
+    reads as white page; the meta line says "screen straightened, lighting evened" (`frame.screen.flattened`).
+    **Photos to Drive**: the IndexedDB is opened at version 4 — a phone whose database already existed at 3 never
+    got the `frames` store (created only on upgrade), every photo save threw silently and no JPEG ever reached
+    Drive; the tests open at 4 too. `test/screen.e2e.js` runs the whole
     thing against a 2560×1440 canvas camera whose tracks report a zoom range and an ultra-wide device: parts 1–3
     the zoom in / out / wide lens, 1b the return to 1× and a desk answered from memory as one picture, 4 a stuck
     lens, 5 a role card locked and the desk still costing nothing after a move (a mutation check showed the old

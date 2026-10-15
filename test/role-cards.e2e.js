@@ -229,7 +229,7 @@ const DESCRIBE = { desk: 'ANSWER: An empty desk\n\nA grey surface, nothing to re
     s.getTracks().forEach((t) => t.stop()); v.srcObject = null;
     const note = { id: 'vf_stale', at: Date.now() - 3600000, tag: 'F-0001', question: '', caption: 'Roleplayer card', sig: btoa(b), text: 'ANSWER: Roleplayer card, medical ward\n\nThe card says: you are 54 years old and were admitted with pneumonia.' };
     const st = { id: 'st_old', title: 'Old session', createdAt: Date.now() - 7200000, updatedAt: Date.now() - 3600000, seconds: 60, words: 3, text: 'old transcript', summary: 'Old.', keys: 'k', use: true, visuals: [note] };
-    await new Promise((res) => { const r = indexedDB.open('lensloop', 3); r.onsuccess = () => { const tx = r.result.transaction('storylines', 'readwrite'); tx.objectStore('storylines').put(st); tx.oncomplete = () => res(); }; });
+    await new Promise((res) => { const r = indexedDB.open('lensloop', 4); r.onsuccess = () => { const tx = r.result.transaction('storylines', 'readwrite'); tx.objectStore('storylines').put(st); tx.oncomplete = () => res(); }; });
     return sig.length;
   });
   assert(planted > 0, 'part 2: a stale description of the card planted in memory (' + planted + '-byte fingerprint)');
@@ -256,7 +256,7 @@ const DESCRIBE = { desk: 'ANSWER: An empty desk\n\nA grey surface, nothing to re
   // during a recording the note goes into the live draft (local storage until Stop); saved storylines live in the database
   const remembered = await p2.evaluate(() => new Promise((res) => {
     let draft = []; try { draft = (JSON.parse(localStorage.getItem('lensloop.draft') || 'null') || {}).visuals || []; } catch (e) {}
-    const r = indexedDB.open('lensloop', 3);
+    const r = indexedDB.open('lensloop', 4);
     r.onsuccess = () => { const q = r.result.transaction('storylines').objectStore('storylines').getAll(); q.onsuccess = () => res(q.result.flatMap((s) => s.visuals || []).concat(draft).map((v) => ({ scene: !!v.scene, rv: !!v.rv }))); };
   }));
   assert(remembered.some((v) => v.scene && v.rv), 'part 2: the briefing was remembered as a role card\'s, with the rule in force (' + JSON.stringify(remembered) + ')');

@@ -108,7 +108,7 @@ async function driveRoute(route) {
   await page.click('#storiesBtn'); await page.waitForTimeout(300);
   const row = await page.textContent('#driveStatus');
   const local = await page.evaluate(() => new Promise((resolve) => {
-    const r = indexedDB.open('lensloop', 3);
+    const r = indexedDB.open('lensloop', 4);
     r.onsuccess = () => { const q = r.result.transaction('storylines').objectStore('storylines').getAll(); q.onsuccess = () => resolve(Object.fromEntries(q.result.map((s) => [s.id, { driveId: s.driveId, driveTxtId: s.driveTxtId }]))); };
   }));
   const onDrive = (sid, kind) => [...drv.values()].filter((f) => !f.trashed && f.appProperties.storyId === sid && f.appProperties.lensloop === kind && f.parents.includes('FOLDER'));

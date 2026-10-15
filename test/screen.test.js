@@ -102,6 +102,15 @@ const near = (p, q, tol) => Math.abs(p[0] - q[0]) <= tol && Math.abs(p[1] - q[1]
   const split = frame([{ pts: [[40, 30], [94, 30], [94, 110], [40, 110]] }, { pts: [[98, 30], [150, 30], [150, 110], [98, 110]] }]);
   const sp = screenQuad(split, W, H);
   assert(sp && near(sp.quad[0], [40, 30], 1) && near(sp.quad[1], [149, 30], 1) && near(sp.quad[2], [149, 109], 1) && !sp.merged && sp.fill > 0.9, 'a screen split by a dark bar: one screen, its four corners (' + JSON.stringify(sp && sp.quad) + ', merged ' + (sp && sp.merged) + ')');
+  // a screen at a STEEP angle: an LCD dims hard off-axis, so its face runs from dark at the far side (dimmer than the
+  // room) to blown-out at the near side, a black bezel around it — the WHOLE screen, found at a low split
+  const steep = new Uint8Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) steep[y * W + x] = 70 + Math.round(rnd() * 16);         // the room: brighter than the screen's far side
+  for (let y = 24; y < 124; y++) for (let x = 30; x < 166; x++) steep[y * W + x] = 14 + Math.round(rnd() * 6);    // the bezel
+  for (let y = 28; y < 120; y++) for (let x = 34; x < 162; x++) steep[y * W + x] = Math.min(255, Math.round(44 + (x - 34) / 127 * 200) + Math.round(rnd() * 8));   // 44 at the far edge → 244 at the near edge
+  const st = screenQuad(steep, W, H);
+  assert(st && near(st.quad[0], [34, 28], 1) && near(st.quad[1], [161, 28], 1) && near(st.quad[2], [161, 119], 1) && near(st.quad[3], [34, 119], 1) && !st.cut.length, 'a screen at a steep angle, dark at the far side: the whole of it (' + JSON.stringify(st && { quad: st.quad, thr: st.thr, coverage: +st.coverage.toFixed(3) }) + ')');
+  assert(st && st.coverage > 0.41, 'all of its face, not just the bright near part (coverage ' + (st && st.coverage.toFixed(3)) + ', the screen is 0.426 of the frame)');
   // the reason, when nothing is found
   screenQuad(frame([]), W, H);
   assert(/brighter than the room|bright/.test(screenWhyOf()), 'the diagnostics say why nothing was found (' + screenWhyOf() + ')');

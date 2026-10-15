@@ -875,7 +875,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-14 21:55';
+  const BUILD = '2026-10-14 22:45';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -911,6 +911,7 @@
     uprightPhoto: true,
     screenRead: true,   // the laptop screen (or page) found in the frame, straightened at the sensor's resolution, closer tiles for small print
     autoZoom: true,     // the lens zoomed so the screen fills the frame; out (then the wide lens) when an edge is cut off
+    flattenLight: true, // the straightened screen's lighting evened: the dim far side of a steeply angled screen lifted
     sttLang: '',
     sttTerms: '',   // the personal glossary, comma-separated
     useStories: true,
@@ -1316,18 +1317,24 @@
     if (meanBright < 90 || meanBright - meanDark < 45) { screenWhy = 'nothing much brighter than the room (bright side ' + Math.round(meanBright) + ', the rest ' + Math.round(meanDark) + ')'; return null; }
     thr = Math.max(thr, 40);   // a dark room's grey is never "bright"
     let acc = 0, p99 = 255; for (let t = 0; t < 256; t++) { acc += hist[t]; if (acc >= n * 0.99) { p99 = t; break; } }
-    // Otsu's split first; when it yields nothing screen-like (a lit room: the desk, the walls and the screen all on
-    // the bright side, one blob running off the frame), higher and higher splits that keep only the brightest — the
-    // screen — up to four looks; the first result stands when none is clean
-    let fallback = null, t = thr; const tried = [];
-    for (let i = 0; i < 4 && t < p99 - 6; i++) {
-      tried.push(t);
-      const r = screenAt(lum, W, H, t);
-      if (r && r.clean) return r;
-      if (r && !fallback) fallback = r;
-      t = Math.round((t + p99) / 2);
+    // Several splits, and the LARGEST clean rectangle among them is the screen. Higher splits than Otsu's keep only
+    // the brightest when a lit room puts the desk, the walls and the screen on the bright side together (one blob off
+    // the frame); LOWER splits take in the dim far part of a screen seen at a steep angle — an LCD dims hard
+    // off-axis, so its own face runs from dark to blown-out, and at Otsu's split only the near part is "bright" —
+    // while the black bezel still keeps the whole screen apart from the room.
+    const levels = [thr];
+    let t = thr; for (let i = 0; i < 3; i++) { t = Math.round((t + p99) / 2); if (t >= p99 - 6) break; levels.push(t); }
+    const low = [];   // the lower splits count only when they yield a CLEAN rectangle: the room's own grey, taken in, is one blob off the frame and no screen
+    for (const f of [0.75, 0.55, 0.4, 0.3, 0.22]) { const d = Math.max(28, Math.round(thr * f)); if (d < thr - 6 && !levels.includes(d) && !low.includes(d)) low.push(d); }
+    let bestClean = null, fallback = null;
+    for (const lv of levels.concat(low)) {
+      const r = screenAt(lum, W, H, lv);
+      if (!r) continue;
+      if (r.clean) { if (!bestClean || r.coverage > bestClean.coverage * 1.01) bestClean = r; }
+      else if (!fallback && !low.includes(lv)) fallback = r;
     }
-    if (!fallback && !screenWhy) screenWhy = 'no sizable bright region (splits at ' + tried.join(', ') + ')';
+    if (bestClean) return bestClean;
+    if (!fallback && !screenWhy) screenWhy = 'no sizable bright region (splits at ' + levels.concat(low).join(', ') + ')';
     return fallback;
   }
   // The bright regions above a threshold, and the one that is the screen: among the sizable ones (≥ 1 % of the frame)
@@ -1442,7 +1449,7 @@
   const lookCanvas = document.createElement('canvas'), lctx = lookCanvas.getContext('2d', { willReadFrequently: true });
   // The screen (or page) in a frame, in frame pixels: { quad, cut, coverage, widthFrac, heightFrac, scattered } or null.
   function screenFind(src) {
-    const W = 192, H = Math.max(8, Math.round(src.height * W / src.width));
+    const W = 320, H = Math.max(8, Math.round(src.height * W / src.width));   // a real bezel (6 mm) is three cells wide here, so a dim far side stays apart from the room
     lookCanvas.width = W; lookCanvas.height = H;
     lctx.drawImage(src, 0, 0, W, H);
     const d = lctx.getImageData(0, 0, W, H).data, lum = new Uint8Array(W * H);
@@ -1467,7 +1474,7 @@
       boxFrac: [box[0] / W, box[1] / H, (box[2] + 1) / W, (box[3] + 1) / H] };   // where it sits in the frame (fractions), for the zoom
   }
   // Straightening on the GPU: the frame as a texture, one quad drawn with the homography in the fragment shader.
-  let gl = null, glCanvas = null, glH = null, glFailed = false;
+  let gl = null, glCanvas = null, glH = null, glFailed = false, glGainTex = null, glUseG = null;
   function glInit() {
     if (gl) return true;
     if (glFailed) return false;
@@ -1478,7 +1485,7 @@
       const mk = (type, src) => { const sh = gl.createShader(type); gl.shaderSource(sh, src); gl.compileShader(sh); if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh)); return sh; };
       const prog = gl.createProgram();
       gl.attachShader(prog, mk(gl.VERTEX_SHADER, 'attribute vec2 p; varying vec2 v; void main() { v = p; gl_Position = vec4(p.x * 2.0 - 1.0, 1.0 - p.y * 2.0, 0.0, 1.0); }'));
-      gl.attachShader(prog, mk(gl.FRAGMENT_SHADER, 'precision highp float; uniform sampler2D t; uniform mat3 h; varying vec2 v; void main() { vec3 s = h * vec3(v, 1.0); gl_FragColor = texture2D(t, s.xy / s.z); }'));
+      gl.attachShader(prog, mk(gl.FRAGMENT_SHADER, 'precision highp float; uniform sampler2D t; uniform sampler2D g; uniform float useG; uniform mat3 h; varying vec2 v; void main() { vec3 s = h * vec3(v, 1.0); vec4 c = texture2D(t, s.xy / s.z); float k = useG > 0.5 ? texture2D(g, v).r * 4.0 : 1.0; gl_FragColor = vec4(min(c.rgb * k, 1.0), 1.0); }'));
       gl.linkProgram(prog); if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
       gl.useProgram(prog);
       const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
@@ -1488,11 +1495,47 @@
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.uniform1i(gl.getUniformLocation(prog, 't'), 0);
+      glGainTex = gl.createTexture(); gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, glGainTex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);   // the gain map, smoothly interpolated
+      gl.uniform1i(gl.getUniformLocation(prog, 'g'), 1);
+      glUseG = gl.getUniformLocation(prog, 'useG');
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex);
       glH = gl.getUniformLocation(prog, 'h');
       return true;
     } catch (e) { glFailed = true; gl = null; return false; }
   }
   const RECT_MAX = 3200;   // the straightened picture's long side, at most (the sensor rarely holds more)
+  let rectifyFlattened = false;   // the last straightening also flattened the lighting (for the meta line)
+  // The lighting of a straightened screen, flattened: an LCD seen at a steep angle is dark at the far side and
+  // blown out at the near side. The brightness of the straightened picture is measured on a coarse grid (the white
+  // of the page dominates each cell), each cell's gain lifts it to the bright cells' level (up to 3.5×, never
+  // darkening), and the GPU draws the picture again with that gain map — the far part readable, the near part as
+  // it was. Only when the gradient is real (the brightest cells 1.3× the dimmest), else the first pass stands.
+  const GAIN_W = 32, GAIN_H = 24;
+  function gainMapOf(pic) {
+    try {
+      // each cell's PAGE WHITE, not its average: the picture at four times the grid, and a cell is the brightest of
+      // its sixteen parts — so a text-heavy cell is not taken for a dim one
+      const fw = GAIN_W * 4, fh = GAIN_H * 4;
+      lookCanvas.width = fw; lookCanvas.height = fh;
+      lctx.drawImage(pic, 0, 0, fw, fh);
+      const d = lctx.getImageData(0, 0, fw, fh).data, n = GAIN_W * GAIN_H, L = new Float32Array(n);
+      for (let y = 0; y < GAIN_H; y++) for (let x = 0; x < GAIN_W; x++) {
+        let m = 0;
+        for (let yy = y * 4; yy < y * 4 + 4; yy++) for (let xx = x * 4; xx < x * 4 + 4; xx++) { const i = (yy * fw + xx) * 4; const v = (d[i] * 3 + d[i + 1] * 6 + d[i + 2]) / 10; if (v > m) m = v; }
+        L[y * GAIN_W + x] = m;
+      }
+      const sorted = Array.from(L).sort((a, b) => a - b), target = sorted[Math.floor(n * 0.9)], dim = sorted[Math.floor(n * 0.1)];
+      if (!(target > 60) || target / Math.max(1, dim) < 1.3) return null;
+      // the gain, smoothed over neighbours so text-heavy cells (darker on average) are not lifted on their own
+      const sm = new Float32Array(n);
+      for (let y = 0; y < GAIN_H; y++) for (let x = 0; x < GAIN_W; x++) { let sum = 0, c = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= GAIN_W || yy >= GAIN_H) continue; sum += L[yy * GAIN_W + xx]; c++; } sm[y * GAIN_W + x] = sum / c; }
+      const out = new Uint8Array(n); let lifted = 0;
+      for (let i = 0; i < n; i++) { const k = Math.min(3.5, Math.max(1, target / Math.max(12, sm[i]))); out[i] = Math.round(k * 64); if (k > 1.15) lifted++; }
+      return lifted >= n * 0.05 ? out : null;
+    } catch (e) { return null; }
+  }
   // The straightened screen as a canvas (the GL canvas itself), or an axis-aligned crop when there is no WebGL.
   function rectify(src, quad) {
     const len = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
@@ -1508,7 +1551,17 @@
           gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
           const M = homography(quad.map(([x, y]) => [x / src.width, y / src.height]));
           gl.uniformMatrix3fv(glH, false, new Float32Array([M[0], M[3], M[6], M[1], M[4], M[7], M[2], M[5], M[8]]));   // column-major
+          gl.uniform1f(glUseG, 0);
           gl.drawArrays(gl.TRIANGLES, 0, 6);
+          const gain = S.flattenLight === false ? null : gainMapOf(glCanvas);
+          if (gain) {   // a second pass with the lighting flattened
+            gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, glGainTex);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, GAIN_W, GAIN_H, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, gain);
+            gl.activeTexture(gl.TEXTURE0);
+            gl.uniform1f(glUseG, 1);
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+            rectifyFlattened = true;
+          } else rectifyFlattened = false;
           return glCanvas;
         } catch (e) { glFailed = true; gl = null; }
       }
@@ -1560,7 +1613,7 @@
     // the left-hand part of the picture on its own (the sources panel of a tabbed question): a tab whose panel changed
     let leftSig = null;
     try { sigCanvas.width = 48; sigCanvas.height = 36; sctx.drawImage(canvas, 0, 0, Math.max(1, Math.round(cw * 0.55)), ch, 0, 0, 48, 36); const ld = sctx.getImageData(0, 0, 48, 36).data; leftSig = new Uint8Array(48 * 36); for (let i = 0; i < leftSig.length; i++) leftSig[i] = (ld[i * 4] * 3 + ld[i * 4 + 1] * 6 + ld[i * 4 + 2]) / 10; } catch (e) {}
-    const screen = { found: !!look, cut: look ? look.cut : [], straightened: !!look && look.straight && src !== rawCanvas, cropped: !!look && src !== rawCanvas, tiles: tiles.length, widthFrac: look ? look.widthFrac : 0, heightFrac: look ? look.heightFrac : 0, boxFrac: look ? look.boxFrac : null, zoom: zoomNow(), w: src.width, h: src.height, why: look ? '' : (S.screenRead === false ? 'screen reading off' : screenWhy || 'no screen found') };
+    const screen = { found: !!look, cut: look ? look.cut : [], straightened: !!look && look.straight && src !== rawCanvas, cropped: !!look && src !== rawCanvas, flattened: !!look && src !== rawCanvas && rectifyFlattened, tiles: tiles.length, widthFrac: look ? look.widthFrac : 0, heightFrac: look ? look.heightFrac : 0, boxFrac: look ? look.boxFrac : null, zoom: zoomNow(), w: src.width, h: src.height, why: look ? '' : (S.screenRead === false ? 'screen reading off' : screenWhy || 'no screen found') };
     diagLog.push({ at: Date.now(), zoom: screen.zoom, frame: vw + '×' + vh, screen }); if (diagLog.length > 12) diagLog.shift();
     return { b64: dataUrl.slice(dataUrl.indexOf(',') + 1), thumb, w: cw, h: ch, sig, docSig, leftSig, tiles, screen };
   }
@@ -1583,7 +1636,7 @@
   }
   // What the meta line says about the picture: "screen straightened · 4 tiles · 1.8×", "screen cut off on the right".
   const screenNote = (f) => !f || !f.screen ? '' : f.screen.cut.length ? 'screen cut off on the ' + f.screen.cut.join(' and ')
-    : (f.screen.straightened ? 'screen straightened' : f.screen.cropped ? 'screen cropped' : f.screen.found ? 'screen' : f.screen.why ? 'no screen found — ' + f.screen.why : '') + (f.screen.tiles ? (f.screen.found ? ' · ' : '') + f.screen.tiles + ' tiles' : '') + (f.screen.zoom && Math.abs(f.screen.zoom * zoomScale - 1) > 0.05 ? ' · ' + showZoom(f.screen.zoom) : '');
+    : (f.screen.straightened ? 'screen straightened' + (f.screen.flattened ? ', lighting evened' : '') : f.screen.cropped ? 'screen cropped' : f.screen.found ? 'screen' : f.screen.why ? 'no screen found — ' + f.screen.why : '') + (f.screen.tiles ? (f.screen.found ? ' · ' : '') + f.screen.tiles + ' tiles' : '') + (f.screen.zoom && Math.abs(f.screen.zoom * zoomScale - 1) > 0.05 ? ' · ' + showZoom(f.screen.zoom) : '');
   // The frame's images for a request: the overview, then the closer tiles, labelled.
   function frameImages(f, label) {
     const out = [];
@@ -3123,7 +3176,7 @@
     if (!window.indexedDB) return null;
     return new Promise((resolve) => {
       let req;
-      try { req = indexedDB.open('lensloop', 3); } catch (e) { resolve(null); return; }
+      try { req = indexedDB.open('lensloop', 4); } catch (e) { resolve(null); return; }
       req.onupgradeneeded = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains('storylines')) db.createObjectStore('storylines', { keyPath: 'id' });
