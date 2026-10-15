@@ -5,8 +5,8 @@
 const fs = require('fs');
 const html = fs.readFileSync(require('path').join(__dirname, '..', 'index.html'), 'utf8');
 const pick = (from, to) => { const a = html.indexOf(from), b = html.indexOf(to, a); if (a < 0 || b < 0) throw new Error('could not locate ' + from); return html.slice(a, b); };
-const code = pick('  function screenQuad(', '  const lookCanvas = ');
-const { screenQuad, homography, mapUV, tilePlan } = new Function(code + '; return { screenQuad, homography, mapUV, tilePlan };')();
+const code = pick('  let screenWhy = ', '  const lookCanvas = ');
+const { screenQuad, homography, mapUV, tilePlan, screenWhyOf } = new Function(code + '; return { screenQuad, homography, mapUV, tilePlan, screenWhyOf: () => screenWhy };')();
 const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode = 1; } else console.log('ok:', m); };
 
 const W = 192, H = 144;
@@ -78,6 +78,33 @@ const near = (p, q, tol) => Math.abs(p[0] - q[0]) <= tol && Math.abs(p[1] - q[1]
   assert(screenQuad(lum, W, H) === null, 'a lighter band of desk is not a screen');
   const dim = frame([{ pts: [[40, 30], [150, 30], [150, 110], [40, 110]], v: 70 }]);
   assert(screenQuad(dim, W, H) === null, 'a faintly lighter rectangle (lum ~80 in a room of ~44) is not a screen either');
+}
+// 6c. the room as it is: the screen is chosen for its SHAPE, not for being the largest bright thing
+{
+  // a bright window at the top right, bigger than the screen and running off the frame: the screen is the screen
+  const win = frame([{ pts: [[20, 40], [110, 40], [110, 110], [20, 110]], v: 225 }, { pts: [[120, -10], [230, -10], [230, 70], [120, 70]], v: 240 }]);
+  const r = screenQuad(win, W, H);
+  assert(r && near(r.quad[0], [20, 40], 1) && near(r.quad[2], [109, 109], 1) && !r.cut.length, 'a window behind the laptop, bigger and cut off: the screen is chosen (' + JSON.stringify(r && r.quad) + ')');
+  // a lamp (round) beside a FAR screen (a quarter of the width): the screen alone, straightened — not a box around both
+  const lum = frame([{ pts: [[80, 60], [128, 60], [128, 92], [80, 92]], v: 230 }]);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const dx = (x - 170) / 14, dy = (y - 24) / 18; if (dx * dx + dy * dy <= 1) lum[y * W + x] = 250; }
+  const far = screenQuad(lum, W, H);
+  assert(far && near(far.quad[0], [80, 60], 1) && near(far.quad[2], [127, 91], 1) && !far.merged && far.coverage < 0.07, 'a lamp beside a far screen: the screen alone, a quarter of the width (' + JSON.stringify(far && far.quad) + ')');
+  // a lit room: the floor dark, the desk and the walls mid-bright, the screen brightest — the first split lumps the
+  // desk, the walls and the screen into one blob off the frame's edges; the second, higher split finds the screen
+  const lit = new Uint8Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) lum[y * W + x] = 0;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) lit[y * W + x] = (y < 100 ? 165 : y < 125 ? 150 : 40) + Math.round(rnd() * 14);
+  for (let y = 30; y < 95; y++) for (let x = 50; x < 140; x++) lit[y * W + x] = 238 + Math.round(rnd() * 10);
+  const litR = screenQuad(lit, W, H);
+  assert(litR && near(litR.quad[0], [50, 30], 1) && near(litR.quad[2], [139, 94], 1) && !litR.cut.length && litR.fill > 0.9, 'a lit room (desk and walls mid-bright): the screen found at the higher split (' + JSON.stringify(litR && { quad: litR.quad, cut: litR.cut, thr: litR.thr }) + ')');
+  // a page split by a dark bar (the blue divider of a two-panel question): two rectangles, one screen — its corners
+  const split = frame([{ pts: [[40, 30], [94, 30], [94, 110], [40, 110]] }, { pts: [[98, 30], [150, 30], [150, 110], [98, 110]] }]);
+  const sp = screenQuad(split, W, H);
+  assert(sp && near(sp.quad[0], [40, 30], 1) && near(sp.quad[1], [149, 30], 1) && near(sp.quad[2], [149, 109], 1) && !sp.merged && sp.fill > 0.9, 'a screen split by a dark bar: one screen, its four corners (' + JSON.stringify(sp && sp.quad) + ', merged ' + (sp && sp.merged) + ')');
+  // the reason, when nothing is found
+  screenQuad(frame([]), W, H);
+  assert(/brighter than the room|bright/.test(screenWhyOf()), 'the diagnostics say why nothing was found (' + screenWhyOf() + ')');
 }
 // 7. the tile plan: closer tiles only when the picture holds more than one carries, 2×2 at most, overlapping
 {

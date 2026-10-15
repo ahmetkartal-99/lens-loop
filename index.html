@@ -650,7 +650,7 @@
           <option value="environment">Back camera (auto)</option>
           <option value="user">Front camera</option>
         </select>
-        <div class="hint">Lenses the phone reports are listed after the first Start. Zoom presets (widest, 1×, 2×) appear on the camera view while running.</div>
+        <div class="hint">"Back camera (auto)" picks the phone's multi-lens camera when it has one (one zoom range across the lenses, 0.5× to 15× on an iPhone), so the auto-zoom has the whole range. Lenses the phone reports are listed after the first Start. Zoom presets (widest, 1×, 2×) appear on the camera view while running.</div>
       </div>
       <div class="field">
         <label for="thumbSize">Answer text size</label>
@@ -669,6 +669,10 @@
     <label class="check"><input type="checkbox" id="screenRead"> Read the whole screen: find the laptop screen (or page) in the frame, straighten it, send closer tiles for small print</label>
     <label class="check"><input type="checkbox" id="autoZoom"> Auto-zoom: zoom in until the screen fills the frame, out when an edge is cut off (the wide lens if need be)</label>
     <div class="hint" style="margin:-6px 0 12px">A screen with an edge outside the frame is not answered until it is whole in view — the zoom goes out first, then a banner asks you to move back. The meta line under an answer says how the picture was taken ("screen straightened · 4 tiles · 1.8×").</div>
+    <div class="field">
+      <label for="diagBox">Capture diagnostics (the camera, its zoom range, the last captures: what the screen finder saw)</label>
+      <textarea id="diagBox" readonly style="min-height:120px;font-family:var(--mono);font-size:11px"></textarea>
+    </div>
 
     <div class="field">
       <label for="driveHelper">Drive helper (keeps the Drive sign-in alive for as long as a session runs)</label>
@@ -871,7 +875,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-14 19:20';
+  const BUILD = '2026-10-14 21:30';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -1077,6 +1081,31 @@
     $('vfPlaceholder').hidden = true;
     await setupZoom();
     listCameras();
+    await bestLens(withMic);
+  }
+  // "Back camera (auto)": the phone's MULTI-LENS device when it has one ("Back Triple Camera", "Back Dual Wide
+  // Camera" — one zoom range running across the ultra-wide, the wide and the telephoto, 0.5× to 15× and more on an
+  // iPhone, the phone switching lenses as the zoom moves), so the auto-zoom has the whole range. Labels appear only
+  // once the camera is open, so the plain back camera opens first and the better lens takes over if it really has
+  // a wider zoom range; tried once per session.
+  let lensTried = false, lensLabel = '', lensAuto = false;
+  async function bestLens(withMic) {
+    try { const tr = stream && stream.getVideoTracks()[0]; lensLabel = (tr && tr.label) || ''; } catch (e) { lensLabel = ''; }
+    if (lensTried || S.deviceId || S.facing !== 'environment' || !navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+    lensTried = true;
+    let devices = []; try { devices = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput'); } catch (e) { return; }
+    const rank = (l) => /triple/i.test(l) ? 3 : /dual\s*wide/i.test(l) ? 2 : /\bdual\b/i.test(l) ? 1 : 0;
+    const cur = stream && stream.getVideoTracks()[0]; let curId = ''; try { curId = (cur && cur.getSettings() || {}).deviceId || ''; } catch (e) {}
+    const better = devices.filter((d) => /back|rear|environment/i.test(d.label || '') && rank(d.label) > rank(lensLabel) && d.deviceId !== curId).sort((a, b) => rank(b.label) - rank(a.label))[0];
+    if (!better) return;
+    const prevRange = zoomCaps ? zoomCaps.max / zoomCaps.min : 1, prevId = curId;
+    S.deviceId = better.deviceId;   // for this session only (the saved choice stands next time)
+    try {
+      await openCamera(withMic);
+      const range = zoomCaps ? zoomCaps.max / zoomCaps.min : 1;
+      if (range > prevRange * 1.2) { lensAuto = true; listCameras(); setStatus('armed', 'Using the ' + (better.label || 'multi-lens camera') + ' — zoom ' + fmtZoom(zoomCaps.min) + ' to ' + fmtZoom(zoomCaps.max)); return; }
+      S.deviceId = prevId; await openCamera(withMic);   // no wider a range after all: back to the plain lens
+    } catch (e) { S.deviceId = ''; try { await openCamera(withMic); } catch (e2) {} }
   }
 
   // ---------- zoom (lens choice on phones that expose it) ----------
@@ -1193,6 +1222,7 @@
     bumpSnap();
   }
   async function wideLens() {
+    if (/triple|dual/i.test(lensLabel) || (zoomCaps && zoomCaps.min < 0.95)) return false;   // the wide end is in this lens's own zoom range
     if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return false;
     let devices = []; try { devices = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput'); } catch (e) { return false; }
     const cur = stream && stream.getVideoTracks()[0]; let curId = ''; try { curId = (cur && cur.getSettings() || {}).deviceId || ''; } catch (e) {}
@@ -1216,7 +1246,7 @@
       opt.textContent = d.label || ('Camera ' + (i + 1));
       sel.appendChild(opt);
     });
-    sel.value = S.deviceId ? 'device:' + S.deviceId : S.facing;
+    sel.value = (S.deviceId && !lensAuto) ? 'device:' + S.deviceId : S.facing;   // a lens picked for the session still shows as "auto"
     if (sel.selectedIndex < 0) sel.value = S.facing;
   }
   function waitForFrames() {
@@ -1247,21 +1277,46 @@
   // corners (the extreme points along the diagonals, which are a rectangle's corners however it is turned or
   // foreshortened), how much of its own quadrilateral it fills (a rectangle ≈ 1), whether it runs into the frame's
   // edges, and the extent of all sizable bright regions (a dark-themed screen shows as several white boxes).
+  let screenWhy = '';   // why the last look found no screen, for the diagnostics
   function screenQuad(lum, W, H) {
     const n = W * H;
+    screenWhy = '';
     const hist = new Uint32Array(256); for (let i = 0; i < n; i++) hist[lum[i]]++;
     let sum = 0; for (let i = 0; i < 256; i++) sum += i * hist[i];
     let sumB = 0, wB = 0, best = 0, thr = 128, meanDark = 0, meanBright = 0;   // Otsu: the split between the dark room and the bright screen
     for (let t = 0; t < 256; t++) { wB += hist[t]; if (!wB) continue; const wF = n - wB; if (!wF) break; sumB += t * hist[t]; const mB = sumB / wB, mF = (sum - sumB) / wF; const v = wB * wF * (mB - mF) * (mB - mF); if (v > best) { best = v; thr = t; meanDark = mB; meanBright = mF; } }
     // a screen is BRIGHT, and much brighter than the room: two shades of a dark desk (a lighter band on the floor, a
     // shadow) split just as neatly by Otsu, and are not a screen
-    if (meanBright < 90 || meanBright - meanDark < 45) return null;
+    if (meanBright < 90 || meanBright - meanDark < 45) { screenWhy = 'nothing much brighter than the room (bright side ' + Math.round(meanBright) + ', the rest ' + Math.round(meanDark) + ')'; return null; }
     thr = Math.max(thr, 40);   // a dark room's grey is never "bright"
+    let acc = 0, p99 = 255; for (let t = 0; t < 256; t++) { acc += hist[t]; if (acc >= n * 0.99) { p99 = t; break; } }
+    // Otsu's split first; when it yields nothing screen-like (a lit room: the desk, the walls and the screen all on
+    // the bright side, one blob running off the frame), higher and higher splits that keep only the brightest — the
+    // screen — up to four looks; the first result stands when none is clean
+    let fallback = null, t = thr; const tried = [];
+    for (let i = 0; i < 4 && t < p99 - 6; i++) {
+      tried.push(t);
+      const r = screenAt(lum, W, H, t);
+      if (r && r.clean) return r;
+      if (r && !fallback) fallback = r;
+      t = Math.round((t + p99) / 2);
+    }
+    if (!fallback && !screenWhy) screenWhy = 'no sizable bright region (splits at ' + tried.join(', ') + ')';
+    return fallback;
+  }
+  // The bright regions above a threshold, and the one that is the screen: among the sizable ones (≥ 1 % of the frame)
+  // the largest that is SHAPED like a screen — four corners that hold a rectangle however it is turned or
+  // foreshortened (fill ≈ 1), a plausible aspect, no edge of the frame cutting it — else the largest cut on one edge
+  // at most, else the largest of all. Other rectangle-shaped pieces lying close by (the white boxes of a dark-themed
+  // page) are taken together with it; a lamp (round: fill ≈ 1.57), a window at the frame's edge, a far-off bright
+  // thing are not. Returns { quad, fill, cut, coverage, box, union, scattered, merged, otherFrac, clean, thr } or null.
+  function screenAt(lum, W, H, thr) {
+    const n = W * H;
     const mask = new Uint8Array(n); let bright = 0;
     for (let i = 0; i < n; i++) if (lum[i] > thr) { mask[i] = 1; bright++; }
-    if (bright < n * 0.03 || bright > n * 0.985) return null;   // nothing bright, or the whole frame: nothing to crop
+    if (bright < n * 0.01 || bright > n * 0.985) { screenWhy = bright > n * 0.985 ? 'the whole frame is bright (' + Math.round(bright / n * 100) + ' %)' : 'almost nothing bright (' + Math.round(bright / n * 100) + ' %)'; return null; }   // nothing bright, or the whole frame: nothing to crop
     const comp = new Int32Array(n).fill(-1), stack = new Int32Array(n);
-    let k = 0, bestK = -1, bestArea = 0; const areas = [], boxes = [];
+    let k = 0; const areas = [], boxes = [];
     for (let st = 0; st < n; st++) {
       if (!mask[st] || comp[st] >= 0) continue;
       let top = 0; stack[top++] = st; comp[st] = k; let area = 0, x0 = W, x1 = 0, y0 = H, y1 = 0;
@@ -1273,31 +1328,61 @@
         if (y > 0 && mask[q - W] && comp[q - W] < 0) { comp[q - W] = k; stack[top++] = q - W; }
         if (y < H - 1 && mask[q + W] && comp[q + W] < 0) { comp[q + W] = k; stack[top++] = q + W; }
       }
-      areas.push(area); boxes.push([x0, y0, x1, y1]); if (area > bestArea) { bestArea = area; bestK = k; } k++;
+      areas.push(area); boxes.push([x0, y0, x1, y1]); k++;
     }
-    if (bestArea < n * 0.04) return null;   // a lamp, a reflection: not a screen to read
-    let tl = -1, tr = -1, br = -1, bl = -1, vTl = Infinity, vTr = -Infinity, vBr = -Infinity, vBl = Infinity;
-    const edge = { left: 0, right: 0, top: 0, bottom: 0 };
+    const minArea = Math.max(24, n * 0.01);
+    const ids = []; for (let i = 0; i < k; i++) if (areas[i] >= minArea) ids.push(i);
+    if (!ids.length) { screenWhy = 'bright bits only (' + Math.round(bright / n * 100) + ' % of the frame in ' + k + ' pieces, none 1 %)'; return null; }
+    // every sizable region's corners (the extreme points along the diagonals) and the frame edges it runs into, in one pass
+    const idx = new Int32Array(k).fill(-1); ids.forEach((id, j) => { idx[id] = j; });
+    const m = ids.length, tl = new Int32Array(m), tr = new Int32Array(m), br = new Int32Array(m), bl = new Int32Array(m);
+    const vTl = new Float64Array(m).fill(Infinity), vTr = new Float64Array(m).fill(-Infinity), vBr = new Float64Array(m).fill(-Infinity), vBl = new Float64Array(m).fill(Infinity);
+    const eL = new Int32Array(m), eR = new Int32Array(m), eT = new Int32Array(m), eB = new Int32Array(m);
     for (let q = 0; q < n; q++) {
-      if (comp[q] !== bestK) continue;
+      const c = comp[q]; if (c < 0) continue; const j = idx[c]; if (j < 0) continue;
       const x = q % W, y = (q - x) / W;
-      if (x + y < vTl) { vTl = x + y; tl = q; } if (x - y > vTr) { vTr = x - y; tr = q; } if (x + y > vBr) { vBr = x + y; br = q; } if (x - y < vBl) { vBl = x - y; bl = q; }
-      if (x === 0) edge.left++; if (x === W - 1) edge.right++; if (y === 0) edge.top++; if (y === H - 1) edge.bottom++;
+      if (x + y < vTl[j]) { vTl[j] = x + y; tl[j] = q; } if (x - y > vTr[j]) { vTr[j] = x - y; tr[j] = q; } if (x + y > vBr[j]) { vBr[j] = x + y; br[j] = q; } if (x - y < vBl[j]) { vBl[j] = x - y; bl[j] = q; }
+      if (x === 0) eL[j]++; if (x === W - 1) eR[j]++; if (y === 0) eT[j]++; if (y === H - 1) eB[j]++;
     }
     const pt = (q) => [q % W, Math.floor(q / W)];
-    const quad = [pt(tl), pt(tr), pt(br), pt(bl)];
     const cross = (a, b) => a[0] * b[1] - b[0] * a[1];
-    const polyArea = Math.abs(cross(quad[0], quad[1]) + cross(quad[1], quad[2]) + cross(quad[2], quad[3]) + cross(quad[3], quad[0])) / 2;
-    const fill = polyArea > 0 ? bestArea / polyArea : 0;
-    const cut = [];
-    if (edge.left >= H * 0.2) cut.push('left'); if (edge.right >= H * 0.2) cut.push('right'); if (edge.top >= W * 0.2) cut.push('top'); if (edge.bottom >= W * 0.2) cut.push('bottom');
-    const b0 = boxes[bestK]; let ux0 = b0[0], uy0 = b0[1], ux1 = b0[2], uy1 = b0[3], scattered = false, otherMax = 0;
-    for (let i = 0; i < areas.length; i++) {   // a lamp or a window at the frame's edge is not the screen being cut: only the largest region says that
-      if (i === bestK || areas[i] < n * 0.01) continue;
-      scattered = true; otherMax = Math.max(otherMax, areas[i]); const b = boxes[i];
-      if (b[0] < ux0) ux0 = b[0]; if (b[1] < uy0) uy0 = b[1]; if (b[2] > ux1) ux1 = b[2]; if (b[3] > uy1) uy1 = b[3];
+    const cands = ids.map((id, j) => {
+      const quad = [pt(tl[j]), pt(tr[j]), pt(br[j]), pt(bl[j])];
+      const polyArea = Math.abs(cross(quad[0], quad[1]) + cross(quad[1], quad[2]) + cross(quad[2], quad[3]) + cross(quad[3], quad[0])) / 2;
+      const fill = polyArea > 0 ? areas[id] / polyArea : 0;
+      const cut = [];
+      if (eL[j] >= H * 0.2) cut.push('left'); if (eR[j] >= H * 0.2) cut.push('right'); if (eT[j] >= W * 0.2) cut.push('top'); if (eB[j] >= W * 0.2) cut.push('bottom');
+      const b = boxes[id], bw = b[2] - b[0] + 1, bh = b[3] - b[1] + 1, aspect = bw / bh;
+      const rect = fill >= 0.8 && fill <= 1.25 && aspect >= 0.4 && aspect <= 3.5;   // a phone held upright, a tall half-panel: still a rectangle; a thin strip of light is not
+      return { id, j, area: areas[id], quad, fill, cut, box: b, rect };
+    });
+    const byArea = (a, b) => b.area - a.area;
+    const clean = cands.filter((c) => c.rect && !c.cut.length).sort(byArea);
+    const nearly = cands.filter((c) => c.rect && c.cut.length === 1).sort(byArea);
+    const chosen = clean[0] || nearly[0] || cands.slice().sort(byArea)[0];
+    // pieces of one dark-themed page: other clean rectangles whose box together with the chosen one is still mostly
+    // bright (the union holds no more than three times their joint area) — taken together, the box around them all
+    let ux0 = chosen.box[0], uy0 = chosen.box[1], ux1 = chosen.box[2], uy1 = chosen.box[3], scattered = false, merged = false, otherMax = 0, joint = chosen.area;
+    const parts = [chosen];
+    for (const c of cands) {
+      if (c === chosen) continue;
+      scattered = true; otherMax = Math.max(otherMax, c.area);
+      if (!c.rect || c.cut.length) continue;
+      const nx0 = Math.min(ux0, c.box[0]), ny0 = Math.min(uy0, c.box[1]), nx1 = Math.max(ux1, c.box[2]), ny1 = Math.max(uy1, c.box[3]);
+      if ((nx1 - nx0 + 1) * (ny1 - ny0 + 1) <= 3 * (joint + c.area)) { ux0 = nx0; uy0 = ny0; ux1 = nx1; uy1 = ny1; joint += c.area; merged = true; parts.push(c); }
     }
-    return { quad, fill, cut, coverage: bestArea / n, box: b0, union: [ux0, uy0, ux1, uy1], scattered, otherFrac: otherMax / bestArea, thr };
+    // the pieces together have corners of their own (the extremes of the extremes): a page split by a dark bar or a
+    // dark-themed page is straightened like any whole screen when those corners hold a rectangle
+    let quad = chosen.quad, fill = chosen.fill;
+    if (merged) {
+      let a = parts[0], b = parts[0], c = parts[0], d = parts[0];
+      for (const pc of parts) { if (vTl[pc.j] < vTl[a.j]) a = pc; if (vTr[pc.j] > vTr[b.j]) b = pc; if (vBr[pc.j] > vBr[c.j]) c = pc; if (vBl[pc.j] < vBl[d.j]) d = pc; }
+      const mq = [pt(tl[a.j]), pt(tr[b.j]), pt(br[c.j]), pt(bl[d.j])];
+      const pa = Math.abs(cross(mq[0], mq[1]) + cross(mq[1], mq[2]) + cross(mq[2], mq[3]) + cross(mq[3], mq[0])) / 2;
+      const mf = pa > 0 ? joint / pa : 0;
+      if (mf >= 0.8 && mf <= 1.25) { quad = mq; fill = mf; merged = false; }   // one screen after all
+    }
+    return { quad, fill, cut: chosen.cut, coverage: joint / n, box: parts.length > 1 ? [ux0, uy0, ux1, uy1] : chosen.box, union: [ux0, uy0, ux1, uy1], scattered, merged, otherFrac: otherMax / chosen.area, clean: chosen.rect && !chosen.cut.length, thr };
   }
   // The map from the straightened picture's unit square (u,v in 0..1, origin top-left) to the frame (x,y in the
   // same units): a projective transform fixed by the four corners TL, TR, BR, BL (Heckbert's square-to-quad).
@@ -1341,9 +1426,9 @@
     const sx = src.width / W, sy = src.height / H, m = 1.6;   // a margin of cells, so the screen's own edge is kept
     // a clean rectangle (turned or foreshortened) is straightened; bright content in several pieces, or a region that
     // is not a rectangle (a page with a dark figure in one corner), is cropped to the box around all of it instead
-    // (other bright pieces matter only when they are of a size with the largest — the boxes of a dark-themed page;
-    // a lamp or a reflection a quarter of its size or less is simply left out of the picture)
-    const straight = q.fill >= 0.8 && q.fill <= 1.25 && (!q.scattered || q.otherFrac < 0.25);
+    // (other bright pieces are taken in only when they are clean rectangles lying close by — the boxes of a
+    // dark-themed page; a lamp, a window, a far-off bright thing is simply left out of the picture)
+    const straight = q.fill >= 0.8 && q.fill <= 1.25 && !q.merged;
     let quad;
     if (!straight) { const u = q.union; quad = [[u[0] - m, u[1] - m], [u[2] + 1 + m, u[1] - m], [u[2] + 1 + m, u[3] + 1 + m], [u[0] - m, u[3] + 1 + m]]; }
     else {
@@ -1449,13 +1534,30 @@
     // the left-hand part of the picture on its own (the sources panel of a tabbed question): a tab whose panel changed
     let leftSig = null;
     try { sigCanvas.width = 48; sigCanvas.height = 36; sctx.drawImage(canvas, 0, 0, Math.max(1, Math.round(cw * 0.55)), ch, 0, 0, 48, 36); const ld = sctx.getImageData(0, 0, 48, 36).data; leftSig = new Uint8Array(48 * 36); for (let i = 0; i < leftSig.length; i++) leftSig[i] = (ld[i * 4] * 3 + ld[i * 4 + 1] * 6 + ld[i * 4 + 2]) / 10; } catch (e) {}
-    const screen = { found: !!look, cut: look ? look.cut : [], straightened: !!look && look.straight && src !== rawCanvas, cropped: !!look && src !== rawCanvas, tiles: tiles.length, widthFrac: look ? look.widthFrac : 0, heightFrac: look ? look.heightFrac : 0, boxFrac: look ? look.boxFrac : null, zoom: zoomNow(), w: src.width, h: src.height };
+    const screen = { found: !!look, cut: look ? look.cut : [], straightened: !!look && look.straight && src !== rawCanvas, cropped: !!look && src !== rawCanvas, tiles: tiles.length, widthFrac: look ? look.widthFrac : 0, heightFrac: look ? look.heightFrac : 0, boxFrac: look ? look.boxFrac : null, zoom: zoomNow(), w: src.width, h: src.height, why: look ? '' : (S.screenRead === false ? 'screen reading off' : screenWhy || 'no screen found') };
+    diagLog.push({ at: Date.now(), zoom: screen.zoom, frame: vw + '×' + vh, screen }); if (diagLog.length > 12) diagLog.shift();
     return { b64: dataUrl.slice(dataUrl.indexOf(',') + 1), thumb, w: cw, h: ch, sig, docSig, leftSig, tiles, screen };
   }
   const tabsNameOf = (f) => (f && f.tab) || '?';
+  // the diagnostics: the lens, its zoom range, the GPU, and the last captures as the screen finder saw them
+  const diagLog = [];
+  function diagText() {
+    const lines = [];
+    lines.push('camera: ' + (lensLabel || (stream ? '(no label)' : 'not open')) + (S.deviceId ? (lensAuto ? ' (auto: the multi-lens camera)' : ' (chosen lens)') : ' (auto)'));
+    lines.push('zoom range: ' + (zoomCaps ? fmtZoom(zoomCaps.min) + ' – ' + fmtZoom(zoomCaps.max) + ' · now ' + fmtZoom(zoomNow()) + (zoomDead ? ' · the lens ignored zoom changes — auto-zoom off' : '') : 'none reported by this camera — no auto-zoom possible'));
+    lines.push('straightening on the GPU: ' + (glFailed ? 'no (WebGL failed — axis-aligned crop instead)' : gl ? 'yes' : 'not used yet'));
+    lines.push('auto-zoom ' + (S.autoZoom === false ? 'off' : 'on') + ' · screen reading ' + (S.screenRead === false ? 'off' : 'on') + ' · capture every ' + S.interval + ' s');
+    if (!diagLog.length) lines.push('no captures yet');
+    for (const d of diagLog.slice().reverse()) {
+      const sc = d.screen;
+      lines.push(new Date(d.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' · ' + d.frame + ' · ' + fmtZoom(d.zoom) + ' · ' +
+        (sc.found ? (sc.cut.length ? 'screen cut off on the ' + sc.cut.join(' and ') : (sc.straightened ? 'screen straightened' : sc.cropped ? 'screen cropped' : 'screen') + ' ' + Math.round(sc.widthFrac * 100) + ' % wide' + (sc.tiles ? ' · ' + sc.tiles + ' tiles' : '')) : 'no screen: ' + sc.why));
+    }
+    return lines.join('\n');
+  }
   // What the meta line says about the picture: "screen straightened · 4 tiles · 1.8×", "screen cut off on the right".
   const screenNote = (f) => !f || !f.screen ? '' : f.screen.cut.length ? 'screen cut off on the ' + f.screen.cut.join(' and ')
-    : (f.screen.straightened ? 'screen straightened' : f.screen.cropped ? 'screen cropped' : f.screen.found ? 'screen' : '') + (f.screen.tiles ? (f.screen.found ? ' · ' : '') + f.screen.tiles + ' tiles' : '') + (f.screen.zoom && Math.abs(f.screen.zoom - 1) > 0.05 ? ' · ' + fmtZoom(f.screen.zoom) : '');
+    : (f.screen.straightened ? 'screen straightened' : f.screen.cropped ? 'screen cropped' : f.screen.found ? 'screen' : f.screen.why ? 'no screen found — ' + f.screen.why : '') + (f.screen.tiles ? (f.screen.found ? ' · ' : '') + f.screen.tiles + ' tiles' : '') + (f.screen.zoom && Math.abs(f.screen.zoom - 1) > 0.05 ? ' · ' + fmtZoom(f.screen.zoom) : '');
   // The frame's images for a request: the overview, then the closer tiles, labelled.
   function frameImages(f, label) {
     const out = [];
@@ -1559,6 +1661,7 @@
     if (convoActive()) endConvo('session stopped');
     roleLock = null; roleRelook = null; clearMaterial(); tabSet = null;   // the session ends: no role lines, collected pages or tabs held over
     if (mainDevice != null) { S.deviceId = mainDevice; mainDevice = null; }   // the wide lens was borrowed for a cut-off screen: the chosen lens is back
+    if (lensAuto) { S.deviceId = ''; lensAuto = false; }   // the multi-lens device was picked for the session: "auto" again
     if (listening) stopStory(true);   // the recording ends with the session and is saved
     stopCamera();
     if (!listening) releaseWake();
@@ -2813,6 +2916,7 @@
   // ---------- settings sheet ----------
   const sheet = $('sheet'), sheetBack = $('sheetBack');
   function openSheet() {
+    $('diagBox').value = diagText();
     $('apiKey').value = S.key;
     $('model').value = S.model;
     $('effort').value = S.effort;

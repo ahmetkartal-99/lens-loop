@@ -75,14 +75,15 @@ function jpegSize(b64) {
     draw(); setInterval(draw, 100);
     const vstream = cv.captureStream(10);
     const md = navigator.mediaDevices || (navigator.mediaDevices = {});
-    md.enumerateDevices = async () => [{ kind: 'videoinput', deviceId: 'main', label: 'Back Camera' }, { kind: 'videoinput', deviceId: 'wide', label: 'Back Ultra Wide Camera' }, { kind: 'videoinput', deviceId: 'front', label: 'Front Camera' }];
+    const triple = localStorage.getItem('lensTriple') === '1';   // a phone with a multi-lens device too (one zoom range across its lenses)
+    md.enumerateDevices = async () => [{ kind: 'videoinput', deviceId: 'main', label: 'Back Camera' }, { kind: 'videoinput', deviceId: 'wide', label: 'Back Ultra Wide Camera' }, { kind: 'videoinput', deviceId: 'front', label: 'Front Camera' }].concat(triple ? [{ kind: 'videoinput', deviceId: 'triple', label: 'Back Triple Camera' }] : []);
     md.getUserMedia = async (c) => {
       const tracks = [];
       if (!c || c.video) {
         const want = c && c.video && c.video.deviceId && c.video.deviceId.exact; if (want) window.__device = want;
         for (const t0 of vstream.getVideoTracks()) {
           const t = t0.clone();
-          t.getCapabilities = () => ({ zoom: { min: 1, max: 5, step: 0.1 }, deviceId: window.__device });
+          t.getCapabilities = () => ({ zoom: { min: 1, max: window.__device === 'triple' ? 15 : 5, step: 0.1 }, deviceId: window.__device });
           t.getSettings = () => ({ zoom: window.__zoom, deviceId: window.__device, width: 2560, height: 1440 });
           t.applyConstraints = async (cc) => { const z = (cc.advanced && cc.advanced[0] && cc.advanced[0].zoom) || cc.zoom; if (typeof z === 'number') { window.__zoomCalls.push(Math.round(z * 100) / 100); if (!window.__zoomStuck) window.__zoom = z; } };   // a stuck lens: the call is accepted, nothing moves
           tracks.push(t);
@@ -247,6 +248,31 @@ function jpegSize(b64) {
   await p5.waitForTimeout(21000);
   assert(looks5 === looks5b && main5.length === main5b, '5. the still desk over the next 21 s: no quick look, no request (' + (looks5 - looks5b) + ' looks, ' + (main5.length - main5b) + ' requests)');
   assert(errors5.length === 0, '5. no page errors' + (errors5.length ? ': ' + errors5.join(' | ') : ''));
-  await b5.close(); server.close();
+  await b5.close();
+
+  // 6. a phone with a multi-lens device ("Back Triple Camera", zoom 1–15×): "Back camera (auto)" takes it, so the
+  // auto-zoom has the whole range; the picker still says auto; the diagnostics show the lens and the range
+  const b6 = await chromium.launch();
+  const ctx6 = await b6.newContext({ viewport: { width: 420, height: 860 } });
+  await ctx6.addInitScript(() => { localStorage.setItem('lensTriple', '1'); });
+  await ctx6.addInitScript(initCamera);
+  const p6 = await ctx6.newPage();
+  const errors6 = []; p6.on('pageerror', (e) => errors6.push(String(e)));
+  await p6.route('https://api.anthropic.com/v1/messages', async (route) => {
+    const body = JSON.parse(route.request().postData());
+    if (/haiku/.test(body.model)) return fulfil(route, { status: 200, contentType: 'application/json', body: JSON.stringify({ content: [{ type: 'text', text: 'NONE' }], usage: {} }) });
+    return fulfil(route, { status: 200, contentType: 'text/event-stream', body: sse('ANSWER: An empty desk\n\nNothing to read.') });
+  });
+  await p6.goto(`http://127.0.0.1:${port}/index.html#key=sk-ant-test-0000`);
+  await p6.waitForTimeout(800);
+  await p6.click('#startBtn');
+  await p6.waitForTimeout(4000);
+  assert((await p6.evaluate(() => window.__device)) === 'triple', '6. the multi-lens device was taken for the session (' + await p6.evaluate(() => window.__device) + ')');
+  assert((await p6.evaluate(() => document.getElementById('facing').value)) === 'environment', '6. the camera picker still says auto');
+  await p6.click('#settingsBtn'); await p6.waitForTimeout(300);
+  const diag = await p6.evaluate(() => document.getElementById('diagBox').value);
+  assert(/zoom range: 1× – 15×/.test(diag) && /no screen: /.test(diag), '6. the diagnostics: the range across the lenses, and why the desk is no screen (' + diag.split('\n').slice(0, 2).join(' | ') + ' … ' + (diag.split('\n').find((l) => /no screen/.test(l)) || '') + ')');
+  assert(errors6.length === 0, '6. no page errors' + (errors6.length ? ': ' + errors6.join(' | ') : ''));
+  await b6.close(); server.close();
   console.log(process.exitCode ? 'SCREEN E2E FAILED' : 'SCREEN E2E PASSED');
 })().catch((e) => { console.error(e); process.exit(1); });

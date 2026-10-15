@@ -175,8 +175,19 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     always read the entire screen"). Every capture (`captureFrame`) finds the bright rectangle of the laptop screen
     (or page) in a 192-px grey copy of the sensor frame — `screenQuad`: Otsu's split between the room and the screen,
     which must be BRIGHT (mean ≥ 90) and far brighter than the room (≥ 45 apart; two shades of a dark desk are not a
-    screen), the largest bright region, its four corners as the diagonal extremes, `fill` (a rectangle ≈ 1), `cut`
-    (which frame edges it runs into), `scattered` + `union` (a dark-themed page's several white boxes) — then
+    screen); then `screenAt(thr)`: every bright region ≥ 1 % of the frame is a candidate with its four corners (the
+    diagonal extremes), `fill` (a rectangle ≈ 1, a round lamp ≈ 1.57), aspect (0.4–3.5) and `cut` (which frame edges
+    it runs into), and the screen is the largest region SHAPED like one — a rectangle not cut off — else the largest
+    cut on one edge, else the largest of all (a window behind the laptop, bigger and cut off, loses to the screen; a
+    lamp never merges). When no clean rectangle shows at Otsu's split (a lit room: desk, walls and screen all on the
+    bright side, one blob off the frame), higher splits toward the 99th percentile are tried, four at most. Other
+    clean rectangles lying close by (their union box ≤ 3× their joint area: the two panels of a page split by a dark
+    bar, the boxes of a dark-themed page) are joined and the joined set's own corners used — one screen, straightened
+    — or the `union` box when those corners hold no rectangle. The night-time dark-desk tests were not enough: a
+    real room has walls, a lamp, a silver laptop body; the realistic scenes (lit room, window behind, far screen with
+    a lamp, split page) are in `test/screen.test.js` 6c, and the author's own screenshots were pushed through the real
+    finder + GPU rectifier as warped "phone photos" (scratch work, not committed). `screenWhy` says why nothing was
+    found — then
     `screenFind` adds a margin and `rectify` STRAIGHTENS it with a homography on the GPU (`glInit`, Heckbert
     square-to-quad, `RECT_MAX` 3200 px long side; an axis-aligned crop without WebGL) at the sensor's resolution.
     What goes to Claude is that straightened screen: the overview at `S.imgSize` plus up to 2×2 overlapping closer
@@ -207,7 +218,17 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     answered as the camera has it rather than waited on for ever. A move makes exactly ONE capture new
     (`zoomBumped`, consumed by `snap`) — never the retry flag, which would switch the "same picture" skip off until
     the next request and cost a quick look every tick on a still, locked picture. The lens borrowed by `wideLens`
-    is given back at Stop (`mainDevice`); `start` resets the auto-zoom state. `test/screen.e2e.js` runs the whole
+    is given back at Stop (`mainDevice`); `start` resets the auto-zoom state. **The lens**: "Back camera (auto)"
+    opens the plain back camera first (labels come only once a camera is open), then `bestLens` takes the phone's
+    MULTI-LENS device when it has one — "Back Triple Camera" > "Back Dual Wide Camera" > "Back Dual Camera" by label
+    — and keeps it only if its zoom range is really wider (> 1.2× the ratio): one range across ultra-wide, wide and
+    telephoto (0.5×–15× and more on an iPhone, the phone switching lenses as the zoom moves), so the auto-zoom has
+    the whole of it. Tried once per session (`lensTried`), the picker still says auto (`lensAuto`), the choice is
+    dropped at Stop; `wideLens` stands down for such a lens (the wide end is in its own range). **Diagnostics**: the
+    Settings sheet shows `diagText()` — the camera label, its zoom range and the zoom now, whether the GPU
+    straightening ran, and the last 12 captures (`diagLog`) with what the finder saw ("screen straightened 49 % wide
+    · 2 tiles", "screen cut off on the right", "no screen: nothing much brighter than the room (bright side 48, the
+    rest 35)"); the meta line says "no screen found — <why>" when nothing was found. `test/screen.e2e.js` runs the whole
     thing against a 2560×1440 canvas camera whose tracks report a zoom range and an ultra-wide device: parts 1–3
     the zoom in / out / wide lens, 1b the return to 1× and a desk answered from memory as one picture, 4 a stuck
     lens, 5 a role card locked and the desk still costing nothing after a move (a mutation check showed the old
@@ -286,8 +307,8 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
   `node test/role-parse.test.js` (the role-card verdict read however a model writes it), `node test/verdict.test.js`
   (which answers are shown big in the panel, which go to the feed), `node test/convo.test.js` (the live role
   play's rules, who plays whom, the clock, "I'm ready" / "Lens, next"), `node test/screen.test.js` (the screen
-  finder's geometry: corners however the screen is turned, cut edges, scattered pieces, a lamp vs boxes of a size,
-  two shades of desk, the homography, the tiles) and `node test/tabs.test.js` (the TABS verdict in every form, the
+  finder's geometry: corners however the screen is turned, cut edges, a window behind, a lamp beside a far screen,
+  a lit room, a page split by a dark bar, two shades of desk, the homography, the tiles) and `node test/tabs.test.js` (the TABS verdict in every form, the
   selected tab, the same question vs another with the same stem).
 - `node test/session.e2e.js`, `node test/drive-renewal.e2e.js`, `node test/fresh-build.e2e.js`,
   `node test/memory-voice.e2e.js`, `node test/drive-helper.e2e.js`, `node test/drive-expired-open.e2e.js` (the app
@@ -298,7 +319,8 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
   changes only for a different card; writing tasks over pages; and part 5, a whole live role play by voice),
   `node test/screen.e2e.js` (a 2560×1440 canvas camera with a zoom range and an ultra-wide device: the desk as it
   is, a small screen zoomed in on, an angled screen straightened with two tiles, a cut-off screen zoomed out and the
-  wide lens), `node test/tabs.e2e.js` (a question over three tabs: collected tab by tab, one request with the
+  wide lens, a stuck lens, a role card locked and a zoom move costing nothing after, a phone with a multi-lens
+  device taken for its 1–15× range), `node test/tabs.e2e.js` (a question over three tabs: collected tab by tab, one request with the
   bundle, a second question at once from the same bytes, "Lens, answer"), `node test/latency.e2e.js` (audio cadence and
   highlight reaction time), `node test/document.e2e.js` (a document page by page, the desk, a new subject) and
   `node test/hour-session.e2e.js` (an hour of dictation compressed into half a
