@@ -191,7 +191,20 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     screen overflowing — so the zoom-out / ultra-wide path and this low-split path are what his captures hit. Other
     clean rectangles lying close by (their union box ≤ 3× their joint area: the two panels of a page split by a dark
     bar, the boxes of a dark-themed page) are joined and the joined set's own corners used — one screen, straightened
-    — or the `union` box when those corners hold no rectangle. The night-time dark-desk tests were not enough: a
+    — or the `union` box when those corners hold no rectangle. **A screen LARGER than the view** (the author's real
+    captures of Oct 15, read back from the Captures folder: the phone ~15 cm from the screen looking up at it, the
+    page off the right, the top and the bottom even at 0.5×) is a cut-off bright surface at Otsu's split covering
+    ≥ 40 % of the frame (`overflow`); at the higher splits its blown-out centre / moiré is a clean rectangle — and
+    the old "largest clean rectangle" rule took THAT for the screen (27–39 % wide), zoomed in on it and sent the
+    model a patch of white. Now a clean candidate inside an overflowing surface, under 60 % of its area, passes only
+    if `ringDark` holds — the ring one to four cells outside its box is under 0.72× as bright as the inside (a real
+    screen has its bezel and the desk round it; a patch has the same surface going on): otherwise the cut-off
+    surface stays the answer (`test/screen.test.js` 6d; the real captures run through `run-finder.js` confirm it).
+    A cut-off screen is STRAIGHTENED too (`captureFrame` rectifies whatever was found): its corners on the cut
+    sides lie on the frame's edge, so the part in view comes out with its own edge upright and the lines of text
+    level, the room left out — far more legible than the raw frame — and goes with the cut note ("the right edge of
+    the screen may lie outside the photo…"); the meta line says "screen cut off on the right — the part in view
+    straightened". The night-time dark-desk tests were not enough: a
     real room has walls, a lamp, a silver laptop body; the realistic scenes (lit room, window behind, far screen with
     a lamp, split page) are in `test/screen.test.js` 6c, and the author's own screenshots were pushed through the real
     finder + GPU rectifier as warped "phone photos" (scratch work, not committed). `screenWhy` says why nothing was
@@ -219,8 +232,15 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     < 1.06); OUT (× 0.72) while an edge is outside the frame (and "the whole frame is bright" counts as cut on every
     side); a touch out (× 0.9) when it fills the frame to its edges; BACK toward the chosen zoom (`baseZoom`, S.zoom
     default 1 = the main lens) once five looks in a row (2 s) saw nothing screen-like; nothing between 80 and 97 %.
-    At the widest and still cut: the ultra-wide lens where the phone lists one apart (`wideLens`, once), else the
-    banner (`moveBack`, once per 20 s). Moves are 450 ms apart (`FRAME_HOLD`), at most eight per ten seconds
+    At the widest and still cut: the ultra-wide lens where the phone lists one apart (`wideLens`, once; the loop
+    counts as busy meanwhile and `frameAdjusting` holds a capture until it was tried), else the part in view is
+    ANSWERED AT ONCE (`cutAtWidest` → `frameSettled`; no more "three captures first") under a banner that stays
+    with the answer (`moveBack`, once per 60 s, `banner.dataset.action = 'framing'`, which `send` leaves alone and
+    the loop clears once the whole screen is in view): "From here the screen is larger than the camera's view (cut
+    off on the right and top and bottom) — the part in view is read and answered. A hand's width further back, the
+    whole screen fits." The camera is opened in the sensor's 4:3 shape (`openCamera`: width 4032 / height 3024 /
+    aspectRatio 4:3 ideal): a 16:9 4K frame is the same sensor with a third of its height cut away, so 4:3 sees a
+    third more above and below — the author's frames were 3840×2160 with the screen off the top and the bottom. Moves are 450 ms apart (`FRAME_HOLD`), at most eight per ten seconds
     (`frameBudget`); a tapped chip holds the loop for 20 s (`frameHoldUntil`). Two stable looks after a move =
     SETTLED (`frameSettled`): the capture is taken at once (`snap('zoom')`, `zoomBumped` so it is new whatever the
     fingerprints say) and the tick rescheduled — the answer comes ~2–3 s after a screen appears, not at the next
@@ -264,7 +284,9 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     an ultra-wide device: 1 the live zoom-in (1.6 then 2.49 within ~3 s, the readout, the green outline), 1b the
     stepped return to 1× and a desk answered from memory, 2 the angled screen, 3 cut off → the wide lens, 4 a stuck
     lens, 5 a role card locked and the desk still costing nothing after a move, 6 the multi-lens device, 7 the
-    captures on an in-memory Drive (the folder, the names, the description, the size).
+    captures on an in-memory Drive (the folder, the names, the description, the size), 8 a screen larger than the
+    view with no wider lens: the part in view straightened and answered within a second, the model told, the meta
+    line and the banner.
 14b. **A capture every 10 s at all times** (`INTERVAL` = 10, applied on every open like the model and the effort;
     the Settings field is read-only and says so) — a change in the picture still brings one sooner.
 15. **A question over tabbed sources** (the author's spec: the sources in tabs — "Mall Information / Building Plan /

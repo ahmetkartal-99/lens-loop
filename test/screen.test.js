@@ -111,6 +111,15 @@ const near = (p, q, tol) => Math.abs(p[0] - q[0]) <= tol && Math.abs(p[1] - q[1]
   const st = screenQuad(steep, W, H);
   assert(st && near(st.quad[0], [34, 28], 1) && near(st.quad[1], [161, 28], 1) && near(st.quad[2], [161, 119], 1) && near(st.quad[3], [34, 119], 1) && !st.cut.length, 'a screen at a steep angle, dark at the far side: the whole of it (' + JSON.stringify(st && { quad: st.quad, thr: st.thr, coverage: +st.coverage.toFixed(3) }) + ')');
   assert(st && st.coverage > 0.41, 'all of its face, not just the bright near part (coverage ' + (st && st.coverage.toFixed(3)) + ', the screen is 0.426 of the frame)');
+  // 6d. a page LARGER than the view (the phone close to the screen, looking up at it): it runs off the right, the top
+  // and the bottom, its face brighter toward the near side, with a blown-out patch — the patch is a clean rectangle
+  // at a higher split, but it is a piece of the same surface, not a screen: the cut-off page stays the answer
+  const over = new Uint8Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) over[y * W + x] = x < 38 ? 28 + Math.round(rnd() * 14) : Math.min(255, Math.round(180 + 55 * Math.sin(Math.PI * (x - 38) / 154)) + Math.round(rnd() * 8));   // the dark room at the left; the page from x = 38 on, 180 at its far side, brightest in the middle, dimmer again at the grazing right edge
+  for (let y = 40; y < 110; y++) for (let x = 115; x < 160; x++) over[y * W + x] = 251 + Math.round(rnd() * 4);   // the blown-out patch, a clean rectangle at the highest split
+  const ov = screenQuad(over, W, H);
+  assert(ov && ov.cut.length >= 3 && ov.coverage > 0.7, 'a page larger than the view, with a blown-out patch: the cut-off page, not the patch (' + JSON.stringify(ov && { cut: ov.cut, coverage: +ov.coverage.toFixed(2), thr: ov.thr, clean: ov.clean }) + ')');
+  // … while a screen inside a lit room (bezel and desk round it, both darker) is still found at the higher split (6c above)
   // the reason, when nothing is found
   screenQuad(frame([]), W, H);
   assert(/brighter than the room|bright/.test(screenWhyOf()), 'the diagnostics say why nothing was found (' + screenWhyOf() + ')');

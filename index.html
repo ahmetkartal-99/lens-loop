@@ -881,7 +881,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-15 00:05';
+  const BUILD = '2026-10-15 00:40';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -1058,8 +1058,10 @@
       throw new Error('This browser cannot open the camera here. Open the page over https:// in Safari.');
     }
     stopCamera();
-    // Ask for the most pixels the lens offers; the frame is scaled down to the chosen size afterwards.
-    const quality = { width: { ideal: 3840 }, height: { ideal: 2160 } };
+    // Ask for the most pixels the lens offers, in the sensor's own 4:3 shape: a 16:9 "4K" frame is that same sensor
+    // with a third of its height cut away, so 4:3 sees a third more above and below — the first thing a screen
+    // larger than the view needs. The frame is scaled down to the chosen size afterwards.
+    const quality = { width: { ideal: 4032 }, height: { ideal: 3024 }, aspectRatio: { ideal: 4 / 3 } };
     const audio = withMic ? { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } : false;
     const byFacing = { audio, video: { facingMode: { ideal: S.facing }, ...quality } };
     const get = async (c) => {
@@ -1265,6 +1267,7 @@
         const overfull = !sc && /whole frame is bright/.test(screenWhy);
         liveLook = sc ? Object.assign({ found: true, at: now }, sc) : overfull ? { found: true, at: now, overfull: true, cut: ['every side'], widthFrac: 1, heightFrac: 1, boxFrac: [0, 0, 1, 1], quad: null } : { found: false, at: now, cut: [], why: screenWhy };
         frameMissing = liveLook.found ? 0 : frameMissing + 1;
+        if (liveLook.found && !liveLook.cut.length && banner.dataset.action === 'framing') hideBanner();   // the whole screen is in view again
         if (frameLoopLive() && now >= frameHoldUntil && now - frameMoveAt >= FRAME_HOLD) {
           const cur = zoomNow(), mv = framingMove(liveLook, cur, zoomCaps, baseZoom(), frameMissing);
           if (mv && mv.zoom != null && Math.abs(mv.zoom - cur) > 0.02) {
@@ -1285,8 +1288,10 @@
   function frameSettled() { lastSig = null; prevSig = null; zoomBumped = true; if (!active.length) { snap('zoom'); reschedule(); } }
   // at the lens's widest and still cut off: the ultra-wide lens where the phone lists one apart, else the banner
   function cutAtWidest(sc) {
-    if (!wideTried) { wideTried = true; wideLens().then((ok) => { if (!ok) moveBack(sc); }); return; }
-    moveBack(sc);
+    if (wideTried) { moveBack(sc); return; }
+    wideTried = true;
+    frameSettleNeeded = true; frameUnsettledSince = Date.now(); frameStableRuns = 0;   // another lens may be on its way: no capture meanwhile
+    wideLens().then((ok) => { if (!ok) { moveBack(sc); frameSettleNeeded = false; frameUnsettledSince = 0; frameSettled(); } });   // no wider lens: the part in view is answered now
   }
   // Capture time (from snap): is the lens moving, or about to — so that this capture is not the one to send? A
   // capture is deferred for six seconds at most; then it goes as it is rather than waiting on a lens that will not settle.
@@ -1294,7 +1299,7 @@
     const now = Date.now();
     if (frameDeferSince && now - frameDeferSince > 6000) { frameDeferSince = 0; return false; }
     let busy = frameSettleNeeded && now - frameUnsettledSince < 6000;
-    if (!busy && sc && sc.found && now >= frameHoldUntil) { const cur = zoomNow(), mv = framingMove(sc, cur, zoomCaps, baseZoom(), 0); busy = !!(mv && mv.zoom != null && Math.abs(mv.zoom - cur) > 0.02); }
+    if (!busy && sc && sc.found && now >= frameHoldUntil) { const cur = zoomNow(), mv = framingMove(sc, cur, zoomCaps, baseZoom(), 0); busy = !!(mv && (mv.zoom != null ? Math.abs(mv.zoom - cur) > 0.02 : !wideTried)); }   // a move is due, or a wider lens still to try
     if (busy) { if (!frameDeferSince) frameDeferSince = now; return true; }
     frameDeferSince = 0;
     return false;
@@ -1309,9 +1314,10 @@
     return false;
   }
   function moveBack(sc) {
-    if (Date.now() - moveBackAt < 20000) return;
+    if (Date.now() - moveBackAt < 60000) return;
     moveBackAt = Date.now();
-    showBanner('The screen is cut off on the ' + sc.cut.join(' and ') + ' — move the phone back a little, or turn it, so the whole screen is in view.', 'note');
+    showBanner('From here the screen is larger than the camera\'s view (cut off on the ' + sc.cut.join(' and ') + ') — the part in view is read and answered. A hand\'s width further back, the whole screen fits.', 'note');
+    banner.dataset.action = 'framing';   // stays while the answer goes out; gone once the screen fits again
   }
   // the lens has moved: the next capture is new whatever the fingerprints say, and comes soon
   function bumpSnap() { lastSig = null; prevSig = null; zoomBumped = true; setTimeout(() => { if (running && !active.length) snap('zoom'); }, 1300); }
@@ -1435,16 +1441,39 @@
     let t = thr; for (let i = 0; i < 3; i++) { t = Math.round((t + p99) / 2); if (t >= p99 - 6) break; levels.push(t); }
     const low = [];   // the lower splits count only when they yield a CLEAN rectangle: the room's own grey, taken in, is one blob off the frame and no screen
     for (const f of [0.75, 0.55, 0.4, 0.3, 0.22]) { const d = Math.max(28, Math.round(thr * f)); if (d < thr - 6 && !levels.includes(d) && !low.includes(d)) low.push(d); }
-    let bestClean = null, fallback = null;
-    for (const lv of levels.concat(low)) {
+    const base = screenAt(lum, W, H, thr);
+    let bestClean = base && base.clean ? base : null, fallback = base && !base.clean ? base : null;
+    // A bright surface running off the frame's edge and covering much of it is a screen (or page) LARGER than the
+    // view. Its blown-out centre, a moiré, the brightest patch of its gradient is a clean rectangle at a higher split
+    // — and not a screen of its own: a screen stands apart from what is around it (its bezel, the desk), while a
+    // patch has the same surface going on just as bright all round it. Such a patch is passed over; the cut-off
+    // surface stays the answer (the zoom goes out, or the picture goes as it is, the model told).
+    const overflow = base && !base.clean && base.cut.length >= 1 && base.coverage >= 0.4;
+    for (const lv of levels.slice(1).concat(low)) {
       const r = screenAt(lum, W, H, lv);
       if (!r) continue;
-      if (r.clean) { if (!bestClean || r.coverage > bestClean.coverage * 1.01) bestClean = r; }
-      else if (!fallback && !low.includes(lv)) fallback = r;
+      if (r.clean) {
+        if (overflow && r.coverage < base.coverage * 0.6 && !ringDark(lum, W, H, r.box)) continue;
+        if (!bestClean || r.coverage > bestClean.coverage * 1.01) bestClean = r;
+      } else if (!fallback && !low.includes(lv)) fallback = r;
     }
     if (bestClean) return bestClean;
     if (!fallback && !screenWhy) screenWhy = 'no sizable bright region (splits at ' + levels.concat(low).join(', ') + ')';
     return fallback;
+  }
+  // Is the bright rectangle in this box bounded by something darker — a bezel, the desk — on the sides that lie
+  // inside the frame? The cells in a ring one to four cells outside the box, against the cells inside it: a real
+  // screen's ring is well under three quarters as bright; a patch of a larger bright surface has it nearly as bright.
+  function ringDark(lum, W, H, box) {
+    const [x0, y0, x1, y1] = box;
+    let inSum = 0, inN = 0, outSum = 0, outN = 0;
+    for (let y = Math.max(0, y0); y <= Math.min(H - 1, y1); y++) for (let x = Math.max(0, x0); x <= Math.min(W - 1, x1); x++) { inSum += lum[y * W + x]; inN++; }
+    for (let y = Math.max(0, y0 - 4); y <= Math.min(H - 1, y1 + 4); y++) for (let x = Math.max(0, x0 - 4); x <= Math.min(W - 1, x1 + 4); x++) {
+      if (x >= x0 && x <= x1 && y >= y0 && y <= y1) continue;
+      outSum += lum[y * W + x]; outN++;
+    }
+    if (!inN || !outN) return true;
+    return outSum / outN < 0.72 * (inSum / inN);
   }
   // The bright regions above a threshold, and the one that is the screen: among the sizable ones (≥ 1 % of the frame)
   // the largest that is SHAPED like a screen — four corners that hold a rectangle however it is turned or
@@ -1697,7 +1726,10 @@
     let look = null, src = rawCanvas;
     if (S.screenRead !== false) {
       try { look = screenFind(rawCanvas); } catch (e) { look = null; }
-      if (look && !look.cut.length) { const r = rectify(rawCanvas, look.quad); if (r) src = r; else look = null; }
+      // straightened — a screen cut off by the frame's edge too: its corners on the cut sides lie on the frame's edge,
+      // so the PART IN VIEW is straightened (its own edge upright, the lines of text level, the room left out) and
+      // goes with the note that an edge lies outside; far more legible than the frame as it is
+      if (look) { const r = rectify(rawCanvas, look.quad); if (r) src = r; else look = null; }
     }
     const scale = Math.min(1, S.imgSize / Math.max(src.width, src.height));
     canvas.width = Math.round(src.width * scale); canvas.height = Math.round(src.height * scale);
@@ -1753,8 +1785,8 @@
     return lines.join('\n');
   }
   // What the meta line says about the picture: "screen straightened · 4 tiles · 1.8×", "screen cut off on the right".
-  const screenNote = (f) => !f || !f.screen ? '' : f.screen.cut.length ? 'screen cut off on the ' + f.screen.cut.join(' and ')
-    : (f.screen.straightened ? 'screen straightened' + (f.screen.flattened ? ', lighting evened' : '') : f.screen.cropped ? 'screen cropped' : f.screen.found ? 'screen' : f.screen.why ? 'no screen found — ' + f.screen.why : '') + (f.screen.tiles ? (f.screen.found ? ' · ' : '') + f.screen.tiles + ' tiles' : '') + (f.screen.zoom && Math.abs(f.screen.zoom * zoomScale - 1) > 0.05 ? ' · ' + showZoom(f.screen.zoom) : '');
+  const screenNote = (f) => !f || !f.screen ? '' : (f.screen.cut.length ? 'screen cut off on the ' + f.screen.cut.join(' and ') + (f.screen.straightened || f.screen.cropped ? ' — the part in view ' + (f.screen.straightened ? 'straightened' : 'cropped') : '')
+    : (f.screen.straightened ? 'screen straightened' + (f.screen.flattened ? ', lighting evened' : '') : f.screen.cropped ? 'screen cropped' : f.screen.found ? 'screen' : f.screen.why ? 'no screen found — ' + f.screen.why : '')) + (f.screen.tiles ? (f.screen.found ? ' · ' : '') + f.screen.tiles + ' tiles' : '') + (f.screen.zoom && Math.abs(f.screen.zoom * zoomScale - 1) > 0.05 ? ' · ' + showZoom(f.screen.zoom) : '');
   // The frame's images for a request: the overview, then the closer tiles, labelled.
   function frameImages(f, label) {
     const out = [];
@@ -1942,8 +1974,8 @@
       const adjusting = autoZoom(frame.screen);
       if (frame.screen && frame.screen.cut.length) {
         cutStreak++;
-        if (adjusting || cutStreak < 3) { setStatus('armed', 'The screen is cut off on the ' + frame.screen.cut.join(' and ') + (adjusting ? ' — zooming out' : ' — move the phone back a little')); keepCapture(frame, 'cut off on the ' + frame.screen.cut.join(' and ') + (adjusting ? ', zooming out' : ', waiting')); skippedSince = frameNo; return; }
-        frame.cutNote = true;   // three captures running: it goes as it is, the model told
+        if (adjusting) { setStatus('armed', 'The screen is cut off on the ' + frame.screen.cut.join(' and ') + ' — zooming out'); keepCapture(frame, 'cut off on the ' + frame.screen.cut.join(' and ') + ', zooming out'); skippedSince = frameNo; return; }
+        frame.cutNote = true;   // nothing more the zoom can do from here: the part in view goes at once, the model told (the banner says how to help)
       } else { cutStreak = 0; if (adjusting) { setStatus('armed', 'Zooming to fit the screen'); keepCapture(frame, 'zooming to fit'); skippedSince = frameNo; return; } }
     }
     const sig = frame.sig;
@@ -2616,7 +2648,7 @@
     if (frame.tabs && roleLock && roleLock.kind === 'tabs' && roleLock.frame === frame) roleLock.reqId = req.id;
     active.push(req);
     current = req;
-    hideBanner();
+    if (banner.dataset.action !== 'framing') hideBanner();   // the framing hint stays with the answer it explains
     setStatus('thinking', `Thinking on ${frame.tag}`);
     renderCurrent();
 

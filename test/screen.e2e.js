@@ -76,7 +76,8 @@ function jpegSize(b64) {
     const vstream = cv.captureStream(10);
     const md = navigator.mediaDevices || (navigator.mediaDevices = {});
     const triple = localStorage.getItem('lensTriple') === '1';   // a phone with a multi-lens device too (one zoom range across its lenses)
-    md.enumerateDevices = async () => [{ kind: 'videoinput', deviceId: 'main', label: 'Back Camera' }, { kind: 'videoinput', deviceId: 'wide', label: 'Back Ultra Wide Camera' }, { kind: 'videoinput', deviceId: 'front', label: 'Front Camera' }].concat(triple ? [{ kind: 'videoinput', deviceId: 'triple', label: 'Back Triple Camera' }] : []);
+    const noWide = localStorage.getItem('noWide') === '1';   // a phone with no wider lens to turn to
+    md.enumerateDevices = async () => [{ kind: 'videoinput', deviceId: 'main', label: 'Back Camera' }].concat(noWide ? [] : [{ kind: 'videoinput', deviceId: 'wide', label: 'Back Ultra Wide Camera' }], [{ kind: 'videoinput', deviceId: 'front', label: 'Front Camera' }], triple ? [{ kind: 'videoinput', deviceId: 'triple', label: 'Back Triple Camera' }] : []);
     md.getUserMedia = async (c) => {
       const tracks = [];
       if (!c || c.video) {
@@ -336,6 +337,40 @@ function jpegSize(b64) {
   assert(sent && /finder: straightened \d+ % wide/.test(sent.description) && /decision: sent/.test(sent.description) && /zoom: 2\.\d× of 1× – 5×/.test(sent.description) && /frame: 2560×1440/.test(sent.description), '7. the description: the finder\'s verdict, the zoom range, the frame (' + (sent && sent.description) + ')');
   assert(sent && sent.size > 5000 && sent.size < 400000, '7. a small JPEG of the whole frame as the camera saw it (' + (sent && sent.size) + ' bytes)');
   assert(errors7.length === 0, '7. no page errors' + (errors7.length ? ': ' + errors7.join(' | ') : ''));
-  await b7.close(); server.close();
+  await b7.close();
+
+  // 8. a screen LARGER than the view from where the phone stands, the zoom at its widest and no wider lens to turn
+  // to: the part in view is straightened and answered AT ONCE, the model told which edge lies outside, the meta line
+  // says so, and a banner (not a blocker) says how the whole screen would fit
+  const b8 = await chromium.launch();
+  const ctx8 = await b8.newContext({ viewport: { width: 420, height: 860 } });
+  await ctx8.addInitScript(() => { localStorage.setItem('noWide', '1'); });
+  await ctx8.addInitScript(initCamera);
+  const p8 = await ctx8.newPage();
+  const errors8 = []; p8.on('pageerror', (e) => errors8.push(String(e)));
+  const main8 = [];
+  await p8.route('https://api.anthropic.com/v1/messages', async (route) => {
+    const body = JSON.parse(route.request().postData());
+    if (/haiku/.test(body.model)) return fulfil(route, { status: 200, contentType: 'application/json', body: JSON.stringify({ content: [{ type: 'text', text: 'CHOICE' }], usage: { input_tokens: 1500, output_tokens: 20 } }) });
+    main8.push({ at: Date.now(), zoom: await p8.evaluate(() => window.__zoom), body });
+    return fulfil(route, { status: 200, contentType: 'text/event-stream', body: sse('ANSWER: B) 42\n\nFrom the second line.') });
+  });
+  await p8.goto(`http://127.0.0.1:${port}/index.html#key=sk-ant-test-0000`);
+  await p8.evaluate(() => { window.__scene = 'cut'; });
+  await p8.waitForTimeout(800);
+  const start8 = Date.now();
+  await p8.click('#startBtn');
+  await p8.waitForTimeout(7000);
+  assert(main8.length >= 1 && main8[0].at - start8 < 6000, '8. the cut-off screen is answered at once, not after three captures (' + main8.length + ' answers, the first ' + Math.round((main8.length ? main8[0].at - start8 : 0) / 100) / 10 + ' s after Start)');
+  assert((await p8.evaluate(() => window.__zoomCalls.slice())).length === 0 && main8.length && main8[0].zoom === 1, '8. the zoom stays at its widest (' + (await p8.evaluate(() => window.__zoomCalls.join())) + ')');
+  const im8 = main8.length ? imagesOf(main8[0].body)[0] : null;
+  assert(im8 && im8.w / im8.h > 1.3 && im8.w / im8.h < 1.7 && im8.w >= 1400, '8. the part in view goes straightened — its own shape, not the whole 16:9 frame (' + JSON.stringify(im8) + ')');
+  assert(main8.length && labelsOf(main8[0].body).some((t) => /right edge of the screen may lie outside the photo/.test(t)), '8. the model is told the right edge lies outside');
+  const meta8 = await p8.evaluate(() => (document.getElementById('answerMeta') || {}).textContent || '');
+  assert(/screen cut off on the right — the part in view straightened/.test(meta8), '8. the meta line says so (' + meta8 + ')');
+  const banner8 = await p8.evaluate(() => { const b = document.getElementById('banner'); return b.hidden ? '' : b.textContent; });
+  assert(/larger than the camera's view/.test(banner8) && /the whole screen fits/.test(banner8), '8. the banner says how the whole screen would fit, without blocking the answer (' + banner8 + ')');
+  assert(errors8.length === 0, '8. no page errors' + (errors8.length ? ': ' + errors8.join(' | ') : ''));
+  await b8.close(); server.close();
   console.log(process.exitCode ? 'SCREEN E2E FAILED' : 'SCREEN E2E PASSED');
 })().catch((e) => { console.error(e); process.exit(1); });
