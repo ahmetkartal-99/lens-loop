@@ -179,6 +179,7 @@
     font-family: var(--mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
     background: #0A0C0F;
   }
+  .viewfinder .vf-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
   .viewfinder .flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
   .viewfinder .flash.on { animation: flash .35s ease-out; }
   @keyframes flash { 0% { opacity: .85; } 100% { opacity: 0; } }
@@ -199,6 +200,9 @@
     font-variant-numeric: tabular-nums;
   }
   .vf-readout .rec { color: var(--accent); }
+  .vf-readout .zoom-live { color: #cfd6de; text-transform: none; letter-spacing: .04em; max-width: 58vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .vf-readout .zoom-live[data-state="fit"] { color: #3DDC84; }
+  .vf-readout .zoom-live[data-state="cut"] { color: #FFB020; }
   .last-shot {
     position: absolute; top: 12px; right: 16px;
     height: 56px; width: auto; max-width: 40%;
@@ -473,11 +477,12 @@
   <section class="stage">
     <div class="viewfinder" id="viewfinder">
       <video id="video" autoplay muted playsinline></video>
+      <canvas class="vf-overlay" id="vfOverlay" aria-hidden="true"></canvas>
       <div class="placeholder" id="vfPlaceholder">Camera off · tap Start</div>
       <div class="flash" id="flash"></div>
       <div class="vf-corners"><i></i></div>
       <img class="last-shot" id="lastShot" alt="Last captured frame" hidden>
-      <div class="vf-readout"><span id="frameCounter">F-0000</span><span id="countdown" class="rec"></span></div>
+      <div class="vf-readout"><span id="frameCounter">F-0000</span><span id="countdown" class="rec"></span><span id="zoomLive" class="zoom-live" hidden></span></div>
       <div class="zoom-row" id="zoomRow" hidden></div>
     </div>
 
@@ -650,7 +655,7 @@
           <option value="environment">Back camera (auto)</option>
           <option value="user">Front camera</option>
         </select>
-        <div class="hint">"Back camera (auto)" picks the phone's multi-lens camera when it has one (one zoom range across the lenses, 0.5× to 15× on an iPhone), so the auto-zoom has the whole range. Lenses the phone reports are listed after the first Start. Zoom chips (0.5×, 1×, 2×, 5× — as the phone's own Camera app labels them; on a phone that lists the ultra-wide lens separately, 0.5× switches to that lens) appear on the camera view while running.</div>
+        <div class="hint">"Back camera (auto)" picks the phone's multi-lens camera when it has one (one zoom range across the lenses — 0.5× to 10× on an iPhone, as Safari allows), so the auto-zoom has the whole range. Lenses the phone reports are listed after the first Start. Zoom chips (0.5×, 1×, 2×, 5× — as the phone's own Camera app labels them; on a phone that lists the ultra-wide lens separately, 0.5× switches to that lens) appear on the camera view while running; a tapped chip holds for 20 seconds, then the auto-zoom takes over again.</div>
       </div>
       <div class="field">
         <label for="thumbSize">Answer text size</label>
@@ -667,8 +672,9 @@
     <label class="check"><input type="checkbox" id="rotateText"> Turn the answer text to match how the phone is tilted (camera view stays put)</label>
     <label class="check"><input type="checkbox" id="uprightPhoto"> Send the photo upright when the phone is tilted</label>
     <label class="check"><input type="checkbox" id="screenRead"> Read the whole screen: find the laptop screen (or page) in the frame, straighten it, send closer tiles for small print</label>
-    <label class="check"><input type="checkbox" id="autoZoom"> Auto-zoom: zoom in until the screen fills the frame, out when an edge is cut off (the wide lens if need be)</label>
-    <div class="hint" style="margin:-6px 0 12px">A screen with an edge outside the frame is not answered until it is whole in view — the zoom goes out first, then a banner asks you to move back. The meta line under an answer says how the picture was taken ("screen straightened · 4 tiles · 1.8×").</div>
+    <label class="check"><input type="checkbox" id="autoZoom"> Auto-zoom: the lens zooms by itself, in and out, until the screen fills the frame (live, a few times a second)</label>
+    <div class="hint" style="margin:-6px 0 12px">An outline on the camera view shows the screen the finder sees: green when it fits, amber when an edge is outside the frame (the zoom goes out, down to the ultra-wide, then a banner asks you to move back), dashed while it is being zoomed in on. The picture is taken the moment the zoom settles. The meta line under an answer says how the picture was taken ("screen straightened · 4 tiles · 1.8×").</div>
+    <label class="check"><input type="checkbox" id="keepCaptures"> Keep the camera's captures on Drive (a "Captures" folder inside Lens Loop: each picture as the camera saw it, named with what the finder made of it — for checking the framing)</label>
     <div class="field">
       <label for="diagBox">Capture diagnostics (the camera, its zoom range, the last captures: what the screen finder saw)</label>
       <textarea id="diagBox" readonly style="min-height:120px;font-family:var(--mono);font-size:11px"></textarea>
@@ -875,7 +881,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-14 22:45';
+  const BUILD = '2026-10-15 00:05';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -903,7 +909,7 @@
     maxTokens: 32024,
     facing: 'environment',
     deviceId: '',
-    zoom: 'min',
+    zoom: 1,            // in the Camera app's terms: the main lens; the auto-zoom moves from here and comes back here ('min' = the widest)
     textSize: 20,
     keepAwake: true,
     saveKey: true,
@@ -912,6 +918,7 @@
     screenRead: true,   // the laptop screen (or page) found in the frame, straightened at the sensor's resolution, closer tiles for small print
     autoZoom: true,     // the lens zoomed so the screen fills the frame; out (then the wide lens) when an edge is cut off
     flattenLight: true, // the straightened screen's lighting evened: the dim far side of a steeply angled screen lifted
+    keepCaptures: true, // every analysed capture, as the camera saw it, kept in a Captures folder on Drive with the finder's verdict
     sttLang: '',
     sttTerms: '',   // the personal glossary, comma-separated
     useStories: true,
@@ -949,6 +956,7 @@
           s.v = 3;
         }
         if (s.v !== saved.v) s.migrated = true;
+        if (saved.zoom === 'min') { s.zoom = 1; s.migrated = true; }   // the widest as the resting zoom (an earlier default): the main lens now, the live auto-zoom moves from there
       }
       s.interval = INTERVAL;   // the capture cadence, fixed at the top of the script like the model and the effort
       s.model = MODEL;   // model and effort always start from the two lines at the top of the script;
@@ -1090,14 +1098,16 @@
     if (!deviceId || deviceId === S.deviceId) return false;
     if (mainDevice == null) mainDevice = S.deviceId || '';
     S.deviceId = deviceId;
-    try { await openCamera(!!micStream || listening); if (note) setStatus('armed', note); bumpSnap(); return true; }
+    try { await openCamera(!!micStream || listening); if (note) setStatus('armed', note); afterLensMove(); return true; }
     catch (e) { S.deviceId = mainDevice || ''; mainDevice = null; try { await openCamera(!!micStream || listening); } catch (e2) {} return false; }
   }
   // "Back camera (auto)": the phone's MULTI-LENS device when it has one ("Back Triple Camera", "Back Dual Wide
-  // Camera" — one zoom range running across the ultra-wide, the wide and the telephoto, 0.5× to 15× and more on an
-  // iPhone, the phone switching lenses as the zoom moves), so the auto-zoom has the whole range. Labels appear only
-  // once the camera is open, so the plain back camera opens first and the better lens takes over if it really has
-  // a wider zoom range; tried once per session.
+  // Camera" — one zoom range running across the ultra-wide, the wide and the telephoto, the phone switching lenses
+  // as the zoom moves), so the auto-zoom has the whole range. iPhone Safari hands the page that device by itself for
+  // the back camera, with the zoom in the Camera app's own terms: 0.5 is the ultra-wide, 1 the main lens, and the
+  // top is capped at 10 (WebKit's AVVideoCaptureSource: computeMinZoom/computeMaxZoom). Labels appear only once the
+  // camera is open, so the plain back camera opens first and the better lens takes over if it really has a wider
+  // zoom range; tried once per session.
   let lensTried = false, lensLabel = '', lensAuto = false;
   async function bestLens(withMic) {
     try { const tr = stream && stream.getVideoTracks()[0]; lensLabel = (tr && tr.label) || ''; } catch (e) { lensLabel = ''; }
@@ -1122,10 +1132,10 @@
   const zoomRow = $('zoomRow');
   let zoomCaps = null;
   const fmtZoom = (z) => (Math.round(z * 10) / 10).toString().replace(/\.0$/, '') + '×';
-  // The zoom as the phone's own Camera app shows it. A lens that holds the ultra-wide — the multi-lens camera, or
-  // the ultra-wide camera itself — reports that widest view as zoom 1.0 and the main lens as 2.0; the Camera app
-  // calls those 0.5× and 1×. So on such a lens every zoom shown or saved is the raw value halved (zoomScale 0.5);
-  // the auto-zoom works in raw values throughout.
+  // The zoom as the phone's own Camera app shows it. The multi-lens camera already reports it that way (0.5 = the
+  // ultra-wide, 1 = the main lens: Safari halves the raw AVFoundation factor for it). The ULTRA-WIDE CAMERA chosen
+  // on its own does not: its widest view is zoom 1.0 to the browser, 0.5× to the Camera app — so on that lens
+  // alone every zoom shown or saved is the raw value halved (zoomScale 0.5); the auto-zoom works in raw values.
   let zoomScale = 1;
   const showZoom = (z) => fmtZoom(z * zoomScale);
   const lensHoldsWide = (label) => /ultra\s*-?\s*wide|triple|dual\s*wide/i.test(label || '');
@@ -1143,7 +1153,7 @@
     if (!caps || !caps.zoom || typeof caps.zoom.min !== 'number' || typeof caps.zoom.max !== 'number' || caps.zoom.max <= caps.zoom.min) return;
     zoomCaps = caps.zoom;
     let label = ''; try { label = track.label || ''; } catch (e) {}
-    zoomScale = lensHoldsWide(label) && caps.zoom.min <= 1.05 ? 0.5 : 1;
+    zoomScale = /ultra/i.test(label) && !/triple|dual/i.test(label) && caps.zoom.min >= 0.95 && caps.zoom.min <= 1.05 ? 0.5 : 1;   // a range starting below 1 is already in the Camera app's terms
     // the chips, in the Camera app's terms: 0.5×, 1×, 2×, 5× where this lens reaches them …
     const presets = [];
     const add = (shown) => {
@@ -1164,7 +1174,7 @@
     // … and a 0.5× that is another LENS on a phone that lists the ultra-wide camera separately (or 1× back from it)
     const uw = ultraWideDevice(), mb = mainBackDevice();
     if (zoomScale === 1 && uw && !lensHoldsWide(label) && S.facing !== 'user') chip('0.5×', () => switchLens(uw.deviceId, 'Ultra-wide lens (0.5×)'));
-    for (const p of presets) chip(fmtZoom(p.shown), () => { S.zoom = p.shown; saveSettings(); applyZoom(p.z); }, p.z);
+    for (const p of presets) chip(fmtZoom(p.shown), () => { S.zoom = p.shown; saveSettings(); frameHoldUntil = Date.now() + 20000; applyZoom(p.z); }, p.z);   // a tapped chip holds for a while, then the auto-zoom takes over again
     if (zoomScale === 0.5 && /ultra/i.test(label) && mb && caps.zoom.max * zoomScale < 1) chip('1×', () => switchLens(mb.deviceId, 'Main lens (1×)'));
     zoomRow.hidden = false;
     const want = S.zoom === 'min' ? caps.zoom.min : clamp((+S.zoom || 1) / zoomScale, caps.zoom.min, caps.zoom.max);
@@ -1181,10 +1191,12 @@
   async function applyZoom(z, quiet) {
     const track = stream && stream.getVideoTracks()[0];
     if (!track || !zoomCaps) return false;
+    // the plain form first: a bare value there is "ideal", which every browser applies as nearly as the lens allows
+    // (Safari 17.4+, Chrome); the advanced form is the fallback for an engine that only reads it there
     try {
-      await track.applyConstraints({ advanced: [{ zoom: z }] });
+      await track.applyConstraints({ zoom: z });
     } catch (e) {
-      try { await track.applyConstraints({ zoom: z }); } catch (e2) { if (!quiet) showBanner('This camera did not accept the zoom change: ' + (e2.message || e2)); return false; }
+      try { await track.applyConstraints({ advanced: [{ zoom: z }] }); } catch (e2) { if (!quiet) showBanner('This camera did not accept the zoom change: ' + (e2.message || e2)); return false; }
     }
     let current = z;
     try { const s = track.getSettings(); if (typeof s.zoom === 'number') current = s.zoom; } catch (e) { /* keep requested value */ }
@@ -1193,43 +1205,107 @@
     return true;
   }
 
-  // ---------- auto-zoom: the screen fills the frame ----------
-  // After each capture the lens is zoomed so the screen (or page) fills most of the frame: in when it is small (a
-  // capture that would be too small to read is dropped and the zoomed one taken a moment later), out when an edge
-  // of it is outside the frame — down to the lens's widest, then over to the ultra-wide lens when the phone has one,
-  // and failing that a banner asks for the phone to be moved back — and back to the chosen zoom once nothing
-  // screen-like has been in view for a while. Decided at once; the lens moves while the next capture is awaited.
-  let zoomAdjustAt = 0, noScreenRuns = 0, wideTried = false, moveBackAt = 0, cutStreak = 0;
+  // ---------- auto-zoom: the screen fills the frame, live ----------
+  // While the camera runs, a few times a second the live picture is looked at for the screen (the captures' own
+  // finder, on a small copy) and the lens is zoomed so the screen fills most of the frame — IN while it is small, OUT
+  // while an edge of it is outside the frame (down to the lens's widest, then over to the ultra-wide lens when the
+  // phone lists one apart, and failing that a banner asks for the phone to be moved back), and back toward the chosen
+  // zoom once nothing screen-like has been in view for a couple of seconds. Each move is ONE STEP decided from where
+  // the screen sits (a screen off to one side is never zoomed past the frame's edge); the next step follows once the
+  // camera shows the new view, so the lens visibly hunts for the fit and settles within a second or two. An outline
+  // on the viewfinder shows what the finder sees (green: the screen fits; amber: cut off; dashed: being zoomed in
+  // on) with the zoom beside the frame counter. The capture is taken the moment the lens settles after a move
+  // (snap('zoom')) rather than at the next tick, and a capture that comes while the lens moves is dropped for it.
+  // The capture-time path (autoZoom, called by snap) defers to this loop whenever the lens can zoom at all; a lens
+  // with no zoom range keeps the capture-time handling of a cut-off screen (the ultra-wide lens, then the banner).
+  let wideTried = false, moveBackAt = 0, cutStreak = 0;
   let zoomBumped = false;   // the lens just moved: the next capture is new whatever the fingerprints say (consumed by snap)
   let zoomStuck = 0, zoomDead = false, mainDevice = null;   // a lens that ignores zoom changes is left alone for the session
   const baseZoom = () => !zoomCaps ? 1 : S.zoom === 'min' ? zoomCaps.min : clamp((+S.zoom || 1) / zoomScale, zoomCaps.min, zoomCaps.max);   // S.zoom is in the Camera app's terms
+  const FRAME_FIT = 0.90, FRAME_LOW = 0.80, FRAME_HIGH = 0.97;   // the screen's share of the frame aimed at, and the band that counts as fitting
+  const FRAME_STEP = 1.6, FRAME_OUT = 0.72, FRAME_HOLD = 450, FRAME_LOOK = 400, FRAME_MISS = 5;   // the largest step in, the step out, ms between moves, ms between looks, looks with nothing before easing back
+  // The decision, pure (unit-tested): what the finder saw in the live picture, the zoom now, the lens's range, the
+  // zoom to come back to, and how many looks in a row saw nothing screen-like. Returns null (nothing to do), { zoom,
+  // why } for a move, or { zoom: null, why: 'widest' } for a cut-off screen the zoom can do nothing more about.
+  function framingMove(sc, cur, caps, base, missing) {
+    if (!caps) return null;
+    if (!sc || !sc.found) {
+      if (missing < FRAME_MISS || Math.abs(cur - base) < 0.03) return null;
+      return { zoom: cur > base ? Math.max(base, cur * 0.75) : Math.min(base, cur * 1.33), why: 'back' };   // nothing in view for a while: ease back to the chosen zoom
+    }
+    if (sc.cut.length) return cur <= caps.min + 0.02 ? { zoom: null, why: 'widest' } : { zoom: Math.max(caps.min, cur * FRAME_OUT), why: 'out' };
+    const fill = Math.max(sc.widthFrac, sc.heightFrac);
+    if (fill < FRAME_LOW && cur < caps.max - 0.02) {
+      // the lens zooms about the frame's centre: a screen off to one side reaches the edge before it fills the frame,
+      // so the step is capped by the headroom of its nearest edge (with a little to spare), never past it
+      let factor = Math.min(FRAME_STEP, FRAME_FIT / fill);
+      if (sc.boxFrac) { const [x0, y0, x1, y1] = sc.boxFrac; for (const off of [x1 - 0.5, 0.5 - x0, y1 - 0.5, 0.5 - y0]) if (off > 0.02) factor = Math.min(factor, 0.95 * 0.5 / off); }
+      return factor < 1.06 ? null : { zoom: Math.min(caps.max, cur * factor), why: 'in' };   // as close to the edge as it goes: this is the picture
+    }
+    if (fill > FRAME_HIGH && cur > caps.min + 0.02) return { zoom: Math.max(caps.min, cur * 0.9), why: 'room' };   // a little room round it
+    return null;
+  }
+  let frameLoopTimer = null, frameMissing = 0, frameMoveAt = 0, frameMoves = 0, frameMovesAt = 0, frameHoldUntil = 0;
+  let frameSettleNeeded = false, frameUnsettledSince = 0, frameStableRuns = 0, frameDeferSince = 0, liveLook = null;
+  const frameLoopLive = () => !!(running && stream && zoomCaps && !zoomDead && S.autoZoom !== false && S.screenRead !== false);
+  function frameLoopStart() {
+    frameLoopStop();
+    frameMissing = 0; frameMoveAt = 0; frameMoves = 0; frameMovesAt = 0; frameHoldUntil = 0; frameSettleNeeded = false; frameUnsettledSince = 0; frameStableRuns = 0; frameDeferSince = 0;
+    frameLoopTimer = setTimeout(frameLoopTick, 250);
+  }
+  function frameLoopStop() { clearTimeout(frameLoopTimer); frameLoopTimer = null; liveLook = null; overlayDraw(null); }
+  async function frameLoopTick() {
+    frameLoopTimer = null;
+    if (!running) return;
+    try {
+      if (stream && !camReopening && !document.hidden && video.videoWidth && S.screenRead !== false) {
+        let sc = null; try { sc = screenFind(video, video.videoWidth, video.videoHeight); } catch (e) { sc = null; }
+        const now = Date.now();
+        // a screen overfilling the frame is "the whole frame bright" to the finder: cut off on every side
+        const overfull = !sc && /whole frame is bright/.test(screenWhy);
+        liveLook = sc ? Object.assign({ found: true, at: now }, sc) : overfull ? { found: true, at: now, overfull: true, cut: ['every side'], widthFrac: 1, heightFrac: 1, boxFrac: [0, 0, 1, 1], quad: null } : { found: false, at: now, cut: [], why: screenWhy };
+        frameMissing = liveLook.found ? 0 : frameMissing + 1;
+        if (frameLoopLive() && now >= frameHoldUntil && now - frameMoveAt >= FRAME_HOLD) {
+          const cur = zoomNow(), mv = framingMove(liveLook, cur, zoomCaps, baseZoom(), frameMissing);
+          if (mv && mv.zoom != null && Math.abs(mv.zoom - cur) > 0.02) {
+            if (frameBudget(now)) { frameMoveAt = now; if (!frameSettleNeeded) frameUnsettledSince = now; frameSettleNeeded = true; frameStableRuns = 0; liveLook.moving = mv.why; await zoomStep(mv.zoom); }
+          } else {
+            if (mv && mv.zoom == null) cutAtWidest(liveLook);
+            if (frameSettleNeeded && ++frameStableRuns >= 2) { frameSettleNeeded = false; frameUnsettledSince = 0; frameSettled(); }
+          }
+        }
+        overlayDraw(liveLook);
+      }
+    } catch (e) { /* the next look */ }
+    if (running) frameLoopTimer = setTimeout(frameLoopTick, FRAME_LOOK);
+  }
+  // no more than eight moves in ten seconds: a lens that will not settle (a flickering screen, a hand in the way) is left be for a while
+  function frameBudget(now) { if (now - frameMovesAt > 10000) { frameMovesAt = now; frameMoves = 0; } if (frameMoves >= 8) return false; frameMoves++; return true; }
+  // the lens has settled after a move: the capture is taken now — new whatever the fingerprints say — and the tick moved on
+  function frameSettled() { lastSig = null; prevSig = null; zoomBumped = true; if (!active.length) { snap('zoom'); reschedule(); } }
+  // at the lens's widest and still cut off: the ultra-wide lens where the phone lists one apart, else the banner
+  function cutAtWidest(sc) {
+    if (!wideTried) { wideTried = true; wideLens().then((ok) => { if (!ok) moveBack(sc); }); return; }
+    moveBack(sc);
+  }
+  // Capture time (from snap): is the lens moving, or about to — so that this capture is not the one to send? A
+  // capture is deferred for six seconds at most; then it goes as it is rather than waiting on a lens that will not settle.
+  function frameAdjusting(sc) {
+    const now = Date.now();
+    if (frameDeferSince && now - frameDeferSince > 6000) { frameDeferSince = 0; return false; }
+    let busy = frameSettleNeeded && now - frameUnsettledSince < 6000;
+    if (!busy && sc && sc.found && now >= frameHoldUntil) { const cur = zoomNow(), mv = framingMove(sc, cur, zoomCaps, baseZoom(), 0); busy = !!(mv && mv.zoom != null && Math.abs(mv.zoom - cur) > 0.02); }
+    if (busy) { if (!frameDeferSince) frameDeferSince = now; return true; }
+    frameDeferSince = 0;
+    return false;
+  }
   function autoZoom(sc) {
     if (S.autoZoom === false || zoomDead || !running || !stream) return false;
-    const now = Date.now(), cur = zoomNow();
-    if (!sc || !sc.found) {
-      noScreenRuns++;
-      if (zoomCaps && noScreenRuns >= 2 && Math.abs(cur - baseZoom()) > 0.05 && now - zoomAdjustAt > 2500) { zoomAdjustAt = now; zoomTo(baseZoom()); }
-      return false;
-    }
-    noScreenRuns = 0;
-    if (now - zoomAdjustAt < 2500) return true;   // the lens is still settling after a move: this capture is not the one to judge
-    if (sc.cut.length) {
-      // straight out to the widest (one move), then the edge-aware zoom-in above lands on the fit (one more at most)
-      if (zoomCaps && cur > zoomCaps.min + 0.05) { zoomAdjustAt = now; zoomTo(zoomCaps.min); return true; }
-      if (!wideTried) { wideTried = true; zoomAdjustAt = now; wideLens().then((ok) => { if (!ok) moveBack(sc); }); return true; }
-      moveBack(sc);
-      return false;
-    }
-    if (!zoomCaps) return false;
-    const fill = Math.max(sc.widthFrac, sc.heightFrac);
-    if (fill < 0.55 && cur < zoomCaps.max - 0.05) {
-      // the lens zooms about the frame's centre: a screen off to one side reaches the edge before it fills the frame,
-      // so the factor is capped by the headroom of its nearest edge (with a little to spare), never past it
-      let factor = Math.min(2, 0.82 / fill);
-      if (sc.boxFrac) { const [x0, y0, x1, y1] = sc.boxFrac; for (const off of [x1 - 0.5, 0.5 - x0, y1 - 0.5, 0.5 - y0]) if (off > 0.02) factor = Math.min(factor, 0.92 * 0.5 / off); }
-      if (factor < 1.08) return false;   // already as close to the edge as it can be: this is the picture
-      zoomAdjustAt = now; zoomTo(Math.min(zoomCaps.max, cur * factor)); return true;
-    }
+    if (zoomCaps) return frameAdjusting(sc);   // the live loop frames the screen; a capture while it moves is dropped for the one after the settle
+    // no zoom range: a cut-off screen can only be helped by another lens, or by moving the phone
+    if (!sc || !sc.found || !sc.cut.length) return false;
+    if (!wideTried) { wideTried = true; wideLens().then((ok) => { if (!ok) moveBack(sc); }); return true; }
+    moveBack(sc);
     return false;
   }
   function moveBack(sc) {
@@ -1239,15 +1315,48 @@
   }
   // the lens has moved: the next capture is new whatever the fingerprints say, and comes soon
   function bumpSnap() { lastSig = null; prevSig = null; zoomBumped = true; setTimeout(() => { if (running && !active.length) snap('zoom'); }, 1300); }
-  // a zoom move for the auto-zoom: a lens that refuses or ignores two moves (a zoom range reported, nothing happens)
-  // is left alone from then on — the screen is answered as the camera shows it rather than waited on for ever
-  async function zoomTo(z) {
+  // another lens is in: the live loop settles on it and takes the capture; without the loop, the capture comes soon
+  function afterLensMove() { if (frameLoopLive()) { frameMoveAt = Date.now(); if (!frameSettleNeeded) frameUnsettledSince = frameMoveAt; frameSettleNeeded = true; frameStableRuns = 0; } else bumpSnap(); }
+  // one step of the auto-zoom: a lens that refuses or ignores two moves (a zoom range reported, nothing happens) is
+  // left alone from then on — the screen is answered as the camera shows it rather than waited on for ever
+  async function zoomStep(z) {
     const before = zoomNow();
+    let sigBefore = null; try { sigBefore = frameSignature(); } catch (e) {}
     const ok = await applyZoom(z, true);
-    const moved = Math.abs(zoomNow() - before) > 0.01 || Math.abs(z - before) < 0.05;
-    if (!ok || !moved) { if (++zoomStuck >= 2 && !zoomDead) { zoomDead = true; setStatus('armed', 'This camera does not zoom — the picture is read as the camera shows it'); } }
+    let moved = Math.abs(zoomNow() - before) > 0.01 || Math.abs(z - before) < 0.05;
+    if (ok && !moved && sigBefore) {   // the reading did not change: did the picture? (an engine that reports the zoom late)
+      await new Promise((r) => setTimeout(r, 350));
+      let sigAfter = null; try { sigAfter = frameSignature(); } catch (e) {}
+      moved = sigDiff(sigBefore, sigAfter) >= 2;
+    }
+    if (!ok || !moved) { if (++zoomStuck >= 2 && !zoomDead) { zoomDead = true; frameSettleNeeded = false; setStatus('armed', 'This camera does not zoom — the picture is read as the camera shows it'); } }
     else zoomStuck = 0;
-    bumpSnap();
+  }
+  // the outline of what the finder sees, over the live picture (shown "cover": scaled to fill the viewfinder about
+  // its centre), and the zoom readout beside the frame counter
+  const overlay = $('vfOverlay'), octx = overlay.getContext('2d'), zoomLive = $('zoomLive');
+  function overlayDraw(look) {
+    const el = $('viewfinder'), dpr = Math.min(2, window.devicePixelRatio || 1), ew = el.clientWidth, eh = el.clientHeight;
+    if (!ew || !eh) return;
+    const pw = Math.round(ew * dpr), ph = Math.round(eh * dpr);
+    if (overlay.width !== pw || overlay.height !== ph) { overlay.width = pw; overlay.height = ph; }
+    octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    octx.clearRect(0, 0, ew, eh);
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!look || !vw || !vh) { zoomLive.hidden = true; return; }
+    const state = !look.found ? 'none' : look.cut.length ? 'cut' : (look.moving || Math.max(look.widthFrac, look.heightFrac) < FRAME_LOW) && frameLoopLive() ? 'zoom' : 'fit';
+    zoomLive.hidden = false;
+    zoomLive.dataset.state = state;
+    zoomLive.textContent = (zoomCaps ? showZoom(zoomNow()) + ' · ' : '') + (state === 'none' ? 'no screen in view' : state === 'cut' ? 'screen cut off' + (look.overfull ? '' : ': ' + look.cut.join(', ')) : state === 'zoom' ? 'zooming to fit' : 'screen fits');
+    if (!look.found) return;
+    octx.lineWidth = 2;
+    octx.strokeStyle = state === 'cut' ? '#FFB020' : state === 'fit' ? '#3DDC84' : 'rgba(255,255,255,.85)';
+    octx.setLineDash(state === 'zoom' || look.overfull ? [8, 6] : []);
+    if (look.overfull || !look.quad) { octx.strokeRect(6, 6, ew - 12, eh - 12); octx.setLineDash([]); return; }
+    const s = Math.max(ew / vw, eh / vh), ox = (ew - vw * s) / 2, oy = (eh - vh * s) / 2;
+    const pts = look.quad.map(([x, y]) => [x * s + ox, y * s + oy]);
+    octx.beginPath(); octx.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < 4; i++) octx.lineTo(pts[i][0], pts[i][1]); octx.closePath(); octx.stroke();
+    octx.setLineDash([]);
   }
   async function wideLens() {
     if (/triple|dual/i.test(lensLabel) || (zoomCaps && zoomCaps.min < 0.95)) return false;   // the wide end is in this lens's own zoom range
@@ -1448,15 +1557,17 @@
   }
   const lookCanvas = document.createElement('canvas'), lctx = lookCanvas.getContext('2d', { willReadFrequently: true });
   // The screen (or page) in a frame, in frame pixels: { quad, cut, coverage, widthFrac, heightFrac, scattered } or null.
-  function screenFind(src) {
-    const W = 320, H = Math.max(8, Math.round(src.height * W / src.width));   // a real bezel (6 mm) is three cells wide here, so a dim far side stays apart from the room
+  // src is a canvas, or the live video with its own size given (a video element's width/height are not its picture's).
+  function screenFind(src, srcW, srcH) {
+    if (!srcW || !srcH) { srcW = src.width; srcH = src.height; }
+    const W = 320, H = Math.max(8, Math.round(srcH * W / srcW));   // a real bezel (6 mm) is three cells wide here, so a dim far side stays apart from the room
     lookCanvas.width = W; lookCanvas.height = H;
     lctx.drawImage(src, 0, 0, W, H);
     const d = lctx.getImageData(0, 0, W, H).data, lum = new Uint8Array(W * H);
     for (let i = 0; i < lum.length; i++) lum[i] = (d[i * 4] * 3 + d[i * 4 + 1] * 6 + d[i * 4 + 2]) / 10;
     const q = screenQuad(lum, W, H);
     if (!q) return null;
-    const sx = src.width / W, sy = src.height / H, m = 1.6;   // a margin of cells, so the screen's own edge is kept
+    const sx = srcW / W, sy = srcH / H, m = 1.6;   // a margin of cells, so the screen's own edge is kept
     // a clean rectangle (turned or foreshortened) is straightened; bright content in several pieces, or a region that
     // is not a rectangle (a page with a dark figure in one corner), is cropped to the box around all of it instead
     // (other bright pieces are taken in only when they are clean rectangles lying close by — the boxes of a
@@ -1468,7 +1579,7 @@
       const cx = q.quad.reduce((t, p) => t + p[0], 0) / 4 + 0.5, cy = q.quad.reduce((t, p) => t + p[1], 0) / 4 + 0.5;
       quad = q.quad.map(([x, y]) => { const dx = x + 0.5 - cx, dy = y + 0.5 - cy, l = Math.hypot(dx, dy) || 1; return [x + 0.5 + dx / l * m, y + 0.5 + dy / l * m]; });
     }
-    quad = quad.map(([x, y]) => [clamp(x * sx, 0, src.width), clamp(y * sy, 0, src.height)]);
+    quad = quad.map(([x, y]) => [clamp(x * sx, 0, srcW), clamp(y * sy, 0, srcH)]);
     const box = straight ? q.box : q.union;
     return { quad, straight, cut: q.cut, coverage: q.coverage, fill: q.fill, scattered: q.scattered, widthFrac: (box[2] - box[0] + 1) / W, heightFrac: (box[3] - box[1] + 1) / H,
       boxFrac: [box[0] / W, box[1] / H, (box[2] + 1) / W, (box[3] + 1) / H] };   // where it sits in the frame (fractions), for the zoom
@@ -1605,6 +1716,11 @@
       const u = tileCanvas.toDataURL('image/jpeg', 0.85);
       tiles.push({ b64: u.slice(u.indexOf(',') + 1), c: t.c, r: t.r, cols: t.cols, rows: t.rows });
     }
+    // the frame as the camera saw it, small, for the Captures folder on Drive (what the finder worked from)
+    let rawB64 = '';
+    if (S.keepCaptures !== false && driveConnected()) {
+      try { const k = Math.min(1, 1024 / Math.max(rawCanvas.width, rawCanvas.height)); tileCanvas.width = Math.round(rawCanvas.width * k); tileCanvas.height = Math.round(rawCanvas.height * k); tlctx.drawImage(rawCanvas, 0, 0, tileCanvas.width, tileCanvas.height); const u = tileCanvas.toDataURL('image/jpeg', 0.62); rawB64 = u.slice(u.indexOf(',') + 1); } catch (e) { rawB64 = ''; }
+    }
     let sig = null; try { sig = frameSignature(); } catch (e) {}
     // the picture's own fingerprint — of the straightened screen, which does not drift with the hand — finer than
     // the frame's: a question that changed while the page's layout stayed shows here and not in the frame's
@@ -1615,7 +1731,7 @@
     try { sigCanvas.width = 48; sigCanvas.height = 36; sctx.drawImage(canvas, 0, 0, Math.max(1, Math.round(cw * 0.55)), ch, 0, 0, 48, 36); const ld = sctx.getImageData(0, 0, 48, 36).data; leftSig = new Uint8Array(48 * 36); for (let i = 0; i < leftSig.length; i++) leftSig[i] = (ld[i * 4] * 3 + ld[i * 4 + 1] * 6 + ld[i * 4 + 2]) / 10; } catch (e) {}
     const screen = { found: !!look, cut: look ? look.cut : [], straightened: !!look && look.straight && src !== rawCanvas, cropped: !!look && src !== rawCanvas, flattened: !!look && src !== rawCanvas && rectifyFlattened, tiles: tiles.length, widthFrac: look ? look.widthFrac : 0, heightFrac: look ? look.heightFrac : 0, boxFrac: look ? look.boxFrac : null, zoom: zoomNow(), w: src.width, h: src.height, why: look ? '' : (S.screenRead === false ? 'screen reading off' : screenWhy || 'no screen found') };
     diagLog.push({ at: Date.now(), zoom: screen.zoom, frame: vw + '×' + vh, screen }); if (diagLog.length > 12) diagLog.shift();
-    return { b64: dataUrl.slice(dataUrl.indexOf(',') + 1), thumb, w: cw, h: ch, sig, docSig, leftSig, tiles, screen };
+    return { b64: dataUrl.slice(dataUrl.indexOf(',') + 1), thumb, w: cw, h: ch, sig, docSig, leftSig, tiles, screen, rawB64, rawSize: rawCanvas.width + '×' + rawCanvas.height };
   }
   const tabsNameOf = (f) => (f && f.tab) || '?';
   // the diagnostics: the lens, its zoom range, the GPU, and the last captures as the screen finder saw them
@@ -1625,7 +1741,9 @@
     lines.push('camera: ' + (lensLabel || (stream ? '(no label)' : 'not open')) + (S.deviceId ? (lensAuto ? ' (auto: the multi-lens camera)' : ' (chosen lens)') : ' (auto)'));
     lines.push('zoom range: ' + (zoomCaps ? showZoom(zoomCaps.min) + ' – ' + showZoom(zoomCaps.max) + ' · now ' + showZoom(zoomNow()) + (zoomScale !== 1 ? ' (as the Camera app shows it; raw ' + fmtZoom(zoomCaps.min) + ' – ' + fmtZoom(zoomCaps.max) + ')' : '') + (zoomDead ? ' · the lens ignored zoom changes — auto-zoom off' : '') : 'none reported by this camera — no auto-zoom possible'));
     lines.push('straightening on the GPU: ' + (glFailed ? 'no (WebGL failed — axis-aligned crop instead)' : gl ? 'yes' : 'not used yet'));
-    lines.push('auto-zoom ' + (S.autoZoom === false ? 'off' : 'on') + ' · screen reading ' + (S.screenRead === false ? 'off' : 'on') + ' · capture every ' + S.interval + ' s');
+    lines.push('auto-zoom ' + (S.autoZoom === false ? 'off' : 'on') + ' · screen reading ' + (S.screenRead === false ? 'off' : 'on') + ' · capture every ' + S.interval + ' s' + ' · captures to Drive ' + (S.keepCaptures === false ? 'off' : driveConnected() ? 'on' : 'on (Drive not connected)'));
+    lines.push('live framing: ' + (frameLoopLive() ? 'on' + (frameHoldUntil > Date.now() ? ' (held by a tapped chip)' : '') : running ? 'off — ' + (!zoomCaps ? 'no zoom range' : zoomDead ? 'the lens ignored zoom changes' : S.autoZoom === false ? 'auto-zoom off' : S.screenRead === false ? 'screen reading off' : 'no camera') : 'not running') +
+      (liveLook ? ' · last look: ' + (liveLook.found ? (liveLook.cut.length ? 'cut off on the ' + liveLook.cut.join(' and ') : 'screen ' + Math.round(Math.max(liveLook.widthFrac, liveLook.heightFrac) * 100) + ' % of the frame') : 'no screen: ' + (liveLook.why || '')) + ' · moves in the last 10 s: ' + frameMoves : ''));
     if (!diagLog.length) lines.push('no captures yet');
     for (const d of diagLog.slice().reverse()) {
       const sc = d.screen;
@@ -1721,7 +1839,8 @@
     keepAwake();
     lastSig = null; prevSig = null;
     retryFrame = false; failStreak = 0;
-    zoomAdjustAt = 0; noScreenRuns = 0; wideTried = false; cutStreak = 0; zoomBumped = false; zoomStuck = 0; zoomDead = false;   // the auto-zoom starts afresh
+    wideTried = false; cutStreak = 0; zoomBumped = false; zoomStuck = 0; zoomDead = false;   // the auto-zoom starts afresh
+    frameLoopStart();
     tick();
     clearInterval(watchTimer); watchTimer = setInterval(watchFrame, 500);
     camMutedSince = 0; camFailAt = 0; camFails = 0;
@@ -1731,6 +1850,7 @@
   function stop() {
     running = false;
     clearTimeout(tickTimer); tickTimer = null; nextAt = 0;
+    frameLoopStop();
     clearInterval(watchTimer); watchTimer = null;
     clearInterval(camTimer); camTimer = null;
     pending = null;
@@ -1822,9 +1942,9 @@
       const adjusting = autoZoom(frame.screen);
       if (frame.screen && frame.screen.cut.length) {
         cutStreak++;
-        if (adjusting || cutStreak < 3) { setStatus('armed', 'The screen is cut off on the ' + frame.screen.cut.join(' and ') + (adjusting ? ' — zooming out' : ' — move the phone back a little')); skippedSince = frameNo; return; }
+        if (adjusting || cutStreak < 3) { setStatus('armed', 'The screen is cut off on the ' + frame.screen.cut.join(' and ') + (adjusting ? ' — zooming out' : ' — move the phone back a little')); keepCapture(frame, 'cut off on the ' + frame.screen.cut.join(' and ') + (adjusting ? ', zooming out' : ', waiting')); skippedSince = frameNo; return; }
         frame.cutNote = true;   // three captures running: it goes as it is, the model told
-      } else { cutStreak = 0; if (adjusting) { setStatus('armed', 'Zooming in on the screen'); skippedSince = frameNo; return; } }
+      } else { cutStreak = 0; if (adjusting) { setStatus('armed', 'Zooming to fit the screen'); keepCapture(frame, 'zooming to fit'); skippedSince = frameNo; return; } }
     }
     const sig = frame.sig;
     // Is this a new picture? The reference is the picture the text on screen is about while the panel is open,
@@ -1887,7 +2007,8 @@
     // memory first: a picture seen before gets the text it got then, with no request — from the same kind of answer.
     // Not for a writing task's piece (frame.fresh): it is written from the pages in hand now, never replayed.
     const hit = frame.fresh ? null : recall(frame.sig || lastSig, '', isRole, frame.docSig);
-    if (hit) { showRecalled(frame, hit); if (isRole) roleLock = { kind: 'role', card: frame.role, frame, reqId: 0, text: hit.text, failed: false, seen: [] }; else if (frame.tabs && roleLock && roleLock.kind === 'tabs') roleLock.text = hit.text; return; }
+    if (hit) { showRecalled(frame, hit); keepCapture(frame, 'answered from memory'); if (isRole) roleLock = { kind: 'role', card: frame.role, frame, reqId: 0, text: hit.text, failed: false, seen: [] }; else if (frame.tabs && roleLock && roleLock.kind === 'tabs') roleLock.text = hit.text; return; }
+    keepCapture(frame, 'sent');
     skippedSince = -1;
     frameNo += 1;
     frame.no = frameNo;
@@ -3013,6 +3134,7 @@
     $('uprightPhoto').checked = !!S.uprightPhoto;
     $('screenRead').checked = S.screenRead !== false;
     $('autoZoom').checked = S.autoZoom !== false;
+    $('keepCaptures').checked = S.keepCaptures !== false;
     $('driveHelper').value = S.driveHelper || '';
     $('sttLang').value = S.sttLang || '';
     $('sttTerms').value = S.sttTerms || '';
@@ -3072,6 +3194,7 @@
     S.uprightPhoto = $('uprightPhoto').checked;
     S.screenRead = $('screenRead').checked;
     S.autoZoom = $('autoZoom').checked;
+    S.keepCaptures = $('keepCaptures').checked;
     S.driveHelper = $('driveHelper').value.trim().replace(/\/+$/, '');
     S.sttLang = $('sttLang').value;
     S.sttTerms = $('sttTerms').value.trim();
@@ -3966,6 +4089,35 @@
       }
     } catch (e) { /* kept locally; the next sync retries */ }
     finally { uploadingFrames = false; }
+  }
+  // ----- the Captures folder on Drive: every analysed capture as the camera saw it, named with what the finder made
+  // of it and what was decided, for checking the framing from anywhere. Sent straight up (nothing kept on the phone;
+  // a capture that cannot go is simply not there), one every few seconds at most, two in flight at most.
+  let captureBusy = 0, captureAt = 0;
+  function keepCapture(frame, verdict) {
+    if (S.keepCaptures === false || !frame || !frame.rawB64 || !driveConnected()) return;
+    const now = Date.now();
+    if ((verdict !== 'sent' && now - captureAt < 4000) || captureBusy >= 2) return;   // a sent picture always goes; the dropped ones one every few seconds
+    captureAt = now;
+    const sc = frame.screen || { cut: [] }, when = new Date(), z = zoomCaps ? showZoom(sc.zoom != null ? sc.zoom : zoomNow()) : '';
+    const seen = !sc.found ? 'no screen: ' + (sc.why || '') : sc.cut.length ? 'cut off on the ' + sc.cut.join(' and ') : (sc.straightened ? 'straightened' : sc.cropped ? 'cropped' : 'screen') + ' ' + Math.round((sc.widthFrac || 0) * 100) + ' % wide' + (sc.tiles ? ', ' + sc.tiles + ' tiles' : '');
+    const name = 'Capture ' + when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }).replace(/:/g, '.') + (z ? ' · ' + z : '') + ' · ' + safeName(verdict) + '.jpg';
+    const description = [when.toLocaleString(), 'lens: ' + (lensLabel || '?'), 'zoom: ' + (zoomCaps ? z + ' of ' + showZoom(zoomCaps.min) + ' – ' + showZoom(zoomCaps.max) : 'none reported'), 'finder: ' + seen, 'decision: ' + verdict, 'frame: ' + (frame.rawSize || '?') + ', picture sent: ' + (sc.w || '?') + '×' + (sc.h || '?'), 'live framing: ' + (frameLoopLive() ? 'on' : 'off')].join(' · ');
+    captureBusy++;
+    fetch('data:image/jpeg;base64,' + frame.rawB64).then((r) => r.blob()).then(async (blob) => {
+      const folderId = await captureFolder();
+      await drive('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', Object.assign({ method: 'POST' }, multipartBlob({ name, parents: [folderId], description, appProperties: { lensloop: 'capture' } }, blob, 'image/jpeg')));
+    }).catch(() => {}).finally(() => { captureBusy--; });
+  }
+  async function captureFolder() {
+    const parent = await driveFolder();
+    if (S.driveCaptures) { try { const f = await drive('files/' + S.driveCaptures + '?fields=id,trashed'); if (f && !f.trashed) return f.id; } catch (e) { if (e.auth) throw e; } }
+    const q = `name='Captures' and mimeType='application/vnd.google-apps.folder' and '${esq(parent)}' in parents and trashed=false`;
+    const r = await drive('files?q=' + encodeURIComponent(q) + '&fields=files(id)&pageSize=5&spaces=drive');
+    let id = r.files && r.files[0] && r.files[0].id;
+    if (!id) { const made = await drive('files?fields=id', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Captures', mimeType: 'application/vnd.google-apps.folder', parents: [parent] }) }); id = made.id; }
+    S.driveCaptures = id; saveSettings();
+    return id;
   }
   async function renameFrames(st) {
     if (!driveConnected()) return;

@@ -132,15 +132,23 @@ function jpegSize(b64) {
   assert(d0 && d0.w === 1568 && d0.h === 882, '0. nothing screen-like: the whole frame goes (' + JSON.stringify(d0) + ')');
   assert((await zoomCalls()).length === 0, '0. no zoom for a desk');
 
-  // 1. a screen small in the frame: zoomed in on first — the small capture is dropped, the zoomed one answered
+  // 1. a screen small in the frame: the live loop zooms in on it step by step within a second or two (the largest
+  // step, then the one that lands on the fit), the capture is taken as the lens settles — the small capture is
+  // dropped, the zoomed one answered — and the viewfinder shows the outline and the zoom
+  const smallAt = Date.now();
   await go('small');
   await page.waitForTimeout(9000);
   let zc = await zoomCalls();
-  assert(zc.length >= 1 && zc[0] === 2, '1. zoomed in (×2 for a screen 30% of the frame wide) (' + zc.join() + ')');
-  assert(main.length === 2 && main[1].scene === 'small' && main[1].zoom === 2, '1. the answer came from the zoomed capture, not the small one (' + main.map((m) => m.scene + '@' + m.zoom).join() + ')');
+  assert(zc.length >= 2 && Math.abs(zc[0] - 1.6) < 0.02 && zc[zc.length - 1] > 2.2 && zc[zc.length - 1] < 2.8, '1. zoomed in step by step, ×1.6 then onto the fit (' + zc.join() + ')');
+  assert(main.length === 2 && main[1].scene === 'small' && main[1].zoom > 2.2, '1. the answer came from the zoomed capture, not the small one (' + main.map((m) => m.scene + '@' + m.zoom).join() + ')');
+  assert(main[1].at - smallAt < 5000, '1. … within seconds of the screen appearing, as the lens settled, not at the next tick (' + Math.round((main[1].at - smallAt) / 100) / 10 + ' s after it appeared)');
   let im = imagesOf(main[1].body);
   assert(im[0] && Math.abs(im[0].w / im[0].h - 1.5) < 0.06 && im[0].w >= 1400 && im[0].w <= 1568, '1. the picture is the screen itself — 3:2, at the pixels the sensor has (' + JSON.stringify(im[0]) + ')');
-  assert(/screen (straightened|cropped) · 2×/.test(await meta()), '1. the meta line says how the picture was taken (' + await meta() + ')');
+  assert(/screen (straightened|cropped) · (\d tiles · )?2\.\d×/.test(await meta()), '1. the meta line says how the picture was taken (' + await meta() + ')');
+  const live = await page.evaluate(() => document.getElementById('zoomLive').textContent);
+  assert(/^2\.\d× · screen fits$/.test(live), '1. the readout on the viewfinder: the zoom, and that the screen fits (' + live + ')');
+  const outline = await page.evaluate(() => { const c = document.getElementById('vfOverlay'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let green = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 0 && d[i + 1] > 150 && d[i] < 120) green++; return green; });
+  assert(outline > 50, '1. a green outline is drawn round the screen (' + outline + ' px)');
   // the lens moved for this answer: that must not leave the "same picture" skip switched off — a still screen costs
   // no further look and no further answer over the next ticks
   const looks1 = looks, main1 = main.length;
@@ -239,7 +247,7 @@ function jpegSize(b64) {
   await p5.waitForTimeout(800);
   await p5.click('#startBtn');
   await p5.waitForTimeout(9000);
-  assert(main5.length === 1 && main5[0].zoom === 2 && /I will be the Patient/.test(await p5.evaluate(() => document.getElementById('answerBody').textContent)), '5. the role card on the screen: zoomed in on, its briefing locked (' + JSON.stringify(main5) + ')');
+  assert(main5.length === 1 && main5[0].zoom > 2.2 && /I will be the Patient/.test(await p5.evaluate(() => document.getElementById('answerBody').textContent)), '5. the role card on the screen: zoomed in on, its briefing locked (' + JSON.stringify(main5) + ')');
   scene5 = 'desk'; await p5.evaluate(() => { window.__scene = 'desk'; });
   await p5.waitForTimeout(26000);   // two screen-less captures, the move back to 1×, the capture after it ("keeping the briefing")
   assert((await p5.evaluate(() => window.__zoomCalls.slice(-1)[0])) === 1, '5. the desk: the lens went back to 1× (' + (await p5.evaluate(() => window.__zoomCalls.join())) + ')');
@@ -273,6 +281,61 @@ function jpegSize(b64) {
   const diag = await p6.evaluate(() => document.getElementById('diagBox').value);
   assert(/zoom range: 1× – 15×/.test(diag) && /no screen: /.test(diag), '6. the diagnostics: the range across the lenses, and why the desk is no screen (' + diag.split('\n').slice(0, 2).join(' | ') + ' … ' + (diag.split('\n').find((l) => /no screen/.test(l)) || '') + ')');
   assert(errors6.length === 0, '6. no page errors' + (errors6.length ? ': ' + errors6.join(' | ') : ''));
-  await b6.close(); server.close();
+  await b6.close();
+
+  // 7. with Drive connected, every analysed capture goes up as the camera saw it, into a "Captures" folder inside
+  // Lens Loop, named with the zoom and what was decided, the finder's verdict in its description — so the framing
+  // can be checked from anywhere. A small in-memory Drive stands in for Google's.
+  const drv = new Map(); let seq = 0;
+  drv.set('FOLDER', { id: 'FOLDER', name: 'Lens Loop', mimeType: 'application/vnd.google-apps.folder', parents: [], appProperties: {}, size: 0, description: '' });
+  const okJson = (route, body) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) }).catch(() => {});
+  const metaOf = (buf) => { const s = buf.toString('latin1'); const boundary = s.slice(2, s.indexOf('\r\n')); const segs = s.split('--' + boundary); return { meta: JSON.parse(Buffer.from(segs[1].slice(segs[1].indexOf('\r\n\r\n') + 4), 'latin1').toString('utf8')), size: segs[2].length - segs[2].indexOf('\r\n\r\n') - 4 }; };
+  const driveRoute = async (route) => {
+    const req = route.request(), u = new URL(req.url()), m = req.method();
+    const upload = u.pathname.startsWith('/upload/drive/v3/files');
+    const id = decodeURIComponent((u.pathname.match(/\/files\/([^/]+)$/) || [])[1] || '');
+    if (m === 'GET' && id) { const f = drv.get(id); return f ? okJson(route, { id: f.id, trashed: false }) : route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: { code: 404, message: 'File not found: ' + id } }) }); }
+    if (m === 'GET') {
+      const q = u.searchParams.get('q') || '';
+      const parent = (q.match(/'([^']+)' in parents/) || [])[1], name = (q.match(/name='([^']+)'/) || [])[1], kind = (q.match(/value='([^']+)'/) || [])[1];
+      const listed = [...drv.values()].filter((f) => (!parent || f.parents.includes(parent)) && (!name || f.name === name) && (!kind || f.appProperties.lensloop === kind) && (!q.includes('folder') || f.mimeType === 'application/vnd.google-apps.folder'));
+      return okJson(route, u.pathname.endsWith('/about') ? { user: {} } : { files: listed.map((f) => ({ id: f.id, name: f.name, appProperties: f.appProperties })) });
+    }
+    if (m === 'POST' && !upload) { const meta = JSON.parse(req.postData() || '{}'); const nid = 'DIR' + (++seq); drv.set(nid, Object.assign({ id: nid, parents: [], appProperties: {}, size: 0, description: '' }, meta)); return okJson(route, { id: nid }); }
+    if (m === 'POST' && upload) { const { meta, size } = metaOf(req.postDataBuffer() || Buffer.alloc(0)); const nid = 'F' + (++seq); drv.set(nid, { id: nid, name: meta.name, parents: meta.parents || [], appProperties: meta.appProperties || {}, description: meta.description || '', size }); return okJson(route, { id: nid }); }
+    if (m === 'PATCH') return okJson(route, { id });
+    return route.fulfill({ status: 400, body: '{}' }).catch(() => {});
+  };
+  const b7 = await chromium.launch();
+  const ctx7 = await b7.newContext({ viewport: { width: 420, height: 860 } });
+  await ctx7.addInitScript(initCamera);
+  await ctx7.addInitScript(() => {
+    const s = JSON.parse(localStorage.getItem('lensloop.settings') || '{}');
+    localStorage.setItem('lensloop.settings', JSON.stringify(Object.assign(s, { driveOn: true, driveRedirectOk: true, driveFolder: 'FOLDER', sessionListen: false })));
+    localStorage.setItem('lensloop.drive', JSON.stringify({ token: 'AT', exp: Date.now() + 50 * 60 * 1000 }));
+  });
+  const p7 = await ctx7.newPage();
+  const errors7 = []; p7.on('pageerror', (e) => errors7.push(String(e)));
+  await p7.route('https://www.googleapis.com/**', driveRoute);
+  await p7.route('https://api.anthropic.com/v1/messages', async (route) => {
+    const body = JSON.parse(route.request().postData());
+    if (/haiku/.test(body.model)) return fulfil(route, { status: 200, contentType: 'application/json', body: JSON.stringify({ content: [{ type: 'text', text: 'CHOICE' }], usage: { input_tokens: 1500, output_tokens: 20 } }) });
+    return fulfil(route, { status: 200, contentType: 'text/event-stream', body: sse('ANSWER: B) 42\n\nFrom the second line.') });
+  });
+  await p7.goto(`http://127.0.0.1:${port}/index.html#key=sk-ant-test-0000`);
+  await p7.evaluate(() => { window.__scene = 'small'; });
+  await p7.waitForTimeout(800);
+  await p7.click('#startBtn');
+  await p7.waitForTimeout(9000);
+  const capDir = [...drv.values()].find((f) => f.name === 'Captures' && f.mimeType === 'application/vnd.google-apps.folder');
+  assert(capDir && capDir.parents.includes('FOLDER'), '7. a "Captures" folder was made inside Lens Loop');
+  const caps = [...drv.values()].filter((f) => f.appProperties.lensloop === 'capture');
+  assert(caps.length >= 1 && caps.every((f) => f.parents.includes(capDir && capDir.id)), '7. the captures went up into it (' + caps.length + ')');
+  const sent = caps.find((f) => / · sent\.jpg$/.test(f.name));
+  assert(sent && /^Capture \d\d\.\d\d\.\d\d( [AP]M)? · 2\.\d× · sent\.jpg$/.test(sent.name), '7. named with the time, the zoom and the decision (' + caps.map((f) => f.name).join(' | ') + ')');
+  assert(sent && /finder: straightened \d+ % wide/.test(sent.description) && /decision: sent/.test(sent.description) && /zoom: 2\.\d× of 1× – 5×/.test(sent.description) && /frame: 2560×1440/.test(sent.description), '7. the description: the finder\'s verdict, the zoom range, the frame (' + (sent && sent.description) + ')');
+  assert(sent && sent.size > 5000 && sent.size < 400000, '7. a small JPEG of the whole frame as the camera saw it (' + (sent && sent.size) + ' bytes)');
+  assert(errors7.length === 0, '7. no page errors' + (errors7.length ? ': ' + errors7.join(' | ') : ''));
+  await b7.close(); server.close();
   console.log(process.exitCode ? 'SCREEN E2E FAILED' : 'SCREEN E2E PASSED');
 })().catch((e) => { console.error(e); process.exit(1); });

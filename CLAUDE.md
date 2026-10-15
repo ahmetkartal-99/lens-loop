@@ -210,52 +210,61 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     the union crop); a lamp or reflection is simply left out. A picture answered FROM MEMORY becomes a known
     picture too (`showRecalled` sets `lastSentFrame`), so the camera resting on it costs no further look. `screenNote` puts "screen straightened · 2 tiles · 1.8×" / "screen cut off on
     the right" on the meta line. `S.screenRead` (default on) switches it. `test/screen.test.js` fixes the geometry.
-14a. **Auto-zoom** (`autoZoom`, after every capture, `S.autoZoom` default on, `zoomCaps` from the track): a screen
-    filling < 55 % of the frame is zoomed IN on first and that capture dropped ("Zooming in on the screen"), the
-    zoomed one taken ~1.3 s later (`bumpSnap`); the factor (≤ 2, towards 82 % fill) is CAPPED by the nearest frame
-    edge's headroom (`boxFrac`: the lens zooms about the centre, so a screen off to one side would run out of the
-    frame first) — never past the edge. A screen with an edge outside the frame is NOT answered: the zoom goes
-    straight OUT to the lens's widest (one move; the edge-aware zoom-in then lands the fit in one more), then the
-    ULTRA-WIDE lens is switched to when the phone has one (`wideLens`, by label), then a banner asks to move the
-    phone back (`moveBack`, once per 20 s); only after three judged captures with nothing left to try does a cut
-    frame go as it is, the model told (`frame.cutNote`). Captures while the lens settles (2.5 s after a move) are
-    "adjusting", never judged. After two captures with nothing screen-like the lens returns to the chosen zoom
-    (`baseZoom`); the camera setup leaves a lens already at the wanted zoom alone. Every auto move goes through
-    `zoomTo`: a lens that refuses or ignores two moves (a zoom range reported, nothing happens — seen on some
-    phones) sets `zoomDead` and the auto-zoom stands down for the session with a status line, so the screen is
-    answered as the camera has it rather than waited on for ever. A move makes exactly ONE capture new
-    (`zoomBumped`, consumed by `snap`) — never the retry flag, which would switch the "same picture" skip off until
-    the next request and cost a quick look every tick on a still, locked picture. The lens borrowed by `wideLens`
-    is given back at Stop (`mainDevice`); `start` resets the auto-zoom state. **The lens**: "Back camera (auto)"
-    opens the plain back camera first (labels come only once a camera is open), then `bestLens` takes the phone's
-    MULTI-LENS device when it has one — "Back Triple Camera" > "Back Dual Wide Camera" > "Back Dual Camera" by label
-    — and keeps it only if its zoom range is really wider (> 1.2× the ratio): one range across ultra-wide, wide and
-    telephoto (0.5×–15× and more on an iPhone, the phone switching lenses as the zoom moves), so the auto-zoom has
-    the whole of it. Tried once per session (`lensTried`), the picker still says auto (`lensAuto`), the choice is
-    dropped at Stop; `wideLens` stands down for such a lens (the wide end is in its own range). **Zoom in the Camera
-    app's terms**: a lens holding the ultra-wide (the multi-lens camera, or the ultra-wide camera itself) reports
-    that widest view as raw zoom 1.0 and the main lens as 2.0, which Apple labels 0.5× and 1× — so on such a lens
-    (`lensHoldsWide(label)`, min ≤ 1.05) `zoomScale` = 0.5 and every zoom SHOWN or SAVED (`showZoom`, `S.zoom`, the
-    chips 0.5×/1×/2×/5×, the status, the meta line, the diagnostics) is the raw value halved; the auto-zoom works in
-    raw values throughout. On a phone that lists the ultra-wide camera separately, a "0.5×" chip switches to that
-    LENS (`switchLens`, for the session, the chosen lens back at Stop) and a "1×" chip on it switches back;
-    `listCameras` runs before `setupZoom` so the chips know the lenses (`cameraDevices`). **Diagnostics**: the
-    Settings sheet shows `diagText()` — the camera label, its zoom range and the zoom now, whether the GPU
-    straightening ran, and the last 12 captures (`diagLog`) with what the finder saw ("screen straightened 49 % wide
-    · 2 tiles", "screen cut off on the right", "no screen: nothing much brighter than the room (bright side 48, the
-    rest 35)"); the meta line says "no screen found — <why>" when nothing was found. **Lighting evened**
-    (`S.flattenLight`, default on): after the GPU straightening, `gainMapOf` measures each cell of a 32×24 grid at
-    its PAGE WHITE (the brightest of 16 sub-cells, so text-heavy cells are not taken for dim ones), and when the
-    brightest cells are ≥ 1.3× the dimmest, a second GPU pass multiplies by a smoothly interpolated gain map (each
-    cell lifted to the 90th-percentile level, ≤ 3.5×, never darkened) — the dim far side of a steeply angled screen
-    reads as white page; the meta line says "screen straightened, lighting evened" (`frame.screen.flattened`).
-    **Photos to Drive**: the IndexedDB is opened at version 4 — a phone whose database already existed at 3 never
-    got the `frames` store (created only on upgrade), every photo save threw silently and no JPEG ever reached
-    Drive; the tests open at 4 too. `test/screen.e2e.js` runs the whole
-    thing against a 2560×1440 canvas camera whose tracks report a zoom range and an ultra-wide device: parts 1–3
-    the zoom in / out / wide lens, 1b the return to 1× and a desk answered from memory as one picture, 4 a stuck
-    lens, 5 a role card locked and the desk still costing nothing after a move (a mutation check showed the old
-    flag fails it).
+14a. **Auto-zoom, LIVE** (`frameLoopTick` every 400 ms while running, `S.autoZoom` default on, `zoomCaps` from the
+    track): the live picture is looked at for the screen with the captures' own finder (`screenFind(video, w, h)`)
+    and the lens moved ONE STEP at a time by the pure decision `framingMove(sc, cur, caps, base, missing)`
+    (unit-tested in `test/framing.test.js`, 400 random runs): IN while the screen is under 80 % of the frame (the
+    step ≤ 1.6, toward 90 % fill, CAPPED by the nearest frame edge's headroom from `boxFrac` — the lens zooms about
+    the centre, so a screen off to one side would run out of the frame first — never past the edge, and no step
+    < 1.06); OUT (× 0.72) while an edge is outside the frame (and "the whole frame is bright" counts as cut on every
+    side); a touch out (× 0.9) when it fills the frame to its edges; BACK toward the chosen zoom (`baseZoom`, S.zoom
+    default 1 = the main lens) once five looks in a row (2 s) saw nothing screen-like; nothing between 80 and 97 %.
+    At the widest and still cut: the ultra-wide lens where the phone lists one apart (`wideLens`, once), else the
+    banner (`moveBack`, once per 20 s). Moves are 450 ms apart (`FRAME_HOLD`), at most eight per ten seconds
+    (`frameBudget`); a tapped chip holds the loop for 20 s (`frameHoldUntil`). Two stable looks after a move =
+    SETTLED (`frameSettled`): the capture is taken at once (`snap('zoom')`, `zoomBumped` so it is new whatever the
+    fingerprints say) and the tick rescheduled — the answer comes ~2–3 s after a screen appears, not at the next
+    tick. **Capture time** (`autoZoom` from `snap`, when the lens can zoom) only asks the loop (`frameAdjusting`):
+    a capture while the lens is moving or a move is due is dropped ("Zooming to fit the screen" / "cut off … zooming
+    out"), deferred six seconds at most, then it goes as it is; a lens with no zoom range keeps the capture-time
+    handling of a cut-off screen (the ultra-wide lens, then the banner). Every step goes through `zoomStep`: a lens
+    that refuses or ignores two moves — the reported zoom unchanged AND the picture unchanged 350 ms later — sets
+    `zoomDead` and the loop stands down for the session with a status line. `applyZoom` tries the plain
+    `{ zoom }` constraint first (ideal; Safari 17.4+, Chrome), the advanced form as the fallback. **On the
+    viewfinder** (`overlayDraw`, a canvas over the "cover"-scaled video): the found quad outlined — green when it
+    fits, amber when cut off (dashed round the whole frame when overfull), dashed white while zooming in — and a
+    readout beside the frame counter (`#zoomLive`: "2.4× · screen fits" / "screen cut off: right" / "zooming to
+    fit" / "no screen in view"). A move makes exactly ONE capture new (`zoomBumped`, consumed by `snap`) — never the
+    retry flag. The lens borrowed by `wideLens` is given back at Stop (`mainDevice`); `start` resets the state
+    (`frameLoopStart`), Stop clears the overlay. **The lens**: iPhone Safari hands `facingMode: environment` the
+    MULTI-LENS device itself (WebKit's `cameraCaptureDeviceTypes` ranks Triple > Dual Wide > … for the back) and
+    reports its zoom IN THE CAMERA APP'S TERMS — `AVVideoCaptureSource::cameraZoomScaleFactor` is 2 for the Triple
+    and Dual Wide cameras, so min = 0.5 (the ultra-wide), 1 = the main lens, max = min(videoMaxZoomFactor / 2, 10):
+    **0.5×–10× is the whole range a browser gets; "15×" was never available**. `bestLens` still takes a labelled
+    multi-lens device when the plain back camera opened (rank Triple > Dual Wide > Dual by label, kept only if the
+    range is > 1.2× wider; `lensTried`, `lensAuto`, dropped at Stop); `wideLens` stands down for such a lens.
+    `zoomScale` = 0.5 ONLY for the ultra-wide camera chosen on its own (label /ultra/ and not triple/dual, min ≥
+    0.95): that one reports its widest as raw 1.0 — a range starting below 1 is already in Camera-app terms (the
+    old rule halved the multi-lens camera's values, so a real iPhone showed "0.25×–5×", the chips applied the wrong
+    lens and the app started on the ultra-wide). **Captures to Drive** (`keepCapture`, `S.keepCaptures` default
+    on): every analysed capture — sent, answered from memory, dropped for zooming or cut off — goes up AS THE
+    CAMERA SAW IT (`frame.rawB64`, the whole frame at 1024 px, q 0.62, made in `captureFrame` only when Drive is
+    connected) into a "Captures" folder inside Lens Loop (`captureFolder`, `S.driveCaptures`), named "Capture
+    11.45.14 PM · 2.5× · sent.jpg" with the finder's verdict, the zoom range, the frame size and the loop state in
+    the description (`appProperties.lensloop = 'capture'`); a sent picture always goes, dropped ones one per 4 s,
+    two uploads in flight at most, nothing kept on the phone. **Diagnostics**: the Settings sheet shows
+    `diagText()` — the camera label, its zoom range and the zoom now, the live framing state and its last look,
+    whether the GPU straightening ran, and the last 12 captures (`diagLog`) with what the finder saw. **Lighting
+    evened** (`S.flattenLight`, default on): after the GPU straightening, `gainMapOf` measures each cell of a 32×24
+    grid at its PAGE WHITE (the brightest of 16 sub-cells), and when the brightest cells are ≥ 1.3× the dimmest, a
+    second GPU pass multiplies by a smoothly interpolated gain map (each cell lifted to the 90th-percentile level,
+    ≤ 3.5×, never darkened); the meta line says "screen straightened, lighting evened". **Photos to Drive**: the
+    IndexedDB is opened at version 4 (a phone at 3 never got the `frames` store). `test/screen.e2e.js` runs the
+    whole thing against a 2560×1440 canvas camera whose tracks report a zoom range (1–5, the fake's convention) and
+    an ultra-wide device: 1 the live zoom-in (1.6 then 2.49 within ~3 s, the readout, the green outline), 1b the
+    stepped return to 1× and a desk answered from memory, 2 the angled screen, 3 cut off → the wide lens, 4 a stuck
+    lens, 5 a role card locked and the desk still costing nothing after a move, 6 the multi-lens device, 7 the
+    captures on an in-memory Drive (the folder, the names, the description, the size).
 14b. **A capture every 10 s at all times** (`INTERVAL` = 10, applied on every open like the model and the effort;
     the Settings field is read-only and says so) — a change in the picture still brings one sooner.
 15. **A question over tabbed sources** (the author's spec: the sources in tabs — "Mall Information / Building Plan /
@@ -331,8 +340,10 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
   (which answers are shown big in the panel, which go to the feed), `node test/convo.test.js` (the live role
   play's rules, who plays whom, the clock, "I'm ready" / "Lens, next"), `node test/screen.test.js` (the screen
   finder's geometry: corners however the screen is turned, cut edges, a window behind, a lamp beside a far screen,
-  a lit room, a page split by a dark bar, two shades of desk, the homography, the tiles) and `node test/tabs.test.js` (the TABS verdict in every form, the
-  selected tab, the same question vs another with the same stem).
+  a lit room, a page split by a dark bar, two shades of desk, the homography, the tiles), `node test/framing.test.js`
+  (the live auto-zoom's one step: in, capped by the nearest edge; out; back; and 400 random runs that settle without
+  ever leaving the frame) and `node test/tabs.test.js` (the TABS verdict in every form, the selected tab, the same
+  question vs another with the same stem).
 - `node test/session.e2e.js`, `node test/drive-renewal.e2e.js`, `node test/fresh-build.e2e.js`,
   `node test/memory-voice.e2e.js`, `node test/drive-helper.e2e.js`, `node test/drive-expired-open.e2e.js` (the app
   opened hours later: a silent renewal, retries on a backoff, a dead token in Google's real shape, and the banner only
@@ -341,9 +352,10 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
   the same card → a different card → desk, against a controlled camera: the card's briefing appears, stays locked,
   changes only for a different card; writing tasks over pages; and part 5, a whole live role play by voice),
   `node test/screen.e2e.js` (a 2560×1440 canvas camera with a zoom range and an ultra-wide device: the desk as it
-  is, a small screen zoomed in on, an angled screen straightened with two tiles, a cut-off screen zoomed out and the
-  wide lens, a stuck lens, a role card locked and a zoom move costing nothing after, a phone with a multi-lens
-  device taken for its 1–15× range), `node test/tabs.e2e.js` (a question over three tabs: collected tab by tab, one request with the
+  is, a small screen zoomed in on live — step by step within seconds, the readout and the outline — an angled screen
+  straightened with two tiles, a cut-off screen and the wide lens, a stuck lens, a role card locked and a zoom move
+  costing nothing after, a phone with a multi-lens device taken for its wider range, the captures mirrored to an
+  in-memory Drive), `node test/tabs.e2e.js` (a question over three tabs: collected tab by tab, one request with the
   bundle, a second question at once from the same bytes, "Lens, answer"), `node test/latency.e2e.js` (audio cadence and
   highlight reaction time), `node test/document.e2e.js` (a document page by page, the desk, a new subject) and
   `node test/hour-session.e2e.js` (an hour of dictation compressed into half a
