@@ -303,9 +303,11 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     and the cluster with the MOST CELLS is the text (a block of lines is extensive; a cursor, a speck is compact);
     (cells one empty row apart join too — the lines of a widely spaced question, a stem and its options, are one
     block; columns apart stay apart; a cluster that never runs two cells wide — a column of specks, a seam — is no
-    print at all; and the BROWSER'S BARS along the top edge — a band of print touching the top, five rows at most
-    — give way to a cluster of its own below them with a third of the cells: from a distance the tab bar can
-    outweigh the question under it, `test/ink.test.js` 8); `strong` marks a BLOCK of print (≥ 6 cells, some row ≥ 3 cells wide, some
+    print at all; and the BARS along the top or the bottom edge — the browser's tab/address/bookmarks bars, the
+    dock: a band of print touching an edge, five rows at most — give way to a cluster of its own clear of both
+    edges with a third of the cells, and count for nothing when there is no such cluster (from a distance the tab
+    bar or the dock outweighed the question, or stood in for it: a "close-up" of icons, `test/ink.test.js` 8);
+    `strong` marks a BLOCK of print (≥ 6 cells, some row ≥ 3 cells wide, some
     column ≥ 2 deep — `rowMax`/`colMax`;
     the cells along the edge of a moiré band, half page half weave, make a line or a staircase, never a block;
     density was tried and rejected: real paragraphs fill 10–30 % of their box). Only a strong block goes CLOSE UP —

@@ -881,7 +881,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-15 11:30';
+  const BUILD = '2026-10-15 12:20';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -1890,7 +1890,7 @@
       cell[gy * gw + gx] = print ? ink : -1;
     }
     // the clusters of touching inked cells; the one with the most cells
-    const seen = new Uint8Array(gw * gh); let best = null, below = null;
+    const seen = new Uint8Array(gw * gh); let best = null, inner = null;
     for (let s = 0; s < gw * gh; s++) {
       if (cell[s] < 0 || seen[s]) continue;
       const stack = [s]; seen[s] = 1; let inkSum = 0, cells = 0, x0 = gw, y0 = gh, x1 = -1, y1 = -1;
@@ -1907,13 +1907,16 @@
       if (rowMax < 2) continue;   // nothing runs even two cells wide: a column of specks, the seam of a moiré band — never print, which is lines
       const cl = { inkSum, cells, x0, y0, x1, y1, rowMax, colMax };
       if (!best || cells > best.cells || (cells === best.cells && inkSum > best.inkSum)) best = cl;
-      if (y0 > 0 && (!below || cells > below.cells || (cells === below.cells && inkSum > below.inkSum))) below = cl;
+      if (y0 > 0 && y1 < gh - 1 && (!inner || cells > inner.cells || (cells === inner.cells && inkSum > inner.inkSum))) inner = cl;
     }
     if (!best) return null;
-    // the browser's bars along the top of the view — the tab bar, the address bar, the bookmarks: a band of print
-    // touching the top edge, five rows at most — are print too, and from a distance they can outweigh the question
-    // below them; when a cluster of its own away from the top edge has a third of the cells, that is the text
-    if (below && best.y0 === 0 && best.y1 - best.y0 <= 4 && below !== best && below.cells >= best.cells * 0.35) best = below;
+    // the bars along the top and the bottom of the view — the browser's tab bar, address bar and bookmarks, the
+    // dock: a band of print touching the top or the bottom edge, five rows at most — are print too, and from a
+    // distance they can outweigh the question between them; when a cluster of its own clear of both edges has a
+    // third of the cells, that is the text
+    const band = (best.y0 === 0 || best.y1 === gh - 1) && best.y1 - best.y0 <= 4;
+    if (band && inner && inner !== best && inner.cells >= best.cells * 0.35) best = inner;
+    else if (band && !(inner && inner !== best)) return null;   // a band along an edge and nothing else: the bars, not the page (the author's dock at 0.5×: a "close-up" of icons, and a hint pointing at them)
     const frac = (best.x1 - best.x0 + 1) * (best.y1 - best.y0 + 1) / (gw * gh);
     if (frac > 0.55) return null;   // the print spreads over the picture: the tiles cover it
     const sx = srcW / W, sy = srcH / H, m = C * 1.5;   // a margin of a cell and a half: the last line of the block, a little short of a cell's worth of ink, is still inside
@@ -3182,7 +3185,7 @@
         // nothing to read and nothing on screen yet, with a screen larger than the view in front of the camera: the
         // likely reason is that the camera looks at a blank part of it — say so, and what helps (the zoom works about
         // the middle of the view, so only aiming brings a question at the far corner closer)
-        if (nothing && req.frame.screen && req.frame.screen.found && req.frame.screen.cut.length && !(req.frame.screen.ink && req.frame.screen.ink.strong)) req.text = (req.text || 'ANSWER: nothing to read') + '\n\nThe camera is looking at a blank part of the screen (the screen is larger than its view, cut off ' + cutText(req.frame.screen.cut) + '). Aim it at the question — the zoom then closes in on it — or hold the phone a hand\'s width further back so the whole screen fits.';
+        if (nothing && req.frame.screen && req.frame.screen.found && req.frame.screen.cut.length && !(req.frame.screen.ink && req.frame.screen.ink.strong)) req.text = (req.text || 'ANSWER: nothing to read') + '\n\nThe camera is looking at a blank part of the screen (the screen is larger than its view, cut off ' + cutText(req.frame.screen.cut) + '); a question at the far edge of the view is too small and too slanted to read from here. Turn the phone toward the question so it sits in the middle of the view — the zoom then closes in on it, up to 10× — or move the phone in front of the screen, a hand\'s width further back, so the whole screen fits.';
         displayAnswer(req);
       }
     }
