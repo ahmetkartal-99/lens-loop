@@ -410,6 +410,22 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
     line and the banner.
 14b. **A capture every 10 s at all times** (`INTERVAL` = 10, applied on every open like the model and the effort;
     the Settings field is read-only and says so) — a change in the picture still brings one sooner.
+14c. **Answers only** (the author, Oct 19: "a mode button which I can toggle to 'Answer question' on or off … with
+    it on it only gives me answers to questions"): the **Answers** button in the control row (`#answersBtn`,
+    `.btn.mode`, lit in the accent colour and reading "Answers only" when on; `setAnswersOnly`, `S.answersOnly`
+    saved on the phone, also a checkbox in Settings under the prompt). On: every request carries
+    `ANSWERS_ONLY_RULES` as a system block after the rules (answer questions, problems, exercises, multiple-choice
+    items — the ANSWER line plus at most two short lines of reasoning; anything else is exactly "nothing to read")
+    and `ANSWERS_ONLY_PROMPT` in place of the editable prompt; the quick look still runs, but a role card, case
+    notes or writing instructions it sees are LEFT ALONE without a request (`decideRole`: `nothingFrame`, the
+    status "Answers only — a role card in view is left alone", the meta "answers only: a role card left alone"),
+    while a question with options and a question over tabs are questions; no ROLE:/TASK: lock is taken from an
+    answer; the snap cache keeps the mode an entry was made in (a desk described is no answer for the mode) and a
+    Drive note that is no verdict is not replayed in it. Switching, either way, lets locked lines and collected
+    pages go and gives the picture in view a fresh look (as switching Tasks does). Off: everything as before.
+    `test/answers.e2e.js`: off, the desk described; on, the rules and prompt in the request, the desk's "nothing to
+    read" keeping the text, a question answered, a role card left alone with no request, the setting surviving a
+    reload; off again, the card's briefing.
 15. **A question over tabbed sources** (the author's spec: the sources in tabs — "Mall Information / Building Plan /
     Companies" — the question beside them; wait until every tab was tapped; several questions over the same tabs
     handled without re-tapping). The quick look's single and paired verdicts gain `TABS | <names in order; separated
@@ -505,7 +521,9 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
   straightened with two tiles, a cut-off screen and the wide lens, a stuck lens, a role card locked and a zoom move
   costing nothing after, a phone with a multi-lens device taken for its wider range, the captures mirrored to an
   in-memory Drive, a screen larger than the view answered at once from the part in view, the screen filling the view
-  answered with tiles and the text close-up), `node test/hold.e2e.js` (a verdict kept ten seconds whatever the
+  answered with tiles and the text close-up), `node test/answers.e2e.js` (the Answers button: off as usual, on
+  answers only — rules, prompt, a desk kept, a question answered, a role card left alone, the setting kept across a
+  reload), `node test/hold.e2e.js` (a verdict kept ten seconds whatever the
   picture does, the consistency note, a blur-titled reply and "nothing to read" keeping it, a different question
   answered at once), `node test/tabs.e2e.js` (a question over three tabs: collected tab by tab, one request with the
   bundle, a second question at once from the same bytes, "Lens, answer"), `node test/latency.e2e.js` (audio cadence and

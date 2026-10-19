@@ -89,6 +89,7 @@
   .btn-row { display: flex; gap: 8px; }
   .btn-row .btn { flex: 1; min-width: 0; padding: 10px 4px; text-align: center; }
   .btn.rec[data-on="true"] { background: var(--bad); border-color: var(--bad); color: #fff; }
+  .btn.mode[data-on="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
   .btn.rec[data-on="true"] .dot-rec { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #fff; margin-right: 6px; animation: pulse 1.2s ease-in-out infinite; vertical-align: 1px; }
   .badge { display: inline-grid; place-items: center; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: var(--accent-ink); font-family: var(--mono); font-size: 10px; font-weight: 600; position: absolute; top: -5px; right: -5px; }
   .icon-btn { position: relative; }
@@ -544,6 +545,7 @@
     <div class="btn-row">
       <button class="btn rec" id="listenBtn" type="button" data-on="false" title="Record only, camera off">Listen</button>
       <button class="btn rec" id="askBtn" type="button" data-on="false" title="One spoken question, no recording">Ask</button>
+      <button class="btn mode" id="answersBtn" type="button" data-on="false" aria-pressed="false" title="Answers only: questions get their answer, everything else is left alone">Answers</button>
       <button class="btn" id="snapBtn" type="button" disabled>Snap</button>
       <button class="btn primary" id="startBtn" type="button" data-running="false">Start</button>
     </div>
@@ -601,6 +603,7 @@
       <label for="prompt">What Claude should do with each frame</label>
       <textarea id="prompt"></textarea>
     </div>
+    <label class="check"><input type="checkbox" id="answersOnly"> <b>Answers only</b> (the Answers button): a question, problem or multiple-choice item in view gets its answer and a line or two of reasoning, nothing else — a desk, a page of notes, a role card, a blurred frame are left alone and the answer on screen stays. Off, the frame is described, documents are read page by page, role cards and writing tasks are done.</label>
 
     <div class="field" style="background:#1a1f2a;border-radius:10px;padding:12px 14px;margin:4px 0 8px">
       <label style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
@@ -798,6 +801,14 @@
   const DEFAULT_PROMPT =
     'Look at this photo carefully. If it shows a question, problem, exercise or multiple-choice item, solve it and give the correct answer, then the key steps briefly. ' +
     'If there is no question, describe what is in the frame and anything notable. Keep the explanation under 150 words unless the problem needs more.';
+  // ANSWERS ONLY (the Answers button, S.answersOnly): the session answers questions and nothing else — a system
+  // block on top of the rules, and this in place of the editable prompt; a frame with no question keeps the
+  // answer on screen (its reply is "nothing to read", see finish)
+  const ANSWERS_ONLY_RULES =
+    'ANSWERS ONLY — in this session you answer QUESTIONS and nothing else. When the photo shows a question, problem, exercise or multiple-choice item, answer it: the ANSWER line exactly as the rules say, then at most two short lines of reasoning. ' +
+    'When it shows anything else — a desk, a wall, a page of notes or a document with nothing asked, a role-play card, writing instructions, a blurred or blank frame — the whole reply is exactly "ANSWER: nothing to read" and one short line: never a title, never a description of the frame, never a briefing, never a letter.';
+  const ANSWERS_ONLY_PROMPT =
+    'Answer the question in this photo — a question, problem, exercise or multiple-choice item — with the correct answer and at most two short lines of reasoning. If there is no question in it, reply "ANSWER: nothing to read" and one short line.';
   // Sent as the system prompt on every request, separate from the editable prompt above, so the
   // first line of every reply can be rendered as a large headline.
   const SYSTEM_RULES =
@@ -881,7 +892,7 @@
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-15 12:20';
+  const BUILD = '2026-10-19 19:20';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -932,6 +943,7 @@
     driveHelper: '',   // web-app URL of drive-helper.gs typed in settings; empty = the DRIVE_HELPER_URL above
     quietSec: 25,   // seconds without speech before new camera text may be generated or shown
     roleAuto: true,     // a role-play card in view (SETTING / role / TASK) brings a briefing and, on "I'm ready", a live role play
+    answersOnly: false, // the Answers button: questions get their answer, nothing else is described or done (role cards, writing tasks and descriptions wait for the mode to be off)
     convoEffort: 'low', // thinking effort for a role card's briefing and the role play's turns: low = the first words about a second after you stop talking
     convoMinutes: 5,    // the role play is steered to a close at about this length
     convoPause: 0.6,    // seconds after your last words (as transcribed) before they go out; ElevenLabs itself commits after 0.8 s of silence
@@ -2059,7 +2071,7 @@
     lines.push('camera: ' + (lensLabel || (stream ? '(no label)' : 'not open')) + (S.deviceId ? (lensAuto ? ' (auto: the multi-lens camera)' : ' (chosen lens)') : ' (auto)'));
     lines.push('zoom range: ' + (zoomCaps ? showZoom(zoomCaps.min) + ' – ' + showZoom(zoomCaps.max) + ' · now ' + showZoom(zoomNow()) + (zoomScale !== 1 ? ' (as the Camera app shows it; raw ' + fmtZoom(zoomCaps.min) + ' – ' + fmtZoom(zoomCaps.max) + ')' : '') + (zoomDead ? ' · the lens ignored zoom changes — auto-zoom off' : '') : 'none reported by this camera — no auto-zoom possible'));
     lines.push('straightening on the GPU: ' + (glFailed ? 'no (WebGL failed — axis-aligned crop instead)' : gl ? 'yes' : 'not used yet'));
-    lines.push('auto-zoom ' + (S.autoZoom === false ? 'off' : 'on') + ' · screen reading ' + (S.screenRead === false ? 'off' : 'on') + ' · capture every ' + S.interval + ' s' + ' · captures to Drive ' + (S.keepCaptures === false ? 'off' : driveConnected() ? 'on' : 'on (Drive not connected)'));
+    lines.push('auto-zoom ' + (S.autoZoom === false ? 'off' : 'on') + ' · screen reading ' + (S.screenRead === false ? 'off' : 'on') + ' · capture every ' + S.interval + ' s' + ' · captures to Drive ' + (S.keepCaptures === false ? 'off' : driveConnected() ? 'on' : 'on (Drive not connected)') + ' · answers only ' + (S.answersOnly ? 'on' : 'off'));
     lines.push('live framing: ' + (frameLoopLive() ? 'on' + (frameHoldUntil > Date.now() ? ' (held by a tapped chip)' : '') : running ? 'off — ' + (!zoomCaps ? 'no zoom range' : zoomDead ? 'the lens ignored zoom changes' : S.autoZoom === false ? 'auto-zoom off' : S.screenRead === false ? 'screen reading off' : 'no camera') : 'not running') +
       (liveLook ? ' · last look: ' + (liveLook.found ? (liveLook.cut.length ? 'cut off on the ' + liveLook.cut.join(' and ') : 'screen ' + Math.round(Math.max(liveLook.widthFrac, liveLook.heightFrac) * 100) + ' % of the frame') : 'no screen: ' + (liveLook.why || '')) + ' · moves in the last 10 s: ' + frameMoves : ''));
     if (!diagLog.length) lines.push('no captures yet');
@@ -2259,9 +2271,9 @@
   // Entries remember the mode they were made in (Scene mode or not): a card described in the normal mode must not
   // come back as its "answer" in Scene mode, nor a scene's lines in the normal mode.
   const snapCache = [];  // { sig, text, readPos, scene } — last 20
-  function cacheFind(sig, scene, docSig) { if (!sig) return null; for (const c of snapCache) { if (!!c.scene === !!scene && sameScene(sig, c.sig) && !docChanged({ docSig }, c)) return c; } return null; }
+  function cacheFind(sig, scene, docSig) { if (!sig) return null; for (const c of snapCache) { if (!!c.scene === !!scene && !!c.answersOnly === !!S.answersOnly && sameScene(sig, c.sig) && !docChanged({ docSig }, c)) return c; } return null; }   // (an entry belongs to the mode it was made in: a desk described is no answer for answers-only)
   function cacheHit(sig, isRole, docSig) { return cacheFind(sig, isRole, docSig); }
-  function cacheStore(sig, text, scene, docSig) { if (!sig || !text) return; const existing = cacheFind(sig, scene, docSig); if (existing) { existing.text = text; return; } snapCache.push({ sig: new Uint8Array(sig), docSig: docSig ? new Uint8Array(docSig) : null, text, readPos: 0, scene: !!scene }); if (snapCache.length > 20) snapCache.shift(); }
+  function cacheStore(sig, text, scene, docSig) { if (!sig || !text) return; const existing = cacheFind(sig, scene, docSig); if (existing) { existing.text = text; return; } snapCache.push({ sig: new Uint8Array(sig), docSig: docSig ? new Uint8Array(docSig) : null, text, readPos: 0, scene: !!scene, answersOnly: !!S.answersOnly }); if (snapCache.length > 20) snapCache.shift(); }
 
   function snap(source) {
     if (convoActive() && source !== 'button') { skippedSince = frameNo; return; }   // a role play is running: the camera waits
@@ -2708,6 +2720,15 @@
   const lockName = () => !roleLock ? '' : roleLock.kind === 'task' ? 'the ' + roleLock.card.role + ' text' : roleLock.kind === 'tabs' ? 'the tabbed-sources answer' : convoActive() ? 'the ' + roleLock.card.role + ' role play' : 'the ' + roleLock.card.role + ' briefing';
   function decideRole(frame, source, r) {
     if (!running && source !== 'button') return;
+    // answers only: a role card, case notes, writing instructions are no question — left alone, no request spent, the
+    // answer on screen kept; a question over tabs or with options is a question
+    if (S.answersOnly && r && (r.card || r.notes || r.write || r.newTask) && !r.tabs && !r.choice) {
+      frame.roleLook = 'answers only: ' + (r.card ? 'a role card' : r.notes ? 'case notes' : 'a writing task') + ' left alone';
+      nothingFrame = frame; skippedSince = frameNo; roleRelook = null;
+      if (!active.length) setStatus('armed', 'Answers only — ' + (r.card ? 'a role card' : r.notes ? 'case notes' : 'a writing task') + ' in view is left alone');
+      return;
+    }
+    if (S.answersOnly && r) r = Object.assign({}, r, { card: null, notes: null, write: null, newTask: null, more: false, none: false });
     frame.roleLook = !r ? 'look failed' : r.card ? 'card:' + r.card.role : r.write ? 'writing task: ' + r.write : r.notes ? 'case notes: ' + r.notes
       : r.tabs ? 'tabbed sources' : r.choice ? 'a question with options'
       : r.same ? (roleLock && roleLock.kind === 'task' ? 'same task' : 'same card')
@@ -2931,6 +2952,7 @@
   const nothingToRead = (text, choice) => { const a = splitAnswer(text || ''); return /^nothing to read\b/i.test(a.head) || emptyFrameTitle(a, choice); };
   function recall(sig, question, isRole, docSig) {
     let m = memoryHit(sig, question, isRole, docSig); if (m && nothingToRead(m.text)) m = null;
+    if (m && S.answersOnly && !question && !verdictOf(splitAnswer(m.text))) m = null;   // answers only: a remembered description is no answer
     let c = !question ? cacheHit(sig, isRole, docSig) : null; if (c && nothingToRead(c.text)) c = null;
     if (m) return { text: m.text, from: m.from, readPos: (c && c.text === m.text) ? c.readPos : 0 };
     return c ? { text: c.text, from: 'phone', readPos: c.readPos } : null;
@@ -3013,7 +3035,7 @@
     } else {
       content.push({ type: 'text', text: scene
         ? SCENE_PROMPT + '\n\nThis card was read as: ROLE ' + frame.role.role + (frame.role.setting ? ' — SETTING ' + frame.role.setting : '') + '. In the practice you will play the ' + frame.role.role + '; the user plays the other party.'
-        : (S.prompt || DEFAULT_PROMPT) + (frame.tabs
+        : (S.answersOnly ? ANSWERS_ONLY_PROMPT : (S.prompt || DEFAULT_PROMPT)) + (frame.tabs
           ? '\n\nThe question beside the tabs refers to the SOURCE TABS above: use ALL of them. For each part of the question (each statement, blank or row) give its answer on the ANSWER line as the rules say, then the reasoning per part, citing the tab it rests on.'
           : '') + (frame.writeMore
           ? '\n\nThe current frame is a further page (case notes or more instructions) of the WRITING TASK whose instructions are among the earlier frames (' + frame.write + '). Write the finished piece again in full now, from all the pages, as the rules say: "ANSWER: " title, "TASK: " name, a blank line, the piece.'
@@ -3133,7 +3155,7 @@
     }
     // the usual answer came back as a role card's lines (the model saw the card even if the quick look did not):
     // from here on it is one — remembered as such and locked on screen like any other
-    if (!req.scene && !req.error && req.text && !req.frame.question && S.roleAuto !== false) {
+    if (!req.scene && !req.error && req.text && !req.frame.question && S.roleAuto !== false && !S.answersOnly) {
       const r = splitAnswer(req.text).role;
       if (r) {
         req.scene = true; req.frame.role = { role: r, setting: '', task: '' }; req.frame.roleLook = 'card:' + r + ' (by the answer)';
@@ -3143,7 +3165,7 @@
     }
     // a writing task's finished text (the model answered with a TASK: line): locked on screen with the pages it was
     // written from, until a different task comes into view or more of this one does
-    if (!req.error && req.text && !req.frame.question && S.roleAuto !== false) {
+    if (!req.error && req.text && !req.frame.question && S.roleAuto !== false && !S.answersOnly) {
       const t = splitAnswer(req.text).task;
       if (t) {
         req.frame.roleLook = 'task:' + t + ' (by the answer)';
@@ -3518,6 +3540,7 @@
     $('useStories').checked = !!S.useStories;
     $('askWithFrame').checked = !!S.askWithFrame;
     $('roleAuto').checked = S.roleAuto !== false;
+    $('answersOnly').checked = !!S.answersOnly;
     $('convoEffort').value = S.convoEffort || 'low';
     $('convoMinutes').value = S.convoMinutes || 5;
     $('convoPause').value = S.convoPause || 0.6;
@@ -3578,6 +3601,7 @@
     S.useStories = $('useStories').checked;
     S.askWithFrame = $('askWithFrame').checked;
     S.roleAuto = $('roleAuto').checked;
+    setAnswersOnly($('answersOnly').checked, true);
     S.convoEffort = $('convoEffort').value || 'low';
     S.convoMinutes = clamp(parseFloat($('convoMinutes').value) || 5, 1, 20);
     S.convoPause = clamp(parseFloat($('convoPause').value) || 0.6, 0.3, 5);
@@ -3893,6 +3917,7 @@
       return { blocks: [{ type: 'text', text: SCENE_SYSTEM_RULES + (S.sceneCharacter ? '\n\nCHARACTER / VOICE NOTES:\n' + S.sceneCharacter : '') }], tail: '' };
     }
     const blocks = [{ type: 'text', text: SYSTEM_RULES }];
+    if (S.answersOnly) blocks.push({ type: 'text', text: ANSWERS_ONLY_RULES });
     const sb = storylineBlock(prefer);
     if (sb) blocks.push({ type: 'text', text: sb, cache_control: { type: 'ephemeral' } });
     const lb = S.useStories ? liveBlocks() : null;
@@ -5192,6 +5217,23 @@
   // ---------- buttons ----------
   startBtn.addEventListener('click', () => { if (running) stop(); else start(); });
   snapBtn.addEventListener('click', () => { if (running) snap('manual'); });
+  // the Answers button: ANSWERS ONLY on or off — questions get their answer, nothing else is described or done
+  // (see answersOnlyRules). Switching lets locked role lines and collected pages go and gives the picture in view
+  // a fresh look, as switching the Tasks setting does; the setting is kept on the phone.
+  const answersBtn = $('answersBtn');
+  function setAnswersOnly(on, quiet) {
+    on = !!on;
+    const was = !!S.answersOnly;
+    S.answersOnly = on;
+    answersBtn.dataset.on = String(on); answersBtn.setAttribute('aria-pressed', String(on));
+    answersBtn.textContent = on ? 'Answers only' : 'Answers';
+    if (on === was) return;
+    saveSettings();
+    roleLock = null; roleRelook = null; clearMaterial(); lastSentFrame = null; shownFrame = null; nothingFrame = null;
+    if (!quiet) setStatus(running ? 'armed' : 'idle', on ? 'Answers only: questions get their answer, nothing else' : 'Everything again: descriptions, documents, tasks');
+  }
+  setAnswersOnly(S.answersOnly, true);
+  answersBtn.addEventListener('click', () => setAnswersOnly(!S.answersOnly));
   const answerEl = $('answer'), toggleBtn = $('toggleBtn');
   // ---------- read-along: your own lore text, big, following your voice (karaoke-style) ----------
   // The highlight tracks what you read aloud and matches it against the displayed words, so you can read
