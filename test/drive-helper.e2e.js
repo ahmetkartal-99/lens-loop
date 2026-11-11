@@ -17,6 +17,7 @@ const server = http.createServer((req, res) => {
   const HELPER = 'https://script.google.com/macros/s/TEST/exec';
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ ...devices['iPhone 13'] });
+  await ctx.route('https://api.anthropic.com/v1/models**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '{"data":[],"has_more":false}' }));   // the page's look at Anthropic's model list stays off the network: an empty list, so the built-in model answers
   const page = await ctx.newPage();
   const errors = []; page.on('pageerror', (e) => errors.push(String(e)));
   const helperCalls = [];

@@ -26,6 +26,7 @@ const sse = (text) => { const ev = (e, d) => `event: ${e}\ndata: ${JSON.stringif
   const port = server.address().port, url = `http://127.0.0.1:${port}/index.html#key=sk-ant-test`;
   const browser = await chromium.launch({ args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--use-file-for-fake-video-capture=' + Y4M] });
   const ctx = await browser.newContext({ ...devices['iPhone 13'], permissions: ['camera', 'microphone'] });
+  await ctx.route('https://api.anthropic.com/v1/models**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '{"data":[],"has_more":false}' }));   // the page's look at Anthropic's model list stays off the network: an empty list, so the built-in model answers
   const page = await ctx.newPage();
   const errors = []; page.on('pageerror', (e) => errors.push(String(e)));
   await ctx.addInitScript(() => {

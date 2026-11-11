@@ -44,6 +44,7 @@ const DESCRIBE = { desk: 'ANSWER: An empty desk\n\nA grey surface, nothing to re
   const port = server.address().port;
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 420, height: 860 } });
+  await ctx.route('https://api.anthropic.com/v1/models**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '{"data":[],"has_more":false}' }));   // the page's look at Anthropic's model list stays off the network: an empty list, so the built-in model answers
   const page = await ctx.newPage();
   const errors = []; page.on('pageerror', (e) => errors.push(String(e)));
   await ctx.addInitScript(() => {
@@ -190,6 +191,7 @@ const DESCRIBE = { desk: 'ANSWER: An empty desk\n\nA grey surface, nothing to re
   // lock like any other.
   const b2 = await chromium.launch();
   const ctx2 = await b2.newContext({ viewport: { width: 420, height: 860 } });
+  await ctx2.route('https://api.anthropic.com/v1/models**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '{"data":[],"has_more":false}' }));   // the page's look at Anthropic's model list stays off the network: an empty list, so the built-in model answers
   const p2 = await ctx2.newPage();
   const errors2 = []; p2.on('pageerror', (e) => errors2.push(String(e)));
   await ctx2.addInitScript(() => {
@@ -270,6 +272,7 @@ const DESCRIBE = { desk: 'ANSWER: An empty desk\n\nA grey surface, nothing to re
   async function writingHarness() {
     const b = await chromium.launch();
     const ctx = await b.newContext({ viewport: { width: 420, height: 860 } });
+    await ctx.route('https://api.anthropic.com/v1/models**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '{"data":[],"has_more":false}' }));   // the page's look at Anthropic's model list stays off the network: an empty list, so the built-in model answers
     const p = await ctx.newPage();
     const h = { b, p, errors: [], main: [], looks: [], singlePrompts: [], scene: 'desk' };
     p.on('pageerror', (e) => h.errors.push(String(e)));
@@ -417,6 +420,7 @@ const DESCRIBE = { desk: 'ANSWER: An empty desk\n\nA grey surface, nothing to re
   {
     const b5 = await chromium.launch();
     const ctx5 = await b5.newContext({ viewport: { width: 420, height: 860 } });
+    await ctx5.route('https://api.anthropic.com/v1/models**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '{"data":[],"has_more":false}' }));   // the page's look at Anthropic's model list stays off the network: an empty list, so the built-in model answers
     const p5 = await ctx5.newPage();
     const errors5 = []; p5.on('pageerror', (e) => errors5.push(String(e)));
     await ctx5.addInitScript(() => {

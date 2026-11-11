@@ -581,7 +581,7 @@
       </div>
     </div>
     <div class="field" style="margin-top:-6px">
-      <div class="hint">Model and effort start from the values in the page's code every time it opens; a change here lasts until the page is closed. <b>max</b> is the deepest reasoning and the slowest: a frame can take 30 s to several minutes and cost $0.10–0.60 or more in output tokens.</div>
+      <div class="hint"><b id="modelNow"></b>. A newer Fable is taken by itself on the first open after its release — nothing to change here. A change in the two fields lasts until the page is closed (an emptied model field goes back to automatic). <b>max</b> is the deepest reasoning and the slowest: a frame can take 30 s to several minutes and cost $0.10–0.60 or more in output tokens.</div>
     </div>
 
     <div class="row">
@@ -881,18 +881,27 @@
     'You read automatic speech-to-text transcripts of a fiction author\'s spoken brainstorming and world-building sessions. ' +
     'Names and invented words may be mis-transcribed; keep the spelling the transcript uses most often. Reply only in the exact line format requested.';
 
-  // ======= EDIT THESE TWO LINES TO CHANGE THE MODEL AND EFFORT =======
-  // They apply on every open, whatever was saved on the phone. Valid effort values:
-  // 'low', 'medium', 'high', 'xhigh', 'max'. Model IDs: 'claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5'.
-  const MODEL = 'claude-fable-5-1';
+  // ======= THE MODEL AND THE EFFORT =======
+  // MODEL is the built-in model and EFFORT its thinking depth; both apply on every open, whatever was saved on the
+  // phone. Valid effort values: 'low', 'medium', 'high', 'xhigh', 'max'.
+  // ALWAYS THE NEWEST FABLE (MODEL_AUTO): on every open the page asks Anthropic which models this key can use
+  // (GET /v1/models) and answers with the NEWEST model of the MODEL_LINE line — a Fable released after this build is
+  // taken on the first open after its release, at EFFORT (or the deepest effort that model lists), with nothing to
+  // edit here. MODEL is what answers until the list is in and what the page steps back to when a newer model turns
+  // its requests down; MODEL_BEFORE is the last resort for a key that cannot use MODEL either. See "which model
+  // answers" below.
+  const MODEL = 'claude-fable-5-2';
   const EFFORT = 'max';
+  const MODEL_AUTO = true;                   // false: MODEL exactly, no look at the list
+  const MODEL_LINE = 'fable';                // the line whose newest model is taken: 'fable', 'opus', 'sonnet', 'haiku'
+  const MODEL_BEFORE = 'claude-fable-5-1';   // the model before MODEL
   // A capture every INTERVAL seconds at all times while the session runs (a change in the picture brings one sooner):
   // a tab tapped, a page turned, a question scrolled into view is never missed. Applied on every open, like the two above.
   const INTERVAL = 10;
   // Shown at the foot of the settings sheet; bumped with every change so a phone can tell which build it runs
   // (GitHub Pages tells browsers to keep a copy for ten minutes, and a Home Screen app relaunched inside that
   // window still shows the old one — see freshBuild below, which catches that).
-  const BUILD = '2026-10-19 19:20';
+  const BUILD = '2026-11-10 21:40';
   // How much storyline transcript goes into one request (characters; about 4 per token). Everything beyond
   // this is still known by title, summary and key terms, and the matching full transcripts are chosen per question.
   const STORY_BUDGET_CHARS = 480000;
@@ -971,8 +980,8 @@
         if (saved.zoom === 'min') { s.zoom = 1; s.migrated = true; }   // the widest as the resting zoom (an earlier default): the main lens now, the live auto-zoom moves from there
       }
       s.interval = INTERVAL;   // the capture cadence, fixed at the top of the script like the model and the effort
-      s.model = MODEL;   // model and effort always start from the two lines at the top of the script;
-      s.effort = EFFORT; // a change in the settings sheet lasts until the page is closed
+      s.model = MODEL;   // model and effort always start from the lines at the top of the script (a newer model of the
+      s.effort = EFFORT; // line found in Anthropic's list takes over just below: "which model answers"); a change in the settings sheet lasts until the page is closed
     } catch (e) { /* storage unavailable */ }
     if (!s.driveHelper) s.driveHelper = DRIVE_HELPER_URL;   // the page's own helper unless another was typed in
     s.interval = clamp(+s.interval || 15, 5, 600);
@@ -990,15 +999,277 @@
   }
   function clamp(n, lo, hi) { return Math.min(hi, Math.max(lo, n)); }
 
-  // Prices in $ per million tokens (input, output), by model-id fragment.
+  // Prices in $ per million tokens by model id: input, output, and what a cache read costs as a share of the input
+  // price (a five-minute cache write is 1.25 × input on every model). The first match wins.
   const PRICES = [
-    ['fable-5', 10, 50], ['mythos', 10, 50], ['opus-5-5', 4, 20], ['opus-5', 4, 20],
-    ['opus-4', 5, 25], ['sonnet-5', 2, 10], ['sonnet-4', 3, 15], ['haiku-4-5', 1, 5], ['haiku-4', 1, 5],
+    [/(fable|mythos)-5-2(-\d{8})?$/, 8, 40, 0.025], [/(fable|mythos)-5-1(-\d{8})?$/, 10, 50, 0.025], [/(fable|mythos)-5(-\d{8})?$/, 10, 50, 0.1],
+    [/opus-5-5/, 4, 20, 0.05], [/opus-(5|4-[5-9])/, 5, 25, 0.1], [/opus-4/, 15, 75, 0.1],
+    [/sonnet-5-5/, 2, 10, 0.05], [/sonnet-5/, 2, 10, 0.1], [/sonnet-4/, 3, 15, 0.1],
+    [/haiku-5-5/, 0.1, 0.5, 0.1], [/haiku-4/, 1, 5, 0.1],
   ];
+  // → [input, output, cache-read share, known]. A model the table does not know — a Fable newer than this build,
+  // taken automatically — is costed at the newest Fable's price and its cost shown with "≈".
   function priceFor(model) {
     const m = (model || '').toLowerCase();
-    for (const [frag, i, o] of PRICES) if (m.includes(frag)) return [i, o];
-    return [4, 20];
+    for (const [re, i, o, r] of PRICES) if (re.test(m)) return [i, o, r, true];
+    return /fable|mythos/.test(m) ? [8, 40, 0.025, false] : [4, 20, 0.1, false];
+  }
+
+  // ---------- which model answers: always the newest of its line ----------
+  // The author (Nov 10): "make the newest Fable model always the default without me needing to tell you to change
+  // that. I want it to automatically adjust." So the page does not wait for an edit: on every open (and when it
+  // comes back to the foreground after six hours, and at Start) it reads Anthropic's own list of the models this
+  // key can use — GET /v1/models, newest first, each with its line, release time, lifecycle and what it can do —
+  // and answers with the newest model of MODEL_LINE in it. What it found is remembered (S.modelSeen), so the next
+  // open starts on that model at once, list or no list. Three guards keep a hands-free page answering whatever a
+  // new model brings:
+  //   · the list only ever moves the model UP: the built-in MODEL answers until something newer is listed;
+  //   · a model that turns its FIRST request down — unknown to this key (404, whatever it did before), or a request
+  //     it does not take (400/403 before it has ever answered) — gives way to the next in line at once and the same
+  //     request goes again (claudeFetch), with a note on screen; it is tried afresh on the next open;
+  //   · the model never changes under a running session: a newer one found meanwhile is taken when it is over.
+  // The effort is EFFORT, or the deepest one the model lists when it does not list EFFORT. A model typed into
+  // Settings is used as it is until the page is closed.
+  const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+  // "claude-fable-5-2" → [5, 2, Infinity] (a version's plain id ranks above its dated snapshots),
+  // "claude-fable-6-20270301" → [6, 0, 20270301], "claude-fable-6" → [6, 0, Infinity]; null for an id of any other shape
+  function modelVersion(id) {
+    const m = /^claude-[a-z]+-(\d{1,3})(?:-(\d{1,2}))?(?:-(\d{8}))?$/.exec(String(id || ''));
+    return m ? [+m[1], +(m[2] || 0), m[3] ? +m[3] : Infinity] : null;
+  }
+  const modelFamily = (id) => (/^claude-([a-z]+)-/.exec(String(id || '')) || [])[1] || '';   // "claude-fable-5-2" → "fable"
+  // Is model a newer than model b? Each is { id, created (ms; 0 = unknown), order (its place in the list, newest
+  // first) }. Two ids of one family that carry a version: by the version, then the plain id over a dated snapshot
+  // and a later snapshot over an earlier. Otherwise (an id of another shape, a line under a new name) by release
+  // time, then the id of a known shape, then the list's own order.
+  function newerModel(a, b) {
+    const va = modelVersion(a.id), vb = modelVersion(b.id);
+    if (va && vb && modelFamily(a.id) === modelFamily(b.id)) {
+      for (let i = 0; i < 3; i++) if (va[i] !== vb[i]) return va[i] > vb[i];
+      return (a.order || 0) < (b.order || 0);
+    }
+    if (a.created && b.created && a.created !== b.created) return a.created > b.created;
+    if (!!va !== !!vb) return !!va;
+    return (a.order || 0) < (b.order || 0);
+  }
+  // The newest model of a line among those the key can use — `list` is the data array of GET /v1/models. The line
+  // is the list's own `line` field (Anthropic: "do not infer a line from the id"); only a list that carries no such
+  // field is read by id. Left out: ids that are not a plain version ("-fast", "-preview"), models on their way out
+  // (lifecycle deprecated or retired), and a model that takes no images (the page sends photos).
+  function newestOfLine(list, line) {
+    let best = null;
+    (Array.isArray(list) ? list : []).forEach((m, i) => {
+      if (!m || typeof m.id !== 'string') return;
+      const inLine = m.line !== undefined ? m.line === line : m.id.indexOf('claude-' + line + '-') === 0;
+      if (!inLine || !/^claude-[a-z]+(?:-\d+)+$/.test(m.id)) return;
+      if (m.lifecycle && m.lifecycle !== 'active') return;
+      const caps = m.capabilities || {};
+      if (caps.image_input && caps.image_input.supported === false) return;
+      const t = Date.parse(m.created_at || '');
+      const c = {
+        id: m.id, name: typeof m.display_name === 'string' ? m.display_name.slice(0, 60) : '', created: t > 9e11 ? t : 0, order: i,
+        efforts: caps.effort && typeof caps.effort === 'object' ? EFFORTS.filter((e) => caps.effort[e] && caps.effort[e].supported) : [],
+        maxTokens: +m.max_tokens > 0 ? +m.max_tokens : 0,
+      };
+      if (!best || newerModel(c, best)) best = c;
+    });
+    return best;
+  }
+  // The effort to ask for: the one wanted, or — when the model lists its efforts and that one is not among them —
+  // the deepest it lists below it.
+  function deepestEffort(want, listed) {
+    if (!Array.isArray(listed) || !listed.length || listed.includes(want)) return want;
+    for (let i = EFFORTS.indexOf(want) - 1; i >= 0; i--) if (listed.includes(EFFORTS[i])) return EFFORTS[i];
+    return listed[listed.length - 1];
+  }
+  // "claude-fable-5-2" → "Claude Fable 5.2"
+  function prettyModel(id) {
+    const m = /^claude-([a-z]+)-(\d{1,3})(?:-(\d{1,2}))?(?:-\d{8})?$/.exec(String(id || ''));
+    return m ? 'Claude ' + m[1].charAt(0).toUpperCase() + m[1].slice(1) + ' ' + m[2] + (m[3] ? '.' + m[3] : '') : String(id || '');
+  }
+  // The models to answer with, best first: what the list showed for this key when that is NEWER than the built-in
+  // model; the built-in model; what the list showed when it is older (a key that cannot use the built-in one); the
+  // model before. `seen` = { id, created } or null. An id whose version cannot be set against the built-in one's —
+  // another shape than "claude-fable-5-2", or the line under a new name — is newer than the built-in model exactly
+  // when it was released after this build was made (`builtAt`).
+  function modelOrder(seen, model, before, builtAt) {
+    const chain = [];
+    const versions = !!(seen && modelVersion(seen.id) && modelVersion(model) && modelFamily(seen.id) === modelFamily(model));
+    const up = !!(seen && seen.id && seen.id !== model) && (versions ? newerModel({ id: seen.id }, { id: model }) : (seen.created || 0) > builtAt);
+    if (up) chain.push(seen.id);
+    chain.push(model);
+    if (seen && seen.id) chain.push(seen.id);
+    chain.push(before);
+    return chain.filter((m, i) => m && chain.indexOf(m) === i);
+  }
+
+  // ----- the model in force -----
+  let modelNo = {};                                // models that turned a request down in this open: id → why (skipped until the page is opened again)
+  let modelManual = false, effortManual = false;   // typed into Settings: used as they are until the page is closed
+  let modelWaiting = false;                        // a newer model was found while a session was under way: the model in force follows when it is over
+  let modelCheck = { at: 0, ok: false, found: false, note: '', count: 0 }, modelChecking = false;
+  let modelWarn = '';                              // a model in use that Anthropic is retiring
+  const MODEL_RECHECK_MS = 6 * 3600 * 1000;
+  const LINE_NAME = MODEL_LINE.charAt(0).toUpperCase() + MODEL_LINE.slice(1);   // "Fable"
+  const BUILT_AT = Date.parse(BUILD.replace(' ', 'T')) || 0;
+  const modelSeen = () => (MODEL_AUTO && S.modelSeen && typeof S.modelSeen.id === 'string' && /^claude-[a-z0-9-]+$/.test(S.modelSeen.id) ? S.modelSeen : null);
+  const modelChain = () => modelOrder(modelSeen(), MODEL, MODEL_BEFORE, BUILT_AT);
+  const modelTop = () => { const c = modelChain(); return c.find((m) => !modelNo[m]) || c[0]; };
+  const modelName = (id) => { const s = modelSeen(); return (s && s.id === id && s.name) || prettyModel(id); };
+  const effortFor = (id) => { const s = modelSeen(); return deepestEffort(EFFORT, s && s.id === id ? s.efforts : null); };
+  const modelCap = (id) => { const s = modelSeen(); return s && s.id === id ? +s.maxTokens || 0 : 0; };
+  const modelIdle = () => !running && !listening && !askState && !active.length && !convoActive();
+  S.model = modelTop(); S.effort = effortFor(S.model);   // the newest of the line found on an earlier open answers from the first request on
+  function useModel(id) {
+    S.model = id;
+    if (!effortManual) S.effort = effortFor(id);
+    refreshReadouts(); modelLine();
+  }
+  // one plain sentence on which model answers and why — Settings, the build stamp and the diagnostics
+  function modelNote() {
+    const seen = modelSeen(), now = S.model, line = LINE_NAME;
+    const when = modelCheck.at ? new Date(modelCheck.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+    const out = [modelName(now) + ' at ' + S.effort];
+    if (modelManual) out.push('typed in here, used until the page is closed');
+    else {
+      const refused = Object.keys(modelNo).filter((m) => m !== now);
+      if (refused.length) out.push(refused.map((m) => modelName(m) + ' turned the page\'s request down (' + modelNo[m] + ')').join('; ') + ', tried again on the next open');
+      if (!MODEL_AUTO) out.push('the page\'s own model');
+      else if (!S.key) out.push('the newest ' + line + ' is looked up once a key is in');
+      else if (modelCheck.ok) out.push((!modelCheck.found || !seen ? 'no ' + line + ' model in Anthropic\'s list for this key' : seen.id === now ? 'the newest ' + line + ' Anthropic lists for this key' : 'Anthropic lists ' + modelName(seen.id) + ' as the newest ' + line + ' for this key') + ' (checked ' + when + ')');
+      else if (modelCheck.at) out.push((seen && seen.id === now && now !== MODEL ? 'the newest ' + line + ' found on an earlier open' : 'the page\'s own model') + '; Anthropic\'s list could not be read just now (' + modelCheck.note + '), asked again on the next open');
+      else out.push('asking Anthropic for the newest ' + line);
+      if (modelWaiting && modelTop() !== now) out.push('it takes over when the session is over');
+    }
+    if (!effortManual && S.effort !== EFFORT) out.push(S.effort + ' is the deepest effort it offers (' + EFFORT + ' is not on its list)');
+    if (!priceFor(now)[3]) out.push('its price per token is not known to this build: costs are shown with ≈, at ' + prettyModel(MODEL) + '\'s price');
+    if (modelWarn) out.push(modelWarn);
+    return out.join(' · ');
+  }
+  let sheetModel = '', sheetEffort = '';   // what the Settings sheet's two fields showed when it opened: a field left at that was not changed by hand
+  function modelLine() {
+    const now = $('modelNow'); if (now) now.textContent = modelNote();
+    const st = $('buildStamp'); if (st) st.textContent = 'Lens Loop · build ' + BUILD + ' · ' + modelName(S.model) + ' · ' + S.effort;
+    const sh = $('sheet'), mf = $('model'), ef = $('effort');
+    if (sh && !sh.hidden && mf && ef) {   // the sheet is open while the model moves: its fields follow, unless they were typed in
+      if (mf.value.trim() === sheetModel) { mf.value = S.model; sheetModel = S.model; }
+      if (ef.value === sheetEffort) { ef.value = S.effort; sheetEffort = S.effort; }
+    }
+  }
+  // Anthropic's list of the models this key can use → the newest of the line, and a word on any model in use that
+  // is on its way out. Quiet when it fails: the model in hand answers and the list is asked again later.
+  async function checkModels(force) {
+    if (!MODEL_AUTO || !S.key || modelChecking) return;
+    if (!force && modelCheck.at && Date.now() - modelCheck.at < (modelCheck.ok ? MODEL_RECHECK_MS : 60000)) return;
+    modelChecking = true;
+    const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 12000);
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/models?limit=1000', {
+        headers: { 'x-api-key': S.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+        cache: 'no-store', signal: ctrl.signal,
+      });
+      let j = null; try { j = await res.json(); } catch (e) { /* not JSON */ }
+      if (!res.ok) throw new Error('HTTP ' + res.status + (j && j.error && j.error.message ? ' · ' + j.error.message : ''));
+      if (!j || !Array.isArray(j.data)) throw new Error('no list in the reply');
+      const pick = newestOfLine(j.data, MODEL_LINE);
+      modelCheck = { at: Date.now(), ok: true, found: !!pick, note: '', count: j.data.length };
+      modelWatch(j.data);
+      if (pick) modelFound(pick);
+    } catch (e) {
+      modelCheck = { at: Date.now(), ok: false, found: false, note: e && e.name === 'AbortError' ? 'no reply in 12 s' : String((e && e.message) || e).slice(0, 120), count: 0 };
+    } finally { clearTimeout(timer); modelChecking = false; modelLine(); }
+  }
+  // The list's newest is remembered at once — the next open starts on it, list or no list — and the model in force
+  // follows at the next idle moment, never under a running session: modelWaiting holds until Stop, the next Start, or
+  // the page coming back to the foreground.
+  function modelFound(p) {
+    const known = modelSeen(), first = !known || known.id !== p.id;
+    S.modelSeen = { id: p.id, name: p.name, created: p.created, efforts: p.efforts, maxTokens: p.maxTokens, at: Date.now(),
+      told: first ? false : known.told !== false, before: first ? S.model : known.before };
+    saveSettings();
+    modelWaiting = true;
+    modelAdopt();
+  }
+  function modelAdopt() {
+    if (!modelWaiting) return;
+    if (!modelIdle()) { modelLine(); return; }
+    modelWaiting = false;
+    if (!modelManual) {
+      const top = modelTop();
+      if (top !== S.model) useModel(top);
+      else if (!effortManual) { S.effort = effortFor(S.model); refreshReadouts(); }
+    }
+    modelTell();
+    modelLine();
+  }
+  // Once per newly found model, when it is the one answering: a status line and a note (its price may differ).
+  function modelTell() {
+    const s = modelSeen();
+    if (!s || s.told !== false || modelManual || S.model !== s.id || s.id === MODEL || !modelIdle()) return;
+    s.told = true; saveSettings();
+    setStatus('idle', 'Now on ' + modelName(s.id) + ' — the newest ' + LINE_NAME + ', taken automatically');
+    if (banner.hidden) showBanner('A newer model is out: Lens Loop now answers with ' + modelName(s.id) + ' at ' + S.effort + (s.before && s.before !== s.id ? ' (before: ' + prettyModel(s.before) + ')' : '') + '. Nothing to do — only its price per token may differ.', 'note');
+  }
+  // A word when a model the page relies on is on its way out: the answering model (the list's newest replaces it by
+  // itself) and the quick look's model, which is fixed — its prompts are tuned to it — and needs a new build.
+  function modelWatch(list) {
+    const entry = (id) => list.find((m) => m && typeof m.id === 'string' && (m.id === id || (m.id.indexOf(id + '-') === 0 && /^\d{8}$/.test(m.id.slice(id.length + 1)))));
+    const notes = [];
+    [[S.model, 'the answering model'], [PAGE_CHECK_MODEL, 'the quick look\'s model']].forEach(([id, what]) => {
+      const m = entry(id);
+      if (m && m.lifecycle && m.lifecycle !== 'active') notes.push('Anthropic is retiring ' + what + ' (' + id + (m.retires_at && Date.parse(m.retires_at) ? ', ' + new Date(m.retires_at).toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' }) : '') + ')');
+      else if (!m && list.length && id === PAGE_CHECK_MODEL) notes.push(what + ' (' + id + ') is not in Anthropic\'s list for this key');
+    });
+    modelWarn = notes.join('; ');
+    const retiring = notes.filter((n) => /retiring/.test(n) && /quick look/.test(n))[0];
+    if (retiring && banner.hidden && modelIdle() && Date.now() - (S.modelWarnAt || 0) > 3 * 86400000) {
+      S.modelWarnAt = Date.now(); saveSettings();
+      showBanner(retiring + ' — Lens Loop needs a small update before then; tell Claude.', 'note');
+    }
+  }
+  // A request came back 400, 403 or 404. Is it the model's doing, and is there another to answer with? True: the
+  // request goes again with the model now in force.
+  function modelRefused(id, status, err) {
+    if (id !== S.model) return true;   // another request already moved on: go again with that model
+    if (modelManual) return false;
+    const msg = String((err && err.message) || ''), type = String((err && err.type) || '');
+    const gone = status === 404 || type === 'not_found_error';
+    const untried = !(S.modelOk && S.modelOk[id]) && !/credit|billing|balance|quota|usage limit/i.test(msg);
+    if (!gone && !untried) return false;   // a model that has answered before, or the account's own trouble: reported as it is
+    modelNo[id] = ('HTTP ' + status + (msg ? ' · ' + msg : '')).slice(0, 140);
+    const next = modelChain().find((m) => !modelNo[m]);
+    if (!next) { modelNo = {}; useModel(modelTop()); return false; }   // every one of them turned it down: the request is at fault, not the model
+    useModel(next);
+    showBanner(modelName(id) + ' turned the request down (' + modelNo[id] + ') — answering with ' + modelName(next) + ' instead. It is tried again the next time the page opens.', 'note');
+    return true;
+  }
+  function modelWorked(id) {
+    if (S.modelOk && S.modelOk[id]) return;
+    S.modelOk = Object.assign({}, S.modelOk, { [id]: Date.now() });
+    saveSettings();
+  }
+  // One door for every request to the answering model. The model in force goes into the body — with `deep`, the
+  // effort in force too — and a model that turns the request down gives way to the next in line (modelRefused) and
+  // the request goes again, so a newly released model can never leave the page without answers. Afterwards
+  // body.model is the model of the attempt that got through (or of the last one).
+  async function claudeFetch(body, signal, deep) {
+    let res = null;
+    for (let tries = 0; tries < 4; tries++) {
+      const model = body.model = S.model;
+      if (deep) body.output_config = Object.assign({}, body.output_config, { effort: S.effort });
+      const cap = modelCap(model);
+      if (cap && body.max_tokens > cap) body.max_tokens = cap;
+      res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-api-key': S.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+        body: JSON.stringify(body), signal,
+      });
+      if (res.ok) { modelWorked(model); return res; }
+      if (res.status !== 400 && res.status !== 403 && res.status !== 404) return res;
+      let err = null; try { err = (await res.clone().json()).error; } catch (e) { /* no JSON body */ }
+      if (!modelRefused(model, res.status, err)) return res;
+    }
+    return res;
   }
 
   // ---------- DOM ----------
@@ -2068,6 +2339,7 @@
   const diagLog = [];
   function diagText() {
     const lines = [];
+    lines.push('model: ' + S.model + ' · ' + modelNote() + ' · in line: ' + modelChain().join(' → ') + (modelCheck.count ? ' · ' + modelCheck.count + ' models in Anthropic\'s list' : ''));
     lines.push('camera: ' + (lensLabel || (stream ? '(no label)' : 'not open')) + (S.deviceId ? (lensAuto ? ' (auto: the multi-lens camera)' : ' (chosen lens)') : ' (auto)'));
     lines.push('zoom range: ' + (zoomCaps ? showZoom(zoomCaps.min) + ' – ' + showZoom(zoomCaps.max) + ' · now ' + showZoom(zoomNow()) + (zoomScale !== 1 ? ' (as the Camera app shows it; raw ' + fmtZoom(zoomCaps.min) + ' – ' + fmtZoom(zoomCaps.max) + ')' : '') + (zoomDead ? ' · the lens ignored zoom changes — auto-zoom off' : '') : 'none reported by this camera — no auto-zoom possible'));
     lines.push('straightening on the GPU: ' + (glFailed ? 'no (WebGL failed — axis-aligned crop instead)' : gl ? 'yes' : 'not used yet'));
@@ -2116,6 +2388,7 @@
   }
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
+    checkModels(); modelAdopt();   // back in the foreground: the list is asked again after six hours, a waiting model taken when nothing runs
     if ((running || listening) && !wakeLock) keepAwake();
     if (listening && engine && engine.resume) engine.resume();
     if (running && video.paused && video.srcObject) video.play().catch(() => {});
@@ -2161,6 +2434,8 @@
   async function start() {
     if (!S.key) { openSheet(); $('apiKey').focus(); return; }
     if (askState) finishAsk(true);
+    modelAdopt();    // a newer model found while something was running is taken now, before the session begins
+    checkModels();   // (a page left open for hours asks the list again; it never holds the session up)
     startBtn.disabled = true;
     await enableTilt(); // must run inside the tap: iOS only grants motion access from a user gesture
     const withMic = S.sessionListen !== false && !listening && cloudWanted();
@@ -2215,6 +2490,7 @@
     listenBtn.hidden = false; askBtn.hidden = false;
     countdown.textContent = '';
     setStatus('idle', 'Stopped');
+    setTimeout(modelAdopt, 1500);   // a newer model found during the session takes over now that it has ended
   }
   // Twice a second the live picture is compared with the last frame sent. Something new that then holds
   // still for a moment (a note held up, a page put down) is read at once instead of waiting for the timer.
@@ -2523,9 +2799,9 @@
     const f = c.inFlight = { ctrl: new AbortController(), text: '', userText, provisional: true, done: false, startedAt: Date.now(), firstAt: 0 };
     c.lastUser = userText.replace(OPENER_RE, '');
     renderConvo(true);
-    const [pIn, pOut] = priceFor(S.model);
     try {
-      const res = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': S.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify(body), signal: f.ctrl.signal });
+      const res = await claudeFetch(body, f.ctrl.signal, false);   // the model in force, at the role play's own effort
+      const [pIn, pOut, pRead] = priceFor(body.model);
       if (!res.ok) { let d = ''; try { const j = await res.json(); d = (j.error && j.error.message) || JSON.stringify(j); } catch (e) { d = res.statusText; } throw new Error('HTTP ' + res.status + ' · ' + d); }
       await readSSE(res.body, (ev, data) => {
         if (c.inFlight !== f) return;
@@ -2533,7 +2809,7 @@
           if (!f.firstAt) { f.firstAt = Date.now(); c.firstWordMs.push(f.firstAt - f.startedAt); }
           f.text += data.delta.text; if (!f.provisional) renderConvo(true);
         } else if (ev === 'message_start' && data.message && data.message.usage) {
-          const u = data.message.usage; sessionCost += ((u.input_tokens || 0) * pIn + (u.cache_creation_input_tokens || 0) * pIn * 1.25 + (u.cache_read_input_tokens || 0) * pIn * 0.1) / 1e6;
+          const u = data.message.usage; sessionCost += ((u.input_tokens || 0) * pIn + (u.cache_creation_input_tokens || 0) * pIn * 1.25 + (u.cache_read_input_tokens || 0) * pIn * pRead) / 1e6;
         } else if (ev === 'message_delta' && data.usage) { sessionCost += ((data.usage.output_tokens || 0) * pOut) / 1e6; refreshReadouts(); }
         else if (ev === 'error') throw new Error((data.error && data.error.message) || 'stream error');
       });
@@ -2983,6 +3259,7 @@
       id: ++reqSeq, frame, ctrl: new AbortController(),
       startedAt: Date.now(), firstTextAt: 0, endedAt: 0,
       text: '', inTok: 0, outTok: 0, cost: 0, stop: '', error: null,
+      model: S.model,   // the model that answers it (claudeFetch may move on to the next in line)
       scene,   // a role card's lines: memory replays them only for a role card
     };
     if (scene) { roleLock = { kind: 'role', card: frame.role, frame, reqId: req.id, text: '', failed: false, seen: [] }; roleKept = null; }   // locked from the moment they are asked for
@@ -3054,17 +3331,10 @@
     };
 
     try {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-api-key': S.key,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
-        body: JSON.stringify(body),
-        signal: req.ctrl.signal,
-      });
+      // the model in force and — for anything but a role card's briefing — the effort in force go in at the door;
+      // a model that turns the request down gives way to the next in line and the request goes again
+      const res = await claudeFetch(body, req.ctrl.signal, !scene);
+      req.model = body.model;
       if (!res.ok) {
         let detail = '';
         try { const j = await res.json(); detail = (j.error && j.error.message) || JSON.stringify(j); }
@@ -3086,14 +3356,14 @@
   }
 
   function handleEvent(req, ev, data) {
-    const [pIn, pOut] = priceFor(S.model);
+    const [pIn, pOut, pRead] = priceFor(req.model || S.model);
     switch (ev) {
       case 'message_start':
         if (data.message && data.message.usage) {
           const u = data.message.usage;
           req.inTok = u.input_tokens || 0;
           req.cacheW = u.cache_creation_input_tokens || 0;   // billed at 1.25x input
-          req.cacheR = u.cache_read_input_tokens || 0;       // billed at 0.1x input
+          req.cacheR = u.cache_read_input_tokens || 0;       // billed at a fraction of input: 0.025x on Fable 5.1 and later, 0.1x on older models (priceFor)
         }
         break;
       case 'content_block_delta':
@@ -3113,7 +3383,7 @@
       default:
         break;
     }
-    req.cost = (req.routeCost || 0) + (req.inTok * pIn + (req.cacheW || 0) * pIn * 1.25 + (req.cacheR || 0) * pIn * 0.1 + req.outTok * pOut) / 1e6;
+    req.cost = (req.routeCost || 0) + (req.inTok * pIn + (req.cacheW || 0) * pIn * 1.25 + (req.cacheR || 0) * pIn * pRead + req.outTok * pOut) / 1e6;
   }
 
   async function readSSE(bodyStream, onEvent) {
@@ -3224,7 +3494,7 @@
     const from = apiSource(req.text);
     shownSig = req.frame.sig || null; shownFrame = req.frame.b64 ? req.frame : null; shownAt = Date.now();
     const inAll = req.inTok + (req.cacheW || 0) + (req.cacheR || 0);
-    const bits = [req.frame.tag, fmtTime(req.frame.at), `${secs(took)}`, `${inAll}${req.cacheR ? ' (' + req.cacheR + ' cached)' : ''}→${req.outTok} tok`, `$${req.cost.toFixed(3)}`, sourceLabel(from)];
+    const bits = [req.frame.tag, fmtTime(req.frame.at), `${secs(took)}`, `${inAll}${req.cacheR ? ' (' + req.cacheR + ' cached)' : ''}→${req.outTok} tok`, `${priceFor(req.model || S.model)[3] ? '' : '≈'}$${req.cost.toFixed(3)}`, sourceLabel(from)];
     if (req.frame.roleLook) bits.push(req.frame.roleLook);   // what the role-card look made of the picture
     if (screenNote(req.frame)) bits.push(screenNote(req.frame));   // how the picture was taken: straightened, tiles, zoom
     answerMeta.textContent = shownMeta = bits.join(' · ');
@@ -3510,9 +3780,10 @@
   const sheet = $('sheet'), sheetBack = $('sheetBack');
   function openSheet() {
     $('diagBox').value = diagText();
+    modelLine();
     $('apiKey').value = S.key;
-    $('model').value = S.model;
-    $('effort').value = S.effort;
+    $('model').value = sheetModel = S.model;
+    $('effort').value = sheetEffort = S.effort;
     $('interval').value = S.interval;
     $('busy').value = S.busy;
     $('prompt').value = S.prompt;
@@ -3570,10 +3841,15 @@
   });
   sheet.addEventListener('submit', (e) => {
     e.preventDefault();
-    const prevInterval = S.interval, prevFacing = S.facing, prevDevice = S.deviceId, prevRole = S.roleAuto !== false;
+    const prevInterval = S.interval, prevFacing = S.facing, prevDevice = S.deviceId, prevRole = S.roleAuto !== false, prevKey = S.key;
     S.key = $('apiKey').value.trim();
-    S.model = $('model').value.trim() || DEFAULTS.model;
-    S.effort = $('effort').value;
+    // a model or an effort CHANGED here is used as typed until the page is closed; left as they were, the newest
+    // model of the line goes on being taken by itself (an emptied model field goes back to that)
+    const typedModel = $('model').value.trim();
+    if (typedModel && typedModel !== sheetModel) { S.model = typedModel; modelManual = true; }
+    else if (!typedModel && modelManual) { modelManual = false; S.model = modelTop(); }
+    if ($('effort').value !== sheetEffort) { S.effort = $('effort').value; effortManual = true; }
+    else if (!effortManual) S.effort = effortFor(S.model);
     S.interval = clamp(parseInt($('interval').value, 10) || 15, 5, 600);
     S.busy = $('busy').value;
     S.prompt = $('prompt').value.trim() || DEFAULT_PROMPT;
@@ -3609,6 +3885,8 @@
     applyPanelRotation();
     saveSettings();
     refreshReadouts();
+    modelLine();
+    if (S.key && S.key !== prevKey) checkModels(true);   // another key: what can THIS one use
     closeSheet();
     // Role-play cards switched on or off: the picture in view gets a fresh look — not kept as "the same picture"
     // because the camera did not move — and any locked role lines are let go.
@@ -3896,16 +4174,12 @@
                { type: 'text', text: 'INDEX OF SAVED STORYLINES:\n' + idx, cache_control: { type: 'ephemeral' } }],
       messages: [{ role: 'user', content }],
     };
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST', signal: req.ctrl.signal,
-      headers: { 'content-type': 'application/json', 'x-api-key': S.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify(body),
-    });
+    const res = await claudeFetch(body, req.ctrl.signal, false);
     const j = await res.json();
     if (!res.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + res.status));
     if (j.usage) {
-      const [pIn, pOut] = priceFor(S.model); const u = j.usage;
-      req.routeCost = ((u.input_tokens || 0) * pIn + (u.cache_creation_input_tokens || 0) * pIn * 1.25 + (u.cache_read_input_tokens || 0) * pIn * 0.1 + (u.output_tokens || 0) * pOut) / 1e6;
+      const [pIn, pOut, pRead] = priceFor(body.model); const u = j.usage;
+      req.routeCost = ((u.input_tokens || 0) * pIn + (u.cache_creation_input_tokens || 0) * pIn * 1.25 + (u.cache_read_input_tokens || 0) * pIn * pRead + (u.output_tokens || 0) * pOut) / 1e6;
     }
     const txt = (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join(' ');
     return (txt.match(/\d+/g) || []).map((n) => list[parseInt(n, 10) - 1]).filter(Boolean).map((st) => st.id);
@@ -4603,11 +4877,7 @@
         '\n\nReply with exactly three lines and nothing else:\nTITLE: <a distinctive title of at most six words, naming the chapter, thread or subject>\nSUMMARY: <three to five sentences on the plot ideas, characters, places and decisions in this session>\nKEYS: <comma-separated names, places and invented terms that appear>' }],
     };
     try {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-api-key': S.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-        body: JSON.stringify(body),
-      });
+      const res = await claudeFetch(body, undefined, false);
       const j = await res.json();
       if (!res.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + res.status));
       const txt = (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('\n');
@@ -4618,7 +4888,7 @@
       if (keys) st.keys = keys;
       st.updatedAt = Date.now();
       scheduleSync();
-      if (j.usage) { const [pIn, pOut] = priceFor(S.model); sessionCost += ((j.usage.input_tokens || 0) * pIn + (j.usage.output_tokens || 0) * pOut) / 1e6; }
+      if (j.usage) { const [pIn, pOut] = priceFor(body.model); sessionCost += ((j.usage.input_tokens || 0) * pIn + (j.usage.output_tokens || 0) * pOut) / 1e6; }
       saveStories(); refreshReadouts(); renderStoryList();
       if (!running && !listening && !askState && !(current && !current.endedAt)) setStatus('done', `Saved «${st.title}»`);
     } catch (e) {
@@ -4659,7 +4929,7 @@
   // GitHub Pages serves the page with a ten-minute cache, so a Home Screen app relaunched soon after a deploy
   // still runs the previous build. Shortly after opening, the page is fetched past the cache; when its build
   // stamp differs from this one the page reloads itself once (never during a session or a sign-in bounce).
-  $('buildStamp').textContent = 'Lens Loop · build ' + BUILD;
+  modelLine();   // the build stamp at the foot of Settings, with the model in force
   setTimeout(async function freshBuild() {
     if (location.protocol === 'file:' || running || listening || askState || leaving || authReturn) return;
     try {
@@ -5518,6 +5788,7 @@
     refreshReadouts();
     if (changed) showBanner((k && sk ? 'Both keys' : k ? 'API key' : 'Speech key') + ' taken from the link. Bookmark this page or add it to the Home Screen and the keys come with it.', 'note');
     if (!running && k) setStatus('idle', 'Ready · key in link');
+    if (k && changed) checkModels(true);   // another key: what can this one use
   }
   window.addEventListener('hashchange', keyFromLink);
   keyFromLink();
@@ -5526,6 +5797,8 @@
     showBanner('This page must be opened over https:// for the camera to work.');
   }
   setStatus('idle', S.key ? (keyInLink ? 'Ready · key in link' : 'Ready') : 'Add API key');
+  modelLine();
+  checkModels();   // which models can this key use: the newest of the line answers from here on
 })();
 </script>
 </body>

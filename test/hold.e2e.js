@@ -32,6 +32,7 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
   const port = server.address().port;
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 420, height: 860 } });
+  await ctx.route('https://api.anthropic.com/v1/models**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '{"data":[],"has_more":false}' }));   // the page's look at Anthropic's model list stays off the network: an empty list, so the built-in model answers
   const page = await ctx.newPage();
   const errors = []; page.on('pageerror', (e) => errors.push(String(e)));
   await ctx.addInitScript(() => {

@@ -43,6 +43,7 @@ function jpegSize(b64) {
   const port = server.address().port;
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 420, height: 860 } });
+  await ctx.route('https://api.anthropic.com/v1/models**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '{"data":[],"has_more":false}' }));   // the page's look at Anthropic's model list stays off the network: an empty list, so the built-in model answers
   const page = await ctx.newPage();
   const errors = []; page.on('pageerror', (e) => errors.push(String(e)));
   const initCamera = () => {
@@ -212,6 +213,7 @@ function jpegSize(b64) {
   // for ever with "Zooming in on the screen"
   const b4 = await chromium.launch();
   const ctx4 = await b4.newContext({ viewport: { width: 420, height: 860 } });
+  await ctx4.route('https://api.anthropic.com/v1/models**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '{"data":[],"has_more":false}' }));   // the page's look at Anthropic's model list stays off the network: an empty list, so the built-in model answers
   await ctx4.addInitScript(() => { localStorage.setItem('zoomStuck', '1'); });
   await ctx4.addInitScript(initCamera);
   const p4 = await ctx4.newPage();
@@ -242,6 +244,7 @@ function jpegSize(b64) {
   // From then on the still desk must cost nothing: no quick look on any later tick.
   const b5 = await chromium.launch();
   const ctx5 = await b5.newContext({ viewport: { width: 420, height: 860 } });
+  await ctx5.route('https://api.anthropic.com/v1/models**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '{"data":[],"has_more":false}' }));   // the page's look at Anthropic's model list stays off the network: an empty list, so the built-in model answers
   await ctx5.addInitScript(initCamera);
   const p5 = await ctx5.newPage();
   const errors5 = []; p5.on('pageerror', (e) => errors5.push(String(e)));
@@ -277,6 +280,7 @@ function jpegSize(b64) {
   // auto-zoom has the whole range; the picker still says auto; the diagnostics show the lens and the range
   const b6 = await chromium.launch();
   const ctx6 = await b6.newContext({ viewport: { width: 420, height: 860 } });
+  await ctx6.route('https://api.anthropic.com/v1/models**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '{"data":[],"has_more":false}' }));   // the page's look at Anthropic's model list stays off the network: an empty list, so the built-in model answers
   await ctx6.addInitScript(() => { localStorage.setItem('lensTriple', '1'); });
   await ctx6.addInitScript(initCamera);
   const p6 = await ctx6.newPage();
@@ -323,6 +327,7 @@ function jpegSize(b64) {
   };
   const b7 = await chromium.launch();
   const ctx7 = await b7.newContext({ viewport: { width: 420, height: 860 } });
+  await ctx7.route('https://api.anthropic.com/v1/models**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '{"data":[],"has_more":false}' }));   // the page's look at Anthropic's model list stays off the network: an empty list, so the built-in model answers
   await ctx7.addInitScript(initCamera);
   await ctx7.addInitScript(() => {
     const s = JSON.parse(localStorage.getItem('lensloop.settings') || '{}');
@@ -358,6 +363,7 @@ function jpegSize(b64) {
   // says so, and a banner (not a blocker) says how the whole screen would fit
   const b8 = await chromium.launch();
   const ctx8 = await b8.newContext({ viewport: { width: 420, height: 860 } });
+  await ctx8.route('https://api.anthropic.com/v1/models**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '{"data":[],"has_more":false}' }));   // the page's look at Anthropic's model list stays off the network: an empty list, so the built-in model answers
   await ctx8.addInitScript(() => { localStorage.setItem('noWide', '1'); });
   await ctx8.addInitScript(initCamera);
   const p8 = await ctx8.newPage();
@@ -393,6 +399,7 @@ function jpegSize(b64) {
   // in view: every step out would cost it pixels); the readout says so
   const b9 = await chromium.launch();
   const ctx9 = await b9.newContext({ viewport: { width: 420, height: 860 } });
+  await ctx9.route('https://api.anthropic.com/v1/models**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '{"data":[],"has_more":false}' }));   // the page's look at Anthropic's model list stays off the network: an empty list, so the built-in model answers
   await ctx9.addInitScript(() => { localStorage.setItem('noWide', '1'); });
   await ctx9.addInitScript(initCamera);
   const p9 = await ctx9.newPage();
@@ -433,6 +440,7 @@ function jpegSize(b64) {
   // capture goes with the close-up of the block at the camera's own pixels, contrast evened
   const b10 = await chromium.launch();
   const ctx10 = await b10.newContext({ viewport: { width: 420, height: 860 } });
+  await ctx10.route('https://api.anthropic.com/v1/models**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '{"data":[],"has_more":false}' }));   // the page's look at Anthropic's model list stays off the network: an empty list, so the built-in model answers
   await ctx10.addInitScript(() => { localStorage.setItem('noWide', '1'); localStorage.setItem('wideRange', '1'); });
   await ctx10.addInitScript(initCamera);
   const p10 = await ctx10.newPage();

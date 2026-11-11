@@ -14,8 +14,11 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
 
 - The Claude API key and the ElevenLabs key are never committed or embedded in the page; they live only in the
   `#key=…&stt=…` link fragment and the phone's storage. The Google OAuth client ID is public and stays in the page.
-- Model and effort come from the two constants near the top of the script (`MODEL`, `EFFORT`); settings cannot
-  override them past the current open.
+- Model and effort come from the constants near the top of the script (`MODEL`, `EFFORT`; currently Fable 5.2 at
+  max) — and, with `MODEL_AUTO`, from Anthropic's own model list: the NEWEST model of `MODEL_LINE` ('fable') the key
+  can use answers, found on every open with nothing to edit (inventory 11a). Settings cannot override either past
+  the current open. When a new Fable is out, still bump `MODEL` (and `MODEL_BEFORE`, the price table `PRICES`) at
+  the next change: the built-in model is what answers before the list is in and what the page steps back to.
 - Keep it one self-contained file: no build step, no framework, no external script beyond what is already loaded.
 - Bump the `BUILD` stamp (near `MODEL`/`EFFORT`) with every change: it is shown at the foot of Settings and is what
   `freshBuild` compares to reload a phone that is still running a cached build.
@@ -90,8 +93,9 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
    (`sig`, base64 of the 32×24 grey signature) and the whole `text`; a matching picture or question is answered
    from memory with no request, labelled `[memory · Google Drive]` / `[memory · this phone]`; fresh answers are
    labelled by what they drew on, `[Claude API · your storylines | this session | general knowledge]`
-   (`sourceLabel`, `apiSource`, `#readerSrc`, the answer meta line). Every fresh answer comes from the model and
-   effort named at the top of the script (Fable 5.1 at max), which is told the reader is waiting hands-free.
+   (`sourceLabel`, `apiSource`, `#readerSrc`, the answer meta line). Every fresh answer comes from the model in
+   force at the effort in force (the newest Fable the key can use, at max — see 11a), which is told the reader is
+   waiting hands-free.
 4. **Read-along.** The reader shows the text large with the Apple-Music-style highlight (`.w`, `.w.read`,
    `.w.cur`): when opened by hand with no session running it follows the reader's own voice (`feedReader`, phone
    or cloud engine); when forced open during a session it auto-scrolls instead. A+/A− sizing.
@@ -144,6 +148,66 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
 11. **Always the latest build.** `freshBuild` fetches the page past the cache shortly after opening and reloads
     once when the server's `BUILD` differs (never mid-session or during a sign-in bounce); the build stamp is at
     the foot of Settings. A declined motion permission shows a banner instead of silently leaving text unturned.
+11a. **Always the newest Fable, at max** (the author, Nov 10: "make sure to make Fable 5.2 MAX thinking the default …
+    make the newest Fable model always the default without me needing to tell you to change that. I want it to
+    automatically adjust"). Built in: `MODEL = 'claude-fable-5-2'`, `EFFORT = 'max'`, `MODEL_AUTO`, `MODEL_LINE =
+    'fable'`, `MODEL_BEFORE = 'claude-fable-5-1'`. **The list** (`checkModels`: on every open once a key is in, at
+    Start, and on coming back to the foreground after `MODEL_RECHECK_MS` = 6 h; a failed look is repeated after a
+    minute at the earliest; 12 s timeout; quiet when it fails): `GET https://api.anthropic.com/v1/models?limit=1000`
+    with the key, `anthropic-version: 2023-06-01` and the browser-access header (the endpoint answers browsers:
+    `access-control-allow-origin: *`, checked Nov 10). `newestOfLine(list, line)` picks the newest model of the
+    line: the list's own `line` field decides (Anthropic: "do not infer a line from the id"; only a list without the
+    field is read by id), only plain ids count (`claude-fable-6`, a dated snapshot — never "-fast", "-preview"),
+    models on their way out (`lifecycle` deprecated/retired) and models that take no images are left out;
+    `newerModel` ranks two ids of one family by version (5.10 > 5.9, the plain id over its dated snapshot), anything
+    else by release time (`created_at`; an epoch value = unknown), then by the list's order. **Remembered at once**
+    (`modelFound` → `S.modelSeen` { id, name, created, efforts, maxTokens, told, before }): the next open starts on
+    it from the first request, list or no list. **The model in force** (`S.model`, `useModel`) is the first of
+    `modelChain()` = `modelOrder(seen, MODEL, MODEL_BEFORE, BUILT_AT)` not turned down in this open: the list's
+    newest when it is NEWER than the built-in model (an id whose version cannot be set against the built-in one's is
+    newer exactly when released after this build), then `MODEL`, then the list's newest when older, then
+    `MODEL_BEFORE` — the list only ever moves the model UP. **Never under a running session** (`modelIdle`:
+    not running, listening, asking, a request in flight or a role play): `modelWaiting` holds until `stop()`
+    (1.5 s after), the next `start()`, or the foreground (`modelAdopt`); once per newly found model that is
+    answering, `modelTell` sets the status "Now on Claude Fable 6 — the newest Fable, taken automatically" and a note
+    ("A newer model is out: … (before: Claude Fable 5.2). Nothing to do — only its price per token may differ").
+    **The effort** is `EFFORT`, or the deepest one the model lists below it when its `capabilities.effort` does not
+    list `EFFORT` (`deepestEffort`, `effortFor`); `max_tokens` is capped by the model's own `max_tokens` when the
+    list gives one (`modelCap`). **One door** (`claudeFetch(body, signal, deep)`): the answer (`send`, deep except a
+    role card's briefing), the role play's turns, the storyline routing call and the digest all go through it —
+    it puts the model in force (and with `deep` the effort in force) into the body, and on a 400/403/404 asks
+    `modelRefused`: a 404 / `not_found_error` (unknown to this key, whatever it did before) or a 400/403 from a
+    model that has never answered (`S.modelOk`, set by `modelWorked` on the first 200) and whose message is not the
+    account's trouble (credit, billing, balance, quota, usage limit) puts the model in `modelNo` for this open,
+    moves to the next in line, shows "Claude Fable 7 turned the request down (HTTP 400 · …) — answering with Claude
+    Fable 5.2 instead. It is tried again the next time the page opens." and the SAME request goes again at once
+    (≤ 4 tries); when every model in line turned it down the request is at fault: `modelNo` is cleared, the model
+    goes back to the top and the failure is reported as usual. The two quick looks keep their own fixed model
+    (`PAGE_CHECK_MODEL`, Haiku 4.5: their prompts and `max_tokens: 5` are tuned to it — Haiku 5.5 thinks by default
+    and would need testing with a key); `modelWatch` reads the same list and says so when Anthropic is retiring a
+    model in use (a note at most every three days for the quick look's model, a line in Settings). **Manual**: a
+    model or an effort CHANGED in Settings (`sheetModel`/`sheetEffort` = what the sheet showed) is used as typed
+    until the page is closed (`modelManual`, `effortManual`: no auto-pick, no stepping back); an emptied model field
+    goes back to automatic; while the sheet is open its two fields follow the model unless typed in. **Shown**:
+    `#modelNow` in Settings (`modelNote()`: "Claude Fable 5.2 at max · the newest Fable Anthropic lists for this key
+    (checked 9:05 PM)", "… found on an earlier open; Anthropic's list could not be read just now (HTTP 500 …)",
+    "… turned the page's request down (…), tried again on the next open", "it takes over when the session is
+    over", "xhigh is the deepest effort it offers", "typed in here…"), the build stamp ("Lens Loop · build … ·
+    Claude Fable 5.2 · max"), the diagnostics' first line (the model, the line of fallbacks, the list's size).
+    **Prices** (`PRICES`, `priceFor` → [input, output, cache-read share, known]): Fable 5.2 $8 / $40 with cache reads
+    at 2.5 % of input (5.1: $10 / $50, 2.5 %; older models 10 %; Opus/Sonnet 5.5: 5 %) — the cost lines used 10 % for
+    every model before; each request is costed at the model that answered it (`req.model`), and a model the table
+    does not know (a Fable newer than this build) at the newest Fable's price, shown with "≈". **Fable 5.2 on the
+    API** (the migration guide, checked Nov 10): adaptive thinking always on (no `thinking` field is sent), effort
+    low…max with `max` accepted, no `temperature`/`top_p`/`top_k`, no prefill, thinking blocks never sent back —
+    all as the page already did for 5.1; `test/model.test.js` keeps those out of every request. Not testable here
+    without the author's key: a real request to `claude-fable-5-2` — which is why the page steps back to
+    `MODEL_BEFORE` by itself if that model should refuse. `test/model.test.js` (the picker, the order, the effort,
+    the names, the prices, the page's own constants) and `test/model.e2e.js` (today's list; a Fable 6 appearing; the
+    list unreachable; a model withdrawn; a newer model refusing; a key without the built-in model; no credit; a
+    request no model takes; a model without max; the list arriving mid-session; a typed model). Every other browser
+    test answers the list request with an empty list (`ctx.route('…/v1/models**')`), so none of them reaches the
+    real API.
 12. **Answer panel.** "ANSWER:" headline, storyline tag, cost/latency readouts (cached tokens counted), history
     of 40, copy, Read button, settings sheet, intro text, privacy/terms pages, PWA icons. **A verdict stays in the
     panel, big and bold, and never opens the feed** (`verdictOf(a, loose)`, `isVerdictText`, `showVerdictPanel`;
@@ -506,8 +570,11 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
   random runs that settle without ever leaving the frame), `node test/ink.test.js` (the text close-up: the question
   block boxed, a cursor left out, print on a dim grey ground found, print at an edge said so, none for a whole page
   of print or no page, stripes/bars/a checkerboard not print, a moiré band no block of print and print beside it the
-  print alone, a one-cell strip no block) and `node test/tabs.test.js` (the TABS verdict in every form, the
-  selected tab, the same question vs another with the same stem); `node test/verdict.test.js` also fixes which
+  print alone, a one-cell strip no block) `node test/tabs.test.js` (the TABS verdict in every form, the
+  selected tab, the same question vs another with the same stem) and `node test/model.test.js` (always the newest
+  model of the line: versions read from ids, the newest Fable picked out of Anthropic's list in every shape, the
+  order of fallbacks, the effort, the prices, and that Fable 5.2 at max is built in and every request goes through
+  `claudeFetch`); `node test/verdict.test.js` also fixes which
   replies are NO answer (a blur-describing title) and which are (an option about blurred vision).
 - `node test/session.e2e.js`, `node test/drive-renewal.e2e.js`, `node test/fresh-build.e2e.js`,
   `node test/memory-voice.e2e.js`, `node test/drive-helper.e2e.js`, `node test/drive-expired-open.e2e.js` (the app
@@ -526,7 +593,10 @@ the baseline: `git fetch origin baseline && git diff origin/baseline -- index.ht
   reload), `node test/hold.e2e.js` (a verdict kept ten seconds whatever the
   picture does, the consistency note, a blur-titled reply and "nothing to read" keeping it, a different question
   answered at once), `node test/tabs.e2e.js` (a question over three tabs: collected tab by tab, one request with the
-  bundle, a second question at once from the same bytes, "Lens, answer"), `node test/latency.e2e.js` (audio cadence and
+  bundle, a second question at once from the same bytes, "Lens, answer"), `node test/model.e2e.js` (the model list asked on
+  open, Fable 5.2 at max, a Fable 6 taken by itself, the list unreachable, a newer model that refuses stepped back
+  from at once, a key without the built-in model, a model without max, the list arriving mid-session, a typed
+  model), `node test/latency.e2e.js` (audio cadence and
   highlight reaction time), `node test/document.e2e.js` (a document page by page, the desk, a new subject) and
   `node test/hour-session.e2e.js` (an hour of dictation compressed into half a
   minute through the real ElevenLabs engine path with the socket mocked: draft, prompt, audio parts, saved
